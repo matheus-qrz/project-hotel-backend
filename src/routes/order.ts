@@ -13,7 +13,7 @@ import { isAuthenticated, hasRole } from "../middlewares/index";
 
 export default (orderRouter: Router) => {
   // Rota para criação de pedidos (aberta para convidados)
-  orderRouter.post("/order/create", createOrderHandler);
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/new", createOrderHandler);
 
   // Rota para usuários autenticados criarem pedidos
   orderRouter.post("/user/:id/order/create",
@@ -21,21 +21,20 @@ export default (orderRouter: Router) => {
     createOrderHandler);
 
   // Rota para solicitar fechamento de conta (aberta para convidados)
-  orderRouter.post("/order/request-checkout", requestTableCheckoutHandler);
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/request-checkout", requestTableCheckoutHandler);
 
   // Rota para processar pagamento (requer autenticação de staff)
-  orderRouter.post("/order/process-payment", isAuthenticated, hasRole('MANAGER'), processTablePaymentHandler);
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", isAuthenticated, hasRole('MANAGER'), processTablePaymentHandler);
 
   // Listar pedidos de uma unidade (requer autenticação)
   orderRouter.get(
-    "/unit/:restaurantUnitId/orders",
-    isAuthenticated,
+    "/restaurant/:restaurantUnitId/orders",
     getRestaurantUnitOrdersController
   );
 
   // Listar pedidos de uma mesa específica
   orderRouter.get(
-    "/unit/:restaurantUnitId/table/:tableNumber/orders",
+    "/restaurant/:restaurantUnitId/:tableId/orders",
     getTableOrdersController
   );
 
@@ -46,7 +45,7 @@ export default (orderRouter: Router) => {
 
   // Atualizar pedido (requer autenticação)
   orderRouter.patch(
-    "/order/:id/update",
+    "/restaurant/:restaurantId/:tableId/order/:id/update",
     isAuthenticated,
     updateOrderController
   );

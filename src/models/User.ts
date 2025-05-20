@@ -57,15 +57,15 @@ const userSchema = new Schema(
     authentication: {
       password: {
         type: String,
+        required: [true, 'Password is required'],
         select: false,
       },
-      salt: { type: String, select: false },
+      salt: { type: String, required: true, select: false },
       sessionToken: { type: String, select: false },
     },
     role: {
       type: String,
-      enum: ["ADMIN", "MANAGER", "ATTENDANT", "CLIENT"],  // Adicionar ADMIN de volta
-      default: 'CLIENT',
+      enum: ["ADMIN", "MANAGER", "ATTENDANT", "CLIENT"],
     },
     orders: [
       {

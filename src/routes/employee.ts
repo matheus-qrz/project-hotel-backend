@@ -18,7 +18,7 @@ export default (router: Router) => {
     router.get(
         "/restaurant/:id/employees",
         isAuthenticated,
-        hasRole('ADMIN'),
+        hasRole(['ADMIN', 'MANAGER']),
         getEmployeesByRestaurantController
     );
 
@@ -26,7 +26,7 @@ export default (router: Router) => {
     router.get(
         "/unit/:unitId/employees",
         isAuthenticated,
-        hasRole('ADMIN'),
+        hasRole(['ADMIN', 'MANAGER']),
         getEmployeesByUnitController
     );
 
@@ -34,21 +34,22 @@ export default (router: Router) => {
     router.get(
         "/employee/:id",
         isAuthenticated,
-        hasRole('ADMIN'),
+        hasRole(['ADMIN', 'MANAGER']),
         getEmployeeByIdController
     );
 
     // Criar um novo funcionário (requer ser admin)
     router.post(
-        "/restaurant/:id/unit/:unitId/employee/create",
+        "/restaurant/:id/employee/create",
         isAuthenticated,
-        hasRole('ADMIN'),
+        hasRole(['ADMIN', 'MANAGER']),
         createEmployeeController
     );
 
     // Atualizar um funcionário existente (requer ser admin)
     router.patch(
         "/employee/:id/update",
+        hasRole(['ADMIN', 'MANAGER']),
         isAuthenticated,
         updateEmployeeController
     );
@@ -56,6 +57,7 @@ export default (router: Router) => {
     // Excluir um funcionário (requer ser admin)
     router.delete(
         "/employee/:id/delete",
+        hasRole(['ADMIN', 'MANAGER']),
         isAuthenticated,
         deleteEmployeeController
     );

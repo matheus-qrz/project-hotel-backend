@@ -11,7 +11,6 @@ export interface IProduct extends Document {
   price: number;
   description: string;
   isAvailable: boolean;
-  // Novos campos para promoção
   isOnPromotion: boolean;
   promotionalPrice?: number;
   discountPercentage?: number;
@@ -50,7 +49,6 @@ const productSchema = new Schema<IProduct>({
   description: {
     type: String,
   },
-  // Novos campos para promoção
   isOnPromotion: {
     type: Boolean,
     default: false

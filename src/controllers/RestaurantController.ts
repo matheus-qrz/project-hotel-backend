@@ -8,6 +8,7 @@ import {
   RestaurantModel,
   updateRestaurant,
   getRestaurantByEmail,
+  getRestaurantBySlug,
 } from "../models/Restaurant.ts";
 import { getRestaurantUnitsByRestaurant, RestaurantUnitModel } from "../models/RestaurantUnit.ts";
 
@@ -49,13 +50,11 @@ export const getRestaurantBySlugController = async (req: express.Request, res: e
   try {
     const { slug } = req.params;
 
-    // Converter slug para nome (substituindo traços por espaços)
-    const name = slug.replace(/-/g, ' ');
+    if (!slug) {
+      return res.status(400).json({ message: "Slug não fornecido" });
+    }
 
-    // Buscar por nome (case insensitive)
-    const restaurant = await RestaurantModel.findOne({
-      name: { $regex: new RegExp('^' + name + '$', 'i') }
-    });
+    const restaurant = await getRestaurantBySlug(slug);
 
     if (!restaurant) {
       return res.status(404).json({ message: "Restaurante não encontrado" });
@@ -63,7 +62,7 @@ export const getRestaurantBySlugController = async (req: express.Request, res: e
 
     res.json(restaurant);
   } catch (error) {
-    console.error(error);
+    console.error('Erro ao buscar restaurante:', error);
     res.status(500).json({ message: "Erro ao buscar restaurante" });
   }
 };

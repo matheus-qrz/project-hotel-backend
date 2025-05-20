@@ -1,25 +1,14 @@
-// controllers/AuthController.ts
 import { Request, Response } from "express";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
-import crypto from "crypto";
 import { UserModel, getUserByEmail, createUser } from "../models/User";
 import { RestaurantModel, getRestaurantByEmail } from "../models/Restaurant";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { random } from "lodash";
 import { authentication } from "../helpers";
+import { generateHash, generateSalt } from "../utils/generateSalt";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_in_production";
-
-// Funções auxiliares
-const generateSalt = () => crypto.randomBytes(16).toString("hex");
-
-const generateHash = (password: string, salt: string) => {
-  return crypto
-    .createHmac("sha256", salt)
-    .update(password)
-    .digest("hex");
-};
 
 const issueJWT = (id: string, email: string, role: string, expiresIn = "7d") => {
   const payload = {
@@ -102,28 +91,23 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Login para usuários (manager, attendant, client)
-export const loginUserHandler = async (req: Request, res: Response) => {
+export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res
-        .status(400)
-        .json({ message: "E-mail e senha são obrigatórios" });
+      return res.status(400).json({ message: "E-mail e senha são obrigatórios" });
     }
 
-    // Buscar usuário pelo email
+    // Buscar usuário pelo email com populate do restaurante
     const user = await UserModel.findOne({ email })
-      .select('+authentication.password +authentication.salt');
+      .select('+authentication.password +authentication.salt +restaurant +restaurantUnit')
+      .populate('restaurant'); // Adicionar populate
 
     if (!user) {
-      return res
-        .status(401)
-        .json({ message: "Credenciais inválidas" });
+      return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // Verificar a senha
     if (!user.authentication || !user.authentication.salt) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
@@ -131,106 +115,44 @@ export const loginUserHandler = async (req: Request, res: Response) => {
     const expectedHash = generateHash(password, user.authentication.salt);
 
     if (expectedHash !== user.authentication.password) {
-      return res
-        .status(401)
-        .json({ message: "Credenciais inválidas" });
+      return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // Gerar token JWT
-    if (!user.email) {
-      return res.status(400).json({ message: "E-mail do usuário não encontrado" });
-    }
+    const token = issueJWT(user._id.toString(), user.email || "", user.role || '');
 
-    const token = issueJWT(
-      user._id.toString(),
-      user.email,
-      user.role
-    );
-
-    // Atualizar token de sessão no usuário
     user.authentication.sessionToken = token;
     await user.save();
 
-    // Se for gerente ou atendente, buscar informações do restaurante
-    let restaurantInfo = null;
-    if (["MANAGER", "ATTENDANT"].includes(user.role)) {
-      if (user.restaurantUnit) {
-        const unit = await RestaurantUnitModel.findById(user.restaurantUnit);
-        if (unit) {
-          restaurantInfo = {
-            unit: {
-              _id: unit._id,
-              name: unit.name || `Unidade ${unit._id}`
-            }
-          };
-
-          if (user.restaurant) {
-            const restaurant = await RestaurantModel.findById(user.restaurant);
-            if (restaurant) {
-              restaurantInfo = {
-                _id: restaurant._id,
-                name: restaurant.name
-              };
-            }
-          }
-        }
-      }
-    }
-
-    return res.status(200).json({
-      message: "Login realizado com sucesso",
+    // Preparar resposta base
+    const response: any = {
+      token,
       user: {
-        _id: user._id,
+        id: user._id.toString(),
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
         role: user.role
-      },
-      restaurantInfo,
-      token
-    });
-  } catch (error: any) {
-    console.error("Erro ao realizar login de usuário:", error);
-    return res
-      .status(500)
-      .json({ message: "Erro interno do servidor", error: error.message });
-  }
-};
-
-// Rota unificada de login que decide qual handler usar
-export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
-  try {
-    const { email, password, role } = req.body;
-
-    // Se userType for especificado, usamos o handler apropriado
-    if (role === 'ADMIN') {
-      const adminResponse = await loginAdminHandler(req, res);
-      if (!adminResponse) {
-        return res.status(500).json({ message: "Erro interno no servidor" });
       }
-      return adminResponse;
-    } else if (role === 'CLIENT') {
-      return loginUserHandler(req, res);
+    };
+
+    // Adicionar informações do restaurante para ADMIN e MANAGER
+    if (user.role === "ADMIN" || user.role === "MANAGER") {
+      const restaurant = await RestaurantModel.findById(user.restaurant);
+
+      if (restaurant) {
+        response.restaurantInfo = {
+          restaurantId: restaurant._id.toString(), // Garantir que é string
+          restaurantName: restaurant.name,
+          unitId: user.restaurantUnit?.toString() || null
+        };
+      }
     }
 
-    // Se userType não for especificado, tentamos descobrir o tipo
-    // Primeiro tentamos como restaurante
-    const restaurant = await getRestaurantByEmail(email);
-    if (restaurant) {
-      const adminResponse = await loginAdminHandler(req, res);
-      if (!adminResponse) {
-        return res.status(500).json({ message: "Erro interno no servidor" });
-      }
-      return adminResponse;
-    }
-
-    // Se não encontrar como restaurante, tenta como usuário
-    return loginUserHandler(req, res);
+    console.log('Login response:', response);
+    return res.status(200).json(response);
   } catch (error: any) {
     console.error("Erro ao realizar login:", error);
-    return res
-      .status(500)
-      .json({ message: "Erro interno no servidor", error: error.message });
+    return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
 
@@ -249,7 +171,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       cnpj,
       specialty,
       address,
-      businessHours // Certifique-se de pegar os horários
+      businessHours
     } = req.body;
 
     // Validar campos obrigatórios
@@ -272,9 +194,9 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       return res.status(400).json({ message: "Este nome de restaurante já está em uso" });
     }
 
-    // Criar o usuário ADMIN
-    const salt = random();
-    const hash = authentication(salt.toString(), password);
+    // Criar o usuário ADMIN usando as novas funções
+    const salt = generateSalt(); // Nova função
+    const hash = generateHash(password, salt); // Nova função
 
     const adminUser = await createUser({
       firstName,
@@ -293,7 +215,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
     // Criar o restaurante
     const restaurantData = {
       name,
-      logo: "", // Pode adicionar depois
+      logo: "",
       cnpj,
       socialName: socialName || name,
       address: address || {
@@ -316,7 +238,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
         sessionToken: ""
       },
       units: [],
-      attendants: [adminUser._id], // Adicionar o admin como atendente
+      attendants: [],
       businessHours: businessHours || [],
     };
 
@@ -340,8 +262,8 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       cnpj: savedRestaurant.cnpj,
       socialName: savedRestaurant.socialName,
       phone: savedRestaurant.phone,
-      manager: adminUser._id, // O administrador é o gerente da unidade
-      attendants: [adminUser._id], // O administrador é o primeiro atendente
+      manager: [],
+      attendants: [],
       restaurant: savedRestaurant._id
     };
 
@@ -353,7 +275,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       $push: { units: savedUnit._id }
     });
 
-    // Gerar token JWT para autenticação imediata
+    // Gerar token JWT usando a nova função
     const token = issueJWT(adminUser._id.toString(), email, "ADMIN");
 
     // Atualizar token de sessão no usuário e no restaurante

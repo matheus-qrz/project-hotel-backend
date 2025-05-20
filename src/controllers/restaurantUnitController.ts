@@ -115,6 +115,8 @@ export const getAllRestaurantUnitsController = async (req: Request, res: Respons
       units = units.filter((unit: any) => !unit.isMatrix);
     }
 
+    console.log("Unidades do restaurante:", units);
+
     return res.status(200).json({
       units: units.map((unit: any) => ({
         _id: unit._id,
@@ -128,7 +130,6 @@ export const getAllRestaurantUnitsController = async (req: Request, res: Respons
         businessHours: unit.businessHours
       }))
     });
-
   } catch (error: any) {
     console.error("Erro ao buscar unidades:", error);
     return res.status(500).json({

@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { authentication, random } from "../helpers";
+import { generateHash, generateSalt } from "../utils/generateSalt";
+import { RestaurantModel } from "../models/Restaurant";
 
 // Listar funcionários de todo o restaurante
 export const getEmployeesByRestaurantController = async (req: Request, res: Response) => {
@@ -112,24 +114,10 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     try {
         const { firstName, lastName, email, phone, password, role, id: restaurantId, unitId } = req.body;
 
-        // Verifica campos obrigatórios
-        if (!firstName || !lastName || !email || !role || !unitId) {
+        // Verifica campos obrigatórios básicos
+        if (!firstName || !lastName || !email || !role) {
             return res.status(400).json({
-                message: "Todos os campos obrigatórios devem ser preenchidos"
-            });
-        }
-
-        // Verifica se a unidade existe
-        if (!mongoose.Types.ObjectId.isValid(unitId)) {
-            return res.status(400).json({
-                message: "ID de unidade inválido"
-            });
-        }
-
-        const unit = await RestaurantUnitModel.findById(unitId);
-        if (!unit) {
-            return res.status(404).json({
-                message: "Unidade não encontrada"
+                message: "Nome, sobrenome, email e função são obrigatórios"
             });
         }
 
@@ -149,11 +137,51 @@ export const createEmployeeController = async (req: Request, res: Response) => {
             });
         }
 
-        // Cria o hash da senha
-        const salt = random();
-        const hashedPassword = authentication(salt, password);
+        // Verifica se pelo menos um dos IDs (restaurante ou unidade) foi fornecido
+        if (!restaurantId && !unitId) {
+            return res.status(400).json({
+                message: "É necessário fornecer um ID de restaurante ou unidade"
+            });
+        }
 
-        // Cria o novo funcionário
+        let restaurant;
+        let unit = null;
+
+        // Verifica primeiro o restaurante
+        if (restaurantId) {
+            if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
+                return res.status(400).json({
+                    message: "ID de restaurante inválido"
+                });
+            }
+            restaurant = await RestaurantModel.findById(restaurantId);
+            if (!restaurant) {
+                return res.status(404).json({
+                    message: "Restaurante não encontrado"
+                });
+            }
+        }
+
+        // Se houver unitId, verifica a unidade
+        if (unitId) {
+            if (!mongoose.Types.ObjectId.isValid(unitId)) {
+                return res.status(400).json({
+                    message: "ID de unidade inválido"
+                });
+            }
+            unit = await RestaurantUnitModel.findById(unitId);
+            if (!unit && !restaurant) {
+                return res.status(404).json({
+                    message: "Unidade não encontrada"
+                });
+            }
+            // Se encontrou a unidade, usa o restaurante associado a ela
+            restaurant = await RestaurantModel.findById(unit?.restaurant);
+        }
+
+        const salt = generateSalt();
+        const hashedPassword = generateHash(password, salt);
+
         const newEmployee = new UserModel({
             firstName,
             lastName,
@@ -165,29 +193,38 @@ export const createEmployeeController = async (req: Request, res: Response) => {
                 salt,
                 sessionToken: "",
             },
-            restaurantUnits: [unitId],
+            restaurant: restaurant?._id,
+            restaurantUnit: unit ? unit._id : restaurant?._id,
             orders: []
         });
 
         await newEmployee.save();
 
-        // Adiciona o funcionário à unidade, se ainda não estiver adicionado
-        await RestaurantUnitModel.findByIdAndUpdate(
-            unitId,
-            {
-                $addToSet: { staff: newEmployee._id }
-            },
-            { new: true }
-        );
-
-        // Retorna o funcionário sem dados sensíveis
-        const employeeToReturn = { ...newEmployee.toObject() };
-        if (employeeToReturn.authentication) {
-            delete employeeToReturn.authentication.password;
-            delete employeeToReturn.authentication.salt;
+        // Atualiza as referências apropriadas
+        if (unit) {
+            await RestaurantUnitModel.findByIdAndUpdate(
+                unit._id,
+                { $addToSet: { staff: newEmployee._id } }
+            );
         }
 
-        return res.status(201).json(employeeToReturn);
+        await RestaurantModel.findByIdAndUpdate(
+            restaurant?._id,
+            { $addToSet: { staff: newEmployee._id } }
+        );
+
+        return res.status(201).json({
+            message: "Funcionário criado com sucesso",
+            employee: {
+                id: newEmployee._id,
+                firstName: newEmployee.firstName,
+                lastName: newEmployee.lastName,
+                email: newEmployee.email,
+                role: newEmployee.role,
+                restaurant: restaurant?._id,
+                unit: unit ? unit._id : restaurant?._id,
+            }
+        });
     } catch (error: any) {
         console.error("Erro ao criar funcionário:", error);
         return res.status(500).json({

@@ -234,14 +234,16 @@ export const createRestaurantUserController = async (
 
         // Criar o usuário
         const salt = random();
+        const hashedPassword = authentication(salt, password);
+
         const user = await createUser({
           firstName,
           lastName,
           email,
           phone,
           authentication: {
-            salt,
-            password: authentication(salt, password),
+            salt, // Armazene o salt
+            password: hashedPassword, // Armazene o hashed password
           },
           role,
           avatar: avatarId,

@@ -9,11 +9,13 @@ import {
   updateFoodController,
 } from "../controllers/ProductController.ts";
 import { hasRole, isAuthenticated } from "../middlewares/index.ts";
+import { upload } from "../middlewares/multer.ts";
 
 export default (productsRouter: Router) => {
   // Criar produto individual
   productsRouter.post(
     "/restaurant/:id/products",
+    upload.single("image"),
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     createFoodController
@@ -30,8 +32,6 @@ export default (productsRouter: Router) => {
   // Obter todos os produtos de um restaurante
   productsRouter.get(
     "/restaurant/:id/products",
-    isAuthenticated,
-    hasRole(['ADMIN', 'MANAGER']),
     getAllFoodsController
   );
 

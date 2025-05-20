@@ -99,11 +99,10 @@ export const deleteRestaurant = (id: string) =>
 export const updateRestaurant = (id: string, values: Record<string, any>) =>
   RestaurantModel.findByIdAndUpdate(id, values, { new: true });
 
-export const getRestaurantBySlug = (slug: string) => {
-  const name = slug.replace(/-/g, ' ');
-  return RestaurantModel.findOne({
-    name: { $regex: new RegExp(`^${name}$`, 'i') }
-  });
+export const getRestaurantBySlug = async (slug: string) => {
+  const id = slug.split('-').pop();
+  if (!id) return null;
+  return RestaurantModel.findById(id);
 };
 
 // Buscar restaurante pelo email do admin (para login)

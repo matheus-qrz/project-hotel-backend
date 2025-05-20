@@ -6,19 +6,13 @@ import {
   registerAdminWithRestaurantHandler,
   validateTokenHandler,
   logoutHandler,
-  validateGuestTokenHandler,
-  loginAdminHandler,
-  loginUserHandler,
+  validateGuestTokenHandler
 } from "../controllers/AuthenticationController";
 import { isAuthenticated, isRestaurantAdmin, isManager } from "../middlewares";
 
 export default (router: Router) => {
-  // Rota de login unificada
-  router.post("/login", loginHandler);
-
   // Rotas específicas para cada tipo
-  router.post("/login/admin", loginAdminHandler);
-  router.post("/login/user", loginUserHandler);
+  router.post("/login", loginHandler);
 
   // Cadastro de restaurante - via página pública
   router.post("/register/restaurant", registerAdminWithRestaurantHandler);

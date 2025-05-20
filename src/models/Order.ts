@@ -2,17 +2,19 @@ import mongoose from "mongoose";
 const Schema = mongoose.Schema;
 
 // Interfaces
-export interface IOrderMetadata {
-  tableNumber?: number;
+export interface IOrdermeta {
+  tableId?: number;
   orderType?: 'local' | 'takeaway';
   observations?: string;
   paymentMethod?: string;
   paymentRequestedAt?: Date;
   processedBy?: mongoose.Schema.Types.ObjectId;
-  splitCount?: number; // Novo campo para divisão de conta
+  splitCount?: number;
+  sessionGroup: String;
 }
 
 export interface IOrder extends mongoose.Document {
+  sessionId: string;
   user?: mongoose.Schema.Types.ObjectId;
   isGuest: boolean;
   guestInfo?: {
@@ -27,10 +29,11 @@ export interface IOrder extends mongoose.Document {
     quantity: number;
   }>;
   totalAmount: number;
-  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'payment_requested';
+  isCancelled?: boolean;
+  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'payment_requested' | 'paid';
   isPaid: boolean;
   paidAt?: Date;
-  metadata?: IOrderMetadata;
+  meta?: IOrdermeta;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +41,7 @@ export interface IOrder extends mongoose.Document {
 // Schema sem validações complexas
 const orderSchema = new Schema(
   {
+    sessionId: String,
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -68,6 +72,9 @@ const orderSchema = new Schema(
       type: Number,
       required: true
     },
+    isCancelled: {
+      type: Boolean,
+    },
     status: {
       type: String,
       enum: ["pending", "processing", "completed", "cancelled", "payment_requested"],
@@ -80,8 +87,8 @@ const orderSchema = new Schema(
     paidAt: {
       type: Date
     },
-    metadata: {
-      tableNumber: Number,
+    meta: {
+      tableId: Number,
       orderType: {
         type: String,
         enum: ['local', 'takeaway'],
@@ -121,7 +128,7 @@ export const validateOrder = (orderData: any): string | null => {
   if (orderData.isGuest && (!orderData.guestInfo || !orderData.guestInfo.name)) {
     return "O nome é obrigatório para pedidos de convidados";
   }
-  if (orderData.metadata?.splitCount && (isNaN(orderData.metadata.splitCount) || orderData.metadata.splitCount < 1)) {
+  if (orderData.meta?.splitCount && (isNaN(orderData.meta.splitCount) || orderData.meta.splitCount < 1)) {
     return "O número de pessoas para divisão da conta deve ser pelo menos 1";
   }
   return null;
@@ -144,17 +151,17 @@ export const deleteOrder = (id: string) =>
   OrderModel.findByIdAndDelete(id);
 
 // Get orders by table number
-export const getOrdersByTable = (restaurantUnitId: string, tableNumber: number) =>
+export const getOrdersByTable = (restaurantUnitId: string, tableId: number) =>
   OrderModel.find({
     restaurantUnit: restaurantUnitId,
-    'metadata.tableNumber': tableNumber
+    'meta.tableId': tableId
   });
 
 // Get unpaid orders by table
-export const getUnpaidOrdersByTable = (restaurantUnitId: string, tableNumber: number) =>
+export const getUnpaidOrdersByTable = (restaurantUnitId: string, tableId: number) =>
   OrderModel.find({
     restaurantUnit: restaurantUnitId,
-    'metadata.tableNumber': tableNumber,
+    'meta.tableId': tableId,
     isPaid: false,
     status: { $nin: ['cancelled'] }
   });
