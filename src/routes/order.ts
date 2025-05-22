@@ -7,7 +7,10 @@ import {
   updateOrderController,
   requestTableCheckoutHandler,
   getTableOrdersController,
-  processTablePaymentHandler
+  processTablePaymentHandler,
+  cancelOrderController,
+  cancelOrderItemController,
+  updateOrderItemController
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares/index";
 
@@ -55,5 +58,21 @@ export default (orderRouter: Router) => {
     "/order/:id/delete",
     isAuthenticated,
     deleteOrderController
+  );
+
+  // Adicionar às rotas existentes:
+  orderRouter.patch(
+    "/restaurant/:restaurantId/:tableId/order/:orderId/cancel",
+    cancelOrderController
+  );
+
+  orderRouter.patch(
+    "/restaurant/:restaurantId/:tableId/order/:orderId/item/:itemId/cancel",
+    cancelOrderItemController
+  );
+
+  orderRouter.patch(
+    "/restaurant/:restaurantId/:tableId/order/:orderId/item/:itemId/update",
+    updateOrderItemController
   );
 };

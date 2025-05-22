@@ -3,6 +3,7 @@ const Schema = mongoose.Schema;
 
 // Interfaces
 export interface IOrdermeta {
+  guestId: string;
   tableId?: number;
   orderType?: 'local' | 'takeaway';
   observations?: string;
@@ -18,16 +19,25 @@ export interface IOrder extends mongoose.Document {
   user?: mongoose.Schema.Types.ObjectId;
   isGuest: boolean;
   guestInfo?: {
+    id: string;
     name: string;
-    email?: string;
-    phone?: string;
+    joinedAt: Date;
   };
   restaurantUnit: mongoose.Schema.Types.ObjectId;
-  items: Array<{
-    name: string;
-    price: number;
-    quantity: number;
-  }>;
+  items: [
+    {
+      name: { type: String, required: true },
+      price: { type: Number, required: true },
+      quantity: { type: Number, required: true, default: 1 },
+      status: {
+        type: String,
+        enum: ["pending", "processing", "completed", "cancelled"],
+        default: "pending"
+      },
+      observations: String,
+      image: String
+    }
+  ]
   totalAmount: number;
   isCancelled?: boolean;
   status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'payment_requested' | 'paid';

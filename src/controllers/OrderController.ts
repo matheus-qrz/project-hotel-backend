@@ -1,14 +1,28 @@
 import { Request, Response } from "express";
-import { OrderModel } from "../models/Order";
+import { OrderModel, IOrder } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
+import { RestaurantModel } from "../models/Restaurant";
+import mongoose from "mongoose";
+
+// Interface auxiliar para o item do pedido
+interface OrderItem {
+  _id: mongoose.Types.ObjectId;
+  name: string;
+  price: number;
+  quantity: number;
+  status: "pending" | "processing" | "completed" | "cancelled";
+  observations?: string;
+  image?: string;
+}
 
 // Controlador para criar pedidos
 export const createOrderHandler = async (req: Request, res: Response) => {
   const {
     userId,
     restaurantUnitId,
+    restaurantId,
     items,
     totalAmount,
     guestInfo,
@@ -17,40 +31,44 @@ export const createOrderHandler = async (req: Request, res: Response) => {
   } = req.body;
 
   try {
-    // Validar tableId dentro do meta
-    if (!meta?.tableId) {
+    if (!meta?.tableId || !guestInfo?.id) {
       return res.status(400).json({
-        message: "Número da mesa é obrigatório"
+        message: "Número da mesa e guestId são obrigatórios"
       });
     }
 
-    // Criar o objeto base do pedido com meta atualizada
+    const establishmentId = restaurantUnitId || restaurantId;
+    if (!establishmentId) {
+      return res.status(400).json({
+        message: "ID do restaurante ou unidade é obrigatório"
+      });
+    }
+
     const orderData: any = {
-      restaurantUnit: restaurantUnitId,
+      restaurantUnit: establishmentId,
       items,
       totalAmount,
       status: 'pending',
       isPaid: false,
+      guestInfo: {
+        id: guestInfo.id,
+        name: guestInfo.name,
+        joinedAt: guestInfo.joinedAt || new Date()
+      },
       sessionId: sessionId || crypto.randomUUID(),
       meta: {
-        ...meta, // Usar o objeto meta completo que já vem com tableId
+        ...meta,
         orderCreatedAt: new Date(),
-        sessionGroup: `table_${meta.tableId}_${new Date().toISOString().split('T')[0]}` // Agrupa pedidos da mesma mesa/dia
+        sessionGroup: `table_${meta.tableId}_${new Date().toISOString().split('T')[0]}`,
+        isMainRestaurant: !restaurantUnitId && !!restaurantId,
+        guestId: guestInfo.id // Certifique-se de que guestId é salvo aqui
       }
     };
 
-    // Se for um usuário registrado
     if (userId) {
       orderData.user = userId;
       orderData.isGuest = false;
-    }
-    // Se for um convidado
-    else if (guestInfo) {
-      orderData.guestInfo = {
-        name: guestInfo.name || `Convidado`,
-        email: guestInfo.email,
-        phone: guestInfo.phone
-      };
+    } else if (guestInfo) {
       orderData.isGuest = true;
       orderData.meta.isGuest = true;
     } else {
@@ -59,14 +77,11 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       });
     }
 
-    // Log para debug
-    console.log('Criando pedido com dados:', orderData);
+    console.log('Criando pedido com guestId:', guestInfo.id);
 
-    // 1. Criar o pedido
     const order = new OrderModel(orderData);
     await order.save();
 
-    // 2. Se for usuário registrado, atualizar o documento do User
     if (userId) {
       await UserModel.findByIdAndUpdate(
         userId,
@@ -79,20 +94,19 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       );
     }
 
-    // 3. Atualizar o documento do RestaurantUnit
-    if (restaurantUnitId) {
-      await RestaurantUnitModel.findByIdAndUpdate(
-        restaurantUnitId,
+    if (establishmentId) {
+      const updateModel = restaurantUnitId ? RestaurantUnitModel : RestaurantModel;
+      await (updateModel as any).findByIdAndUpdate(
+        establishmentId,
         {
           $push: {
             orders: order._id
-          }
+          },
         },
         { new: true }
       );
     }
 
-    // Log do pedido criado
     console.log('Pedido criado com sucesso:', order);
 
     res.status(201).json(order);
@@ -107,34 +121,42 @@ export const createOrderHandler = async (req: Request, res: Response) => {
 
 // Controlador para solicitar fechamento de conta de uma mesa
 export const requestTableCheckoutHandler = async (req: Request, res: Response) => {
-  const { restaurantUnitId, tableId, splitCount, sessionId } = req.body;
+  const { restaurantUnitId, restaurantId, tableId, splitCount, guestId } = req.body;
 
   try {
-    if (!restaurantUnitId || !tableId || !sessionId) {
-      return res.status(400).json({
-        message: "É necessário fornecer o ID da unidade, número da mesa e ID da sessão"
-      });
+    // Construa a query com base no que está disponível
+    const query: any = {
+      'meta.tableId': String(tableId),  // Certifique-se de que ambos são strings
+      status: { $nin: ['completed', 'cancelled'] },
+      isPaid: false,
+      'meta.guestId': guestId
+    };
+
+    // Use restaurantUnitId ou restaurantId
+    if (restaurantUnitId) {
+      query.restaurantUnit = restaurantUnitId;
+    } else if (restaurantId) {
+      query.restaurantId = restaurantId;
     }
 
-    // Encontrar apenas os pedidos do cliente específico
-    const activeOrders = await OrderModel.find({
-      restaurantUnit: restaurantUnitId,
-      'meta.tableId': tableId,
-      sessionId: sessionId, // Filtrar apenas pelos pedidos do cliente
-      status: { $nin: ['completed', 'cancelled'] },
-      isPaid: false
-    });
+    // Se guestId for fornecido, adicione ao query
+    if (guestId) {
+      query['meta.guestId'] = guestId;
+    }
+
+    console.log("Consulta para pedidos ativos:", query);
+    const activeOrders = await OrderModel.find(query);
+    console.log("Pedidos ativos encontrados:", activeOrders);
 
     if (activeOrders.length === 0) {
       return res.status(404).json({
-        message: "Não foram encontrados pedidos ativos para este cliente"
+        message: "Não foram encontrados pedidos ativos"
       });
     }
 
     const orderIds = activeOrders.map(order => order._id);
-    const sessionTotal = activeOrders.reduce((sum, order) => sum + order.totalAmount, 0);
+    const total = activeOrders.reduce((sum, order) => sum + order.totalAmount, 0);
 
-    // Atualizar apenas os pedidos do cliente
     await OrderModel.updateMany(
       { _id: { $in: orderIds } },
       {
@@ -142,27 +164,26 @@ export const requestTableCheckoutHandler = async (req: Request, res: Response) =
           status: 'payment_requested',
           'meta.paymentRequestedAt': new Date(),
           'meta.splitCount': splitCount || 1,
-          'meta.sessionTotal': sessionTotal // Armazenar o total da sessão
+          'meta.total': total
         }
       }
     );
 
     res.status(200).json({
-      message: "Solicitação de fechamento de conta enviada com sucesso",
+      message: "Solicitação de fechamento enviada com sucesso",
       ordersUpdated: orderIds.length,
       splitCount: splitCount || 1,
-      sessionTotal,
-      amountPerPerson: splitCount > 1 ? sessionTotal / splitCount : sessionTotal
+      total,
+      amountPerPerson: splitCount > 1 ? total / splitCount : total
     });
   } catch (error) {
-    console.error("Erro ao solicitar fechamento de conta:", error);
+    console.error("Erro ao solicitar fechamento:", error);
     res.status(500).json({
-      message: "Erro ao solicitar fechamento de conta",
+      message: "Erro ao solicitar fechamento",
       error
     });
   }
 };
-
 
 // Controlador para processar o pagamento de uma mesa
 export const processTablePaymentHandler = async (req: Request, res: Response) => {
@@ -333,18 +354,17 @@ export const deleteOrderController = async (req: Request, res: Response) => {
 export const getTableOrdersController = async (req: Request, res: Response) => {
   try {
     const { restaurantUnitId, tableId } = req.params;
-    const { sessionId } = req.query; // Identificador único do cliente
+    const { guestId } = req.query; // Novo parâmetro
 
-    const query = {
-      sessionId: sessionId,
+    const query: any = {
       restaurantUnit: restaurantUnitId,
       'meta.tableId': tableId,
       status: { $nin: ['cancelled'] }
     };
 
-    // Se fornecido sessionId, buscar apenas os pedidos daquele cliente
-    if (sessionId) {
-      query.sessionId = sessionId;
+    // Se fornecido guestId, buscar apenas os pedidos daquele convidado
+    if (guestId) {
+      query['meta.guestId'] = guestId;
     }
 
     const orders = await OrderModel.find(query)
@@ -366,27 +386,36 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
       });
     }
 
-    // Processar apenas os pedidos da sessão específica
-    const sessionOrders = sessionId
-      ? orders.filter(order => order.sessionId === sessionId)
-      : orders;
+    // Agrupar pedidos por convidado
+    const ordersByGuest = orders.reduce((acc: { [key: string]: typeof orders }, order) => {
+      const guestId = order.meta?.guestId || 'unknown';
+      if (!acc[guestId]) {
+        acc[guestId] = [];
+      }
+      acc[guestId].push(order);
+      return acc;
+    }, {} as { [key: string]: typeof orders });
 
-    const sessionTotal = sessionOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-    const sessionItems = sessionOrders.flatMap(order => order.items);
-    const paymentRequested = sessionOrders.some(order => order.status === 'payment_requested');
-    const allPaid = sessionOrders.every(order => order.isPaid);
-    const splitCount = sessionOrders[0]?.meta?.splitCount || 1;
+    // Se um guestId específico foi solicitado, retornar apenas seus pedidos
+    const relevantOrders = guestId ? orders : Object.values(ordersByGuest).flat();
+
+    const total = relevantOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+    const items = relevantOrders.flatMap(order => order.items);
+    const paymentRequested = relevantOrders.some(order => order.status === 'payment_requested');
+    const allPaid = relevantOrders.every(order => order.isPaid);
+    const splitCount = relevantOrders[0]?.meta?.splitCount || 1;
 
     res.json({
-      orders: sessionOrders,
+      orders: relevantOrders,
       summary: {
-        total: sessionTotal, // Total apenas dos pedidos do cliente
-        itemCount: sessionItems.length,
-        orderCount: sessionOrders.length,
+        total,
+        itemCount: items.length,
+        orderCount: relevantOrders.length,
         paymentRequested,
         allPaid,
         splitCount,
-        amountPerPerson: splitCount > 1 ? sessionTotal / splitCount : sessionTotal
+        amountPerPerson: splitCount > 1 ? total / splitCount : total,
+        guestsCount: Object.keys(ordersByGuest).length // Número de convidados únicos
       }
     });
   } catch (error) {
@@ -398,4 +427,116 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
   }
 };
 
+export const cancelOrderController = async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params;
 
+    const order = await OrderModel.findById(orderId);
+    if (!order) {
+      return res.status(404).json({ message: "Pedido não encontrado" });
+    }
+
+    // Atualizar usando updateOne para evitar problemas de tipagem
+    await OrderModel.updateOne(
+      { _id: orderId },
+      {
+        $set: {
+          status: 'cancelled',
+          isCancelled: true,
+          'items.$[].status': 'cancelled'
+        }
+      }
+    );
+
+    const updatedOrder = await OrderModel.findById(orderId);
+    res.json(updatedOrder);
+  } catch (error) {
+    console.error("Erro ao cancelar pedido:", error);
+    res.status(500).json({
+      message: "Erro ao cancelar pedido",
+      error: error instanceof Error ? error.message : 'Erro desconhecido'
+    });
+  }
+};
+
+export const cancelOrderItemController = async (req: Request, res: Response) => {
+  try {
+    const { orderId, itemId } = req.params;
+
+    const order = await OrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        'items._id': itemId
+      },
+      {
+        $set: {
+          'items.$.status': 'cancelled'
+        }
+      },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Pedido ou item não encontrado" });
+    }
+
+    // Verificar se todos os items foram cancelados
+    const allCancelled = order.items.every((item: any) => item.status === 'cancelled');
+    if (allCancelled) {
+      order.status = 'cancelled';
+      order.isCancelled = true;
+      await order.save();
+    }
+
+    res.json(order);
+  } catch (error) {
+    console.error("Erro ao cancelar item do pedido:", error);
+    res.status(500).json({
+      message: "Erro ao cancelar item do pedido",
+      error: error instanceof Error ? error.message : 'Erro desconhecido'
+    });
+  }
+};
+
+export const updateOrderItemController = async (req: Request, res: Response) => {
+  try {
+    const { orderId, itemId } = req.params;
+    const { quantity, observations } = req.body;
+
+    const updateData: any = {};
+    if (quantity !== undefined) updateData['items.$.quantity'] = quantity;
+    if (observations !== undefined) updateData['items.$.observations'] = observations;
+
+    const order = await OrderModel.findOneAndUpdate(
+      {
+        _id: orderId,
+        'items._id': itemId
+      },
+      {
+        $set: updateData
+      },
+      { new: true }
+    );
+
+    if (!order) {
+      return res.status(404).json({ message: "Pedido ou item não encontrado" });
+    }
+
+    // Recalcular o total
+    order.totalAmount = order.items.reduce((total, item: any) => {
+      if (item.status !== 'cancelled') {
+        return total + (item.price * item.quantity);
+      }
+      return total;
+    }, 0);
+
+    await order.save();
+    res.json(order);
+  } catch (error) {
+    console.error("Erro ao atualizar item do pedido:", error);
+    res.status(500).json({
+      message: "Erro ao atualizar item do pedido",
+      error: error instanceof Error ? error.message : 'Erro desconhecido'
+    });
+  }
+};
