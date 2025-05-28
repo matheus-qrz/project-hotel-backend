@@ -287,19 +287,20 @@ export const getTopProducts = async (unitId: string, limit: number = 5) => {
 
     orders.forEach(order => {
         order.items.forEach(item => {
-            if (!productCount.has(item.name)) {
-                productCount.set(item.name, {
+            const productName = typeof item.name === 'string' ? item.name : item.name.toString();
+            if (!productCount.has(productName)) {
+                productCount.set(productName, {
                     count: 0,
-                    name: item.name,
+                    name: productName,
                     revenue: 0
                 });
             }
 
-            const current = productCount.get(item.name)!;
-            productCount.set(item.name, {
+            const current = productCount.get(productName)!;
+            productCount.set(productName, {
                 ...current,
-                count: current.count + item.quantity,
-                revenue: current.revenue + (item.price * item.quantity)
+                count: current.count + (typeof item.quantity === 'number' ? item.quantity : Number(item.quantity)),
+                revenue: current.revenue + (typeof item.price === 'number' ? item.price : Number(item.price)) * (typeof item.quantity === 'number' ? item.quantity : Number(item.quantity))
             });
         });
     });

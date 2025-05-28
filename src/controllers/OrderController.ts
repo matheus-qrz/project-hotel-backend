@@ -1,21 +1,10 @@
 import { Request, Response } from "express";
-import { OrderModel, IOrder } from "../models/Order";
+import { OrderModel, IOrder, getGuestOrders } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
 import { RestaurantModel } from "../models/Restaurant";
 import mongoose from "mongoose";
-
-// Interface auxiliar para o item do pedido
-interface OrderItem {
-  _id: mongoose.Types.ObjectId;
-  name: string;
-  price: number;
-  quantity: number;
-  status: "pending" | "processing" | "completed" | "cancelled";
-  observations?: string;
-  image?: string;
-}
 
 // Controlador para criar pedidos
 export const createOrderHandler = async (req: Request, res: Response) => {
@@ -31,7 +20,7 @@ export const createOrderHandler = async (req: Request, res: Response) => {
   } = req.body;
 
   try {
-    if (!meta?.tableId || !guestInfo?.id) {
+    if (!meta?.tableId || !guestInfo?.id || !guestInfo.name) {
       return res.status(400).json({
         message: "Número da mesa e guestId são obrigatórios"
       });
@@ -56,26 +45,16 @@ export const createOrderHandler = async (req: Request, res: Response) => {
         joinedAt: guestInfo.joinedAt || new Date()
       },
       sessionId: sessionId || crypto.randomUUID(),
+      isGuest: guestInfo ? true : false,
       meta: {
         ...meta,
         orderCreatedAt: new Date(),
         sessionGroup: `table_${meta.tableId}_${new Date().toISOString().split('T')[0]}`,
-        isMainRestaurant: !restaurantUnitId && !!restaurantId,
-        guestId: guestInfo.id // Certifique-se de que guestId é salvo aqui
+        guestId: guestInfo.id
       }
     };
 
-    if (userId) {
-      orderData.user = userId;
-      orderData.isGuest = false;
-    } else if (guestInfo) {
-      orderData.isGuest = true;
-      orderData.meta.isGuest = true;
-    } else {
-      return res.status(400).json({
-        message: "É necessário fornecer ID de usuário ou informações de convidado"
-      });
-    }
+    console.log('Dados do cliente:', guestInfo);
 
     console.log('Criando pedido com guestId:', guestInfo.id);
 
@@ -253,14 +232,13 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 
     const filter: any = { restaurantUnit: restaurantUnitId };
 
-    // Se status foi especificado, adicionar ao filtro
     if (status) {
       filter.status = status;
     }
 
     const orders = await OrderModel.find(filter)
       .sort({ createdAt: -1 })
-      .populate('user', 'firstName lastName email');
+      .populate('user', 'firstName lastName');
 
     res.json(orders);
   } catch (error) {
@@ -424,6 +402,26 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
       message: "Erro ao buscar pedidos",
       error: error instanceof Error ? error.message : 'Erro desconhecido'
     });
+  }
+};
+
+
+export const getGuestOrdersController = async (req: Request, res: Response) => {
+  const { guestId, tableId } = req.params;
+
+  if (!tableId) { return res.status(400).json({ message: "O parâmetro tableId é necessário." }); }
+
+  try {
+    const orders = await getGuestOrders(guestId, String(tableId));
+
+    if (orders.length === 0) {
+      return res.status(200).json({ message: "Nenhum pedido encontrado para este convidado." });
+    }
+
+    res.status(200).json({ orders });
+  } catch (error) {
+    console.error("Erro ao buscar pedidos do convidado:", error);
+    res.status(500).json({ message: "Erro ao buscar pedidos do convidado", error });
   }
 };
 

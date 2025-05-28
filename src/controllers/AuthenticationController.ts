@@ -1,10 +1,8 @@
 import { Request, Response } from "express";
-import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { UserModel, getUserByEmail, createUser } from "../models/User";
 import { RestaurantModel, getRestaurantByEmail } from "../models/Restaurant";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import { random } from "lodash";
 import { authentication } from "../helpers";
 import { generateHash, generateSalt } from "../utils/generateSalt";
 
@@ -78,10 +76,6 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
         token,
       });
     }
-
-    // Resto do código para login via restaurant permanece igual
-    const restaurant = await getRestaurantByEmail(email);
-    // ...
 
   } catch (error: any) {
     console.error("Erro ao realizar login de administrador:", error);

@@ -10,7 +10,8 @@ import {
   processTablePaymentHandler,
   cancelOrderController,
   cancelOrderItemController,
-  updateOrderItemController
+  updateOrderItemController,
+  getGuestOrdersController
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares/index";
 
@@ -46,10 +47,11 @@ export default (orderRouter: Router) => {
   // como um token temporário para convidados
   orderRouter.get("/order/:id", getOrderByIdController);
 
+  orderRouter.get("/:tableId/guest-orders/:guestId", getGuestOrdersController);
+
   // Atualizar pedido (requer autenticação)
   orderRouter.patch(
     "/restaurant/:restaurantId/:tableId/order/:id/update",
-    isAuthenticated,
     updateOrderController
   );
 

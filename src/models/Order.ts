@@ -18,7 +18,7 @@ export interface IOrder extends mongoose.Document {
   sessionId: string;
   user?: mongoose.Schema.Types.ObjectId;
   isGuest: boolean;
-  guestInfo?: {
+  guestInfo: {
     id: string;
     name: string;
     joinedAt: Date;
@@ -62,9 +62,9 @@ const orderSchema = new Schema(
       default: false
     },
     guestInfo: {
-      name: String,
-      email: String,
-      phone: String
+      id: { type: String, required: true },
+      name: { type: String, required: true },
+      joinedAt: { type: Date, default: Date.now }
     },
     restaurantUnit: {
       type: mongoose.Schema.Types.ObjectId,
@@ -175,3 +175,12 @@ export const getUnpaidOrdersByTable = (restaurantUnitId: string, tableId: number
     isPaid: false,
     status: { $nin: ['cancelled'] }
   });
+
+// models/Order.ts
+export const getGuestOrders = (guestId: string, tableId: string) => {
+  return OrderModel.find({
+    'guestInfo.id': guestId, // Filtra pelos pedidos do convidado
+    'meta.tableId': Number(tableId),
+  });
+};
+
