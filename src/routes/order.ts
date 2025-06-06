@@ -51,13 +51,13 @@ export default (orderRouter: Router) => {
 
   // Atualizar pedido (requer autenticação)
   orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:id/update",
+    "/restaurant/:restaurantId/:tableId/order/:orderId/update",
     updateOrderController
   );
 
   // Excluir pedido (requer autenticação)
   orderRouter.delete(
-    "/order/:id/delete",
+    "/order/:orderId/delete",
     isAuthenticated,
     deleteOrderController
   );

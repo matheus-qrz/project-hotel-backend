@@ -1,6 +1,25 @@
-// models/Products.ts (ajustado)
+// models/Products.ts
 import mongoose, { Document, Schema } from "mongoose";
 import { IRestaurant } from "./index";
+
+// Adicione este tipo ao modelo de produto
+export interface ComboOption {
+  name: string; // Nome da opção (ex: tipo de hambúrguer)
+  products: mongoose.Types.ObjectId[]; // Produtos que fazem parte desta opção
+}
+
+export interface IAdditional {
+  id: string;
+  name: string;
+  price: number;
+  isAvailable: boolean;
+}
+
+export interface IAccompaniment {
+  id: string;
+  name: string;
+  isAvailable: boolean;
+}
 
 export interface IProduct extends Document {
   restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
@@ -16,6 +35,12 @@ export interface IProduct extends Document {
   discountPercentage?: number;
   promotionStartDate?: Date;
   promotionEndDate?: Date;
+  isCombo?: boolean; // Indica se é um combo
+  comboOptions?: ComboOption[]; // Opções de combo
+  isAdditional?: boolean; // Indica se é um adicional
+  hasAddons?: boolean; // Indica se o produto tem adicionais
+  additionalOptions?: IAdditional[]; // Lista de adicionais
+  accompaniments?: IAccompaniment; // Acompanhamentos
 }
 
 const productSchema = new Schema<IProduct>({
@@ -53,6 +78,39 @@ const productSchema = new Schema<IProduct>({
     type: Boolean,
     default: false
   },
+  isCombo: {
+    type: Boolean,
+    default: false
+  },
+  comboOptions: [
+    {
+      name: { type: String, required: true },
+      products: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }]
+    }
+  ],
+  isAdditional: {
+    type: Boolean,
+    default: false
+  },
+  hasAddons: {
+    type: Boolean,
+    default: false
+  },
+  additionalOptions: [
+    {
+      id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+      name: { type: String, required: true },
+      price: { type: Number, required: true },
+      isAvailable: { type: Boolean, default: true }
+    }
+  ],
+  accompaniments: [
+    {
+      id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+      name: { type: String, required: true },
+      isAvailable: { type: Boolean, default: true }
+    }
+  ],
   promotionalPrice: {
     type: Number
   },

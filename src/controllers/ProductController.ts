@@ -1,4 +1,3 @@
-// controllers/ProductController.ts (ajustado)
 import express from "express";
 import {
   createProduct,
@@ -6,7 +5,6 @@ import {
   getProductById,
   getProductByName,
   getProductsByRestaurant,
-  getPromotionalProducts,
   updateProduct
 } from "../models/Products.ts";
 
@@ -16,7 +14,6 @@ export const createFoodController = async (
 ) => {
   try {
     const { id: restaurantId } = req.params;
-
     const {
       name,
       category,
@@ -28,11 +25,15 @@ export const createFoodController = async (
       discountPercentage,
       promotionalPrice,
       promotionStartDate,
-      promotionEndDate
+      promotionEndDate,
+      isAdditional,
+      hasAddons,
+      additionalOptions,
+      accompaniments
     } = req.body;
 
     // Verificações básicas
-    if (!name || !restaurantId || !category || !price) {
+    if (!name || !restaurantId || !category || typeof price !== 'number') {
       return res.status(400).json({ message: "Campos obrigatórios ausentes" });
     }
 
@@ -60,7 +61,11 @@ export const createFoodController = async (
       discountPercentage,
       promotionalPrice: calculatedPromotionalPrice,
       promotionStartDate,
-      promotionEndDate
+      promotionEndDate,
+      isAdditional: isAdditional || false,
+      hasAddons: hasAddons || false, // Certifique-se de inicializar ou validar
+      additionalOptions: additionalOptions || [], // Certifique-se de inicializar ou validar
+      accompaniments: accompaniments || [] // Certifique-se de inicializar ou validar
     };
 
     const newFood = await createProduct(productData);
@@ -123,7 +128,9 @@ export const updateFoodController = async (
       discountPercentage,
       promotionalPrice,
       promotionStartDate,
-      promotionEndDate
+      promotionEndDate,
+      isAdditional,
+      additionalOptions
     } = req.body;
 
     // Verificar se o produto existe
@@ -156,7 +163,9 @@ export const updateFoodController = async (
         promotionalPrice: null,
         promotionStartDate: null,
         promotionEndDate: null
-      })
+      }),
+      isAdditional: isAdditional || false,
+      additionalOptions
     };
 
     const updatedProduct = await updateProduct(id, updatedData);
@@ -227,5 +236,133 @@ export const createMultipleProductsController = async (
   } catch (error) {
     console.error("Erro ao criar produtos:", error);
     return res.status(500).json({ message: "Erro ao criar produtos" });
+  }
+};
+
+// Controlador para criar um combo
+export const createComboController = async (
+  req: express.Request,
+  res: express.Response
+) => {
+  try {
+    const { restaurantId } = req.params;
+    const { name, price, description, comboOptions } = req.body;
+
+    // Verificações básicas
+    if (!name || !price || !comboOptions) {
+      return res.status(400).json({ message: "Campos obrigatórios ausentes" });
+    }
+
+    const comboData = {
+      restaurant: restaurantId,
+      name,
+      price,
+      description,
+      isCombo: true,
+      comboOptions
+    };
+
+    const newCombo = await createProduct(comboData);
+    return res.status(201).json(newCombo);
+  } catch (error) {
+    console.error("Erro ao criar combo:", error);
+    return res.status(500).json({ message: "Erro ao criar combo" });
+  }
+};
+
+// Controlador para atualizar um combo
+export const updateComboController = async (
+  req: express.Request,
+  res: express.Response
+) => {
+  try {
+    const { id } = req.params;
+    const { name, price, description, comboOptions } = req.body;
+
+    const updatedData = {
+      name,
+      price,
+      description,
+      comboOptions
+    };
+
+    const updatedCombo = await updateProduct(id, updatedData);
+    return res.status(200).json(updatedCombo);
+  } catch (error) {
+    console.error("Erro ao atualizar combo:", error);
+    return res.status(500).json({ message: "Erro ao atualizar combo" });
+  }
+};
+
+export const getAllAdditionalsController = async (
+  req: express.Request,
+  res: express.Response
+) => {
+  try {
+    const { id: restaurantId } = req.params;
+    const additionals = await getProductsByRestaurant(restaurantId).where('isAdditional', true);
+
+    return res.status(200).json(additionals);
+  } catch (error) {
+    console.error("Erro ao buscar adicionais:", error);
+    return res.status(500).json({ message: "Erro ao buscar adicionais" });
+  }
+};
+
+// Adicionar adicional a um produto
+export const addAdditionalToProductController = async (
+  req: express.Request,
+  res: express.Response
+) => {
+  try {
+    const { id } = req.params; // ID do produto
+    const { additional } = req.body; // Dados do adicional
+
+    const product = await getProductById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Produto não encontrado" });
+    }
+
+    if (!product.additionalOptions) {
+      product.additionalOptions = [];
+    }
+
+    product.additionalOptions.push(additional);
+    await product.save();
+
+    return res.status(200).json(product);
+  } catch (error) {
+    console.error("Erro ao adicionar adicional:", error);
+    return res.status(500).json({ message: "Erro ao adicionar adicional" });
+  }
+};
+
+// Remover adicional de um produto
+export const removeAdditionalFromProductController = async (
+  req: express.Request,
+  res: express.Response
+) => {
+  try {
+    const { id } = req.params; // ID do produto
+    const { additionalId } = req.body; // ID do adicional a ser removido
+
+    const product = await getProductById(id);
+    if (!product) {
+      return res.status(404).json({ message: "Produto não encontrado" });
+    }
+
+    if (!product.additionalOptions) {
+      product.additionalOptions = [];
+    }
+
+    product.additionalOptions = product.additionalOptions.filter(
+      (additional) => additional.id.toString() !== additionalId
+    );
+    await product.save();
+
+    return res.status(200).json(product);
+  } catch (error) {
+    console.error("Erro ao remover adicional:", error);
+    return res.status(500).json({ message: "Erro ao remover adicional" });
   }
 };

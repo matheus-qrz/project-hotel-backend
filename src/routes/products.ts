@@ -1,11 +1,13 @@
 // routes/products.ts (ajustado)
 import { Router } from "express";
 import {
+  createComboController,
   createFoodController,
   createMultipleProductsController,
   deleteFoodController,
   getAllFoodsController,
   getFoodByIdController,
+  updateComboController,
   updateFoodController,
 } from "../controllers/ProductController.ts";
 import { hasRole, isAuthenticated } from "../middlewares/index.ts";
@@ -55,5 +57,20 @@ export default (productsRouter: Router) => {
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     deleteFoodController
+  );
+
+  productsRouter.post(
+    "/restaurant/:id/combos",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    createComboController
+  );
+
+  // Atualizar combo
+  productsRouter.patch(
+    "/restaurant/:id/combos/:id/update",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    updateComboController
   );
 };

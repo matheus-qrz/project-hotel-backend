@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { OrderModel, IOrder, getGuestOrders } from "../models/Order";
+import { OrderModel, getGuestOrders } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
@@ -27,12 +27,34 @@ export const createOrderHandler = async (req: Request, res: Response) => {
     }
 
     const establishmentId = restaurantUnitId || restaurantId;
+
     if (!establishmentId) {
       return res.status(400).json({
         message: "ID do restaurante ou unidade é obrigatório"
       });
     }
 
+    // Verifique se já existe um pedido ativo para o guestInfo
+    const existingOrder = await OrderModel.findOne({
+      'meta.guestId': guestInfo.id,
+      'meta.tableId': meta.tableId,
+      status: { $nin: ['completed', 'cancelled'] },
+      isPaid: false
+    });
+
+    if (existingOrder) {
+      // Atualize o pedido existente com novos itens e ajuste o total
+      existingOrder.items.push(...items);
+      existingOrder.totalAmount += totalAmount;
+      existingOrder.updatedAt = new Date(); // Atualize o timestamp
+      await existingOrder.save();
+
+      console.log('Pedido atualizado com sucesso:', existingOrder);
+
+      return res.status(200).json(existingOrder);
+    }
+
+    // Se não houver um pedido ativo, crie um novo
     const orderData: any = {
       restaurantUnit: establishmentId,
       items,
@@ -53,10 +75,6 @@ export const createOrderHandler = async (req: Request, res: Response) => {
         guestId: guestInfo.id
       }
     };
-
-    console.log('Dados do cliente:', guestInfo);
-
-    console.log('Criando pedido com guestId:', guestInfo.id);
 
     const order = new OrderModel(orderData);
     await order.save();
@@ -230,6 +248,11 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
     const { restaurantUnitId } = req.params;
     const { status } = req.query;
 
+    // Verifique se restaurantUnitId é válido
+    if (!restaurantUnitId || !mongoose.isValidObjectId(restaurantUnitId)) {
+      return res.status(400).json({ message: "ID da unidade do restaurante inválido." });
+    }
+
     const filter: any = { restaurantUnit: restaurantUnitId };
 
     if (status) {
@@ -272,17 +295,28 @@ export const updateOrderController = async (req: Request, res: Response) => {
     const { id } = req.params;
     const updates = req.body;
 
-    const updatedOrder = await OrderModel.findByIdAndUpdate(
-      id,
-      updates,
-      { new: true }
-    );
-
-    if (!updatedOrder) {
+    const order = await OrderModel.findById(id);
+    if (!order) {
       return res.status(404).json({ message: "Pedido não encontrado" });
     }
 
-    res.json(updatedOrder);
+    // Atualiza o status se fornecido
+    if (updates.status) {
+      order.status = updates.status;
+    }
+
+    // Atualiza os itens se fornecido
+    if (updates.items) {
+      updates.items.forEach((updatedItem: any) => {
+        const item = order.items.find((i: any) => i._id === updatedItem._id);
+        if (item) {
+          item.quantity = updatedItem.quantity; // Atualiza a quantidade
+        }
+      });
+    }
+
+    await order.save(); // Salva as alterações
+    res.json(order);
   } catch (error) {
     console.error("Erro ao atualizar pedido:", error);
     res.status(500).json({ message: "Erro ao atualizar pedido", error });
