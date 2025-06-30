@@ -41,7 +41,14 @@ export interface IProduct extends Document {
   hasAddons?: boolean; // Indica se o produto tem adicionais
   additionalOptions?: IAdditional[]; // Lista de adicionais
   accompaniments?: IAccompaniment; // Acompanhamentos
-}
+  promotionalMetrics?: {
+    viewCount: number;
+    conversionCount: number;
+    marketingCost: number;
+    acquisitionCost: number;
+    costPrice: number; // Custo do produto   
+  }
+};
 
 const productSchema = new Schema<IProduct>({
   restaurant: {
@@ -122,6 +129,13 @@ const productSchema = new Schema<IProduct>({
   },
   promotionEndDate: {
     type: Date
+  },
+  promotionalMetrics: {
+    viewCount: { type: Number, default: 0 },
+    conversionCount: { type: Number, default: 0 },
+    marketingCost: { type: Number, default: 0 },
+    acquisitionCost: { type: Number, default: 0 },
+    costPrice: { type: Number, required: true }
   }
 });
 
@@ -156,7 +170,8 @@ export const getProducts = () => ProductModel.find();
 
 // Obter produtos de um restaurante específico
 export const getProductsByRestaurant = (restaurantId: string) =>
-  ProductModel.find({ restaurant: restaurantId });
+  ProductModel.find({ restaurant: restaurantId })
+    .select('_id name price category image isOnPromotion promotionalPrice promotionEndDate isCombo additionalOptions accompaniments description discountPercentage isAvailable');
 
 // Obter produtos em promoção de um restaurante específico
 export const getPromotionalProducts = (restaurantId: string) =>

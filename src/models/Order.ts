@@ -1,4 +1,6 @@
 import mongoose from "mongoose";
+import { IProduct } from ".";
+import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from '../types/order.types'
 const Schema = mongoose.Schema;
 
 // Interfaces
@@ -14,6 +16,18 @@ export interface IOrdermeta {
   sessionGroup: String;
 }
 
+export interface IOrderItem {
+  name: String;
+  price: Number;
+  quantity: Number;
+  status: OrderItemStatusType;
+  observations: String,
+  image: String,
+  addons?: any[]; // Explicitly type addons as an array
+  isOnPromotion?: boolean;
+  originalPrice?: number;
+}
+
 export interface IOrder extends mongoose.Document {
   sessionId: string;
   user?: mongoose.Schema.Types.ObjectId;
@@ -24,28 +38,20 @@ export interface IOrder extends mongoose.Document {
     joinedAt: Date;
   };
   restaurantUnit: mongoose.Schema.Types.ObjectId;
-  items: [
-    {
-      name: { type: String, required: true },
-      price: { type: Number, required: true },
-      quantity: { type: Number, required: true, default: 1 },
-      status: {
-        type: String,
-        enum: ["pending", "processing", "completed", "cancelled"],
-        default: "pending"
-      },
-      observations: String,
-      image: String
-    }
-  ]
+  items: IOrderItem[]
   totalAmount: number;
   isCancelled?: boolean;
-  status: 'pending' | 'processing' | 'completed' | 'cancelled' | 'payment_requested' | 'paid';
+  status: OrderStatusType;
   isPaid: boolean;
   paidAt?: Date;
   meta?: IOrdermeta;
   createdAt: Date;
   updatedAt: Date;
+  financialMetrics?: {
+    costPrice: number;
+    profit: number;
+    promotionalDiscount?: number;
+  };
 }
 
 // Schema sem validações complexas
@@ -62,20 +68,56 @@ const orderSchema = new Schema(
       default: false
     },
     guestInfo: {
-      id: { type: String, required: true },
-      name: { type: String, required: true },
-      joinedAt: { type: Date, default: Date.now }
+      id: {
+        type: String,
+        required: true
+      },
+      name: {
+        type: String,
+        required: true
+      },
+      joinedAt: {
+        type: Date,
+        default: Date.now
+      }
     },
     restaurantUnit: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "RestaurantUnit",
-      required: true
+      required: false
     },
     items: [
       {
-        name: { type: String, required: true },
-        price: { type: Number, required: true },
-        quantity: { type: Number, required: true, default: 1 }
+        name: {
+          type: String,
+          required: true
+        },
+        price: {
+          type: Number,
+          required: true
+        },
+        quantity: {
+          type: Number,
+          required: true
+        },
+        addons: {
+          type: [mongoose.Schema.Types.Mixed],
+          ref: "Products",
+          required: false
+        },
+        status: {
+          type: String,
+          enum: Object.values(OrderItemStatus),
+          default: OrderItemStatus.ADDED
+        },
+        isOnPromotion: {
+          type: Boolean,
+          required: false
+        },
+        originalPrice: {
+          type: Number,
+          required: false
+        }
       }
     ],
     totalAmount: {
@@ -87,8 +129,8 @@ const orderSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "processing", "completed", "cancelled", "payment_requested"],
-      default: "pending"
+      enum: Object.values(OrderStatus),
+      default: OrderStatus.PROCESSING,
     },
     isPaid: {
       type: Boolean,
@@ -116,10 +158,24 @@ const orderSchema = new Schema(
         default: 1,
         min: 1
       }
+    },
+    financialMetrics: {
+      costPrice: { type: Number, required: false },
+      profit: { type: Number, required: false },
+      promotionalDiscount: { type: Number }
     }
   },
   { timestamps: true }
 );
+
+// MIDDLEWARES
+orderSchema.index({
+  'guestInfo.id': 1,
+  'meta.tableId': 1,
+  sessionId: 1,
+  isPaid: 1,
+  status: 1
+}, { unique: true, partialFilterExpression: { isPaid: false, status: { $in: ['processing', 'payment_requested'] } } });
 
 // Validação manual para guestInfo.name
 orderSchema.pre('validate', function (next) {
@@ -130,6 +186,63 @@ orderSchema.pre('validate', function (next) {
   }
   next();
 });
+
+//middleware para calcular métricas financeiras
+orderSchema.pre('save', function (next) {
+  if (this.items && this.items.length > 0) {
+    let totalCost = 0;
+    let totalRevenue = 0;
+    let totalDiscount = 0;
+
+    this.items.forEach((item) => {
+      if (item.status !== 'cancelled') {
+        const price = Number(item.price) || 0;
+        const quantity = Number(item.quantity) || 0;
+
+        totalCost += price * quantity;
+        totalRevenue += price * quantity;
+
+        if (item.addons && item.addons.length > 0) {
+          item.addons.forEach(addon => {
+            const addonPrice = Number(addon.price) || 0;
+            const addonQuantity = Number(addon.quantity) || 0;
+            totalRevenue += addonPrice * addonQuantity;
+          });
+        }
+
+        if (item.isOnPromotion) {
+          const originalPrice = Number(item.originalPrice) || price;
+          totalDiscount += (originalPrice - price) * quantity;
+        }
+      }
+    });
+
+    this.financialMetrics = {
+      costPrice: totalCost > 0 ? totalCost : 0,
+      profit: totalRevenue > totalCost ? totalRevenue - totalCost : 0,
+      promotionalDiscount: totalDiscount || 0
+    };
+
+    this.totalAmount = totalRevenue;
+  }
+  next();
+});
+
+orderSchema.methods.canTransitionTo = function (newStatus: OrderStatusType): boolean {
+  const validTransitions: Record<OrderStatusType, OrderStatusType[]> = {
+    [OrderStatus.PROCESSING]: [OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.PAYMENT_REQUESTED],
+    [OrderStatus.COMPLETED]: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED],
+    [OrderStatus.PAYMENT_REQUESTED]: [OrderStatus.PAID, OrderStatus.PROCESSING],
+    [OrderStatus.PAID]: [],
+    [OrderStatus.CANCELLED]: [OrderStatus.PROCESSING]
+  };
+
+  return validTransitions[this.status as OrderStatusType].includes(newStatus);
+};
+
+orderSchema.methods.canUpdateItems = function (): boolean {
+  return ![OrderStatus.PAID, OrderStatus.CANCELLED].includes(this.status);
+};
 
 export const OrderModel = mongoose.model<IOrder>("Order", orderSchema);
 
@@ -144,6 +257,7 @@ export const validateOrder = (orderData: any): string | null => {
   return null;
 };
 
+
 // METHODS
 
 // Get all orders
@@ -153,8 +267,21 @@ export const getOrders = () => OrderModel.find();
 export const getOrderById = (id: string) => OrderModel.findById(id);
 
 // Update order
-export const updateOrder = (id: string, values: Record<string, any>) =>
-  OrderModel.findByIdAndUpdate(id, values, { new: true });
+export const updateOrder = async (id: string, values: Record<string, any>) => {
+  return OrderModel.findOneAndUpdate(
+    {
+      _id: id,
+      isPaid: false,
+      status: { $ne: 'cancelled' }
+    },
+
+    values,
+    {
+      new: true,
+      upsert: false
+    }
+  );
+};
 
 // Delete order
 export const deleteOrder = (id: string) =>

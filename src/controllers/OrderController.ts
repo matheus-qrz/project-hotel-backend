@@ -1,10 +1,11 @@
 import { Request, Response } from "express";
-import { OrderModel, getGuestOrders } from "../models/Order";
-import { UserModel } from "../models/User";
+import { IOrderItem, OrderModel, getGuestOrders } from "../models/Order";
+import { IUser, UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
-import { RestaurantModel } from "../models/Restaurant";
-import mongoose from "mongoose";
+import { IRestaurant, RestaurantModel } from "../models/Restaurant";
+import mongoose, { Model } from "mongoose";
+import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from "../types/order.types";
 
 // Controlador para criar pedidos
 export const createOrderHandler = async (req: Request, res: Response) => {
@@ -34,32 +35,52 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       });
     }
 
-    // Verifique se já existe um pedido ativo para o guestInfo
+    // Busca por pedido existente com critérios mais específicos
     const existingOrder = await OrderModel.findOne({
-      'meta.guestId': guestInfo.id,
+      'guestInfo.id': guestInfo.id,
       'meta.tableId': meta.tableId,
-      status: { $nin: ['completed', 'cancelled'] },
-      isPaid: false
+      sessionId, // <- Adicione esta linha
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] }
     });
 
+
+    const itemsWithStatus = items.map((item: any) => ({
+      ...item,
+      status: OrderItemStatus.ADDED,
+      createdAt: new Date()
+    }));
+
+
     if (existingOrder) {
-      // Atualize o pedido existente com novos itens e ajuste o total
-      existingOrder.items.push(...items);
-      existingOrder.totalAmount += totalAmount;
-      existingOrder.updatedAt = new Date(); // Atualize o timestamp
-      await existingOrder.save();
+      // Atualiza o pedido existente usando $set e $push
+      const updatedOrder = await OrderModel.findOneAndUpdate(
+        { _id: existingOrder._id },
+        {
+          $push: { items: { $each: itemsWithStatus } },
+          $inc: { totalAmount: totalAmount },
+          $set: {
+            updatedAt: new Date(),
+            'meta.orderType': meta.orderType,
+            'meta.observations': meta.observations
+          }
+        },
+        {
+          new: true,
+          upsert: false
+        }
+      );
 
-      console.log('Pedido atualizado com sucesso:', existingOrder);
-
-      return res.status(200).json(existingOrder);
+      console.log('Pedido atualizado com sucesso:', updatedOrder);
+      return res.status(200).json(updatedOrder);
     }
 
-    // Se não houver um pedido ativo, crie um novo
-    const orderData: any = {
+    // Preparação dos dados para novo pedido
+    const orderData = {
       restaurantUnit: establishmentId,
       items,
       totalAmount,
-      status: 'pending',
+      status: OrderStatus.PROCESSING,
       isPaid: false,
       guestInfo: {
         id: guestInfo.id,
@@ -67,7 +88,7 @@ export const createOrderHandler = async (req: Request, res: Response) => {
         joinedAt: guestInfo.joinedAt || new Date()
       },
       sessionId: sessionId || crypto.randomUUID(),
-      isGuest: guestInfo ? true : false,
+      isGuest: true,
       meta: {
         ...meta,
         orderCreatedAt: new Date(),
@@ -76,37 +97,41 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       }
     };
 
+    // Cria novo pedido
     const order = new OrderModel(orderData);
     await order.save();
 
+    // Atualiza referências
+    const updatePromises: Promise<any>[] = [];
+
     if (userId) {
-      await UserModel.findByIdAndUpdate(
-        userId,
-        {
-          $push: {
-            orders: order._id
-          }
-        },
-        { new: true }
+      updatePromises.push(
+        UserModel.findByIdAndUpdate<IUser>(
+          userId,
+          { $addToSet: { orders: order._id } },
+          { new: true }
+        ).exec()
       );
     }
 
     if (establishmentId) {
       const updateModel = restaurantUnitId ? RestaurantUnitModel : RestaurantModel;
-      await (updateModel as any).findByIdAndUpdate(
-        establishmentId,
-        {
-          $push: {
-            orders: order._id
-          },
-        },
-        { new: true }
+      updatePromises.push(
+        (updateModel as Model<IRestaurant>).findByIdAndUpdate(
+          establishmentId,
+          { $addToSet: { orders: order._id } },
+          { new: true }
+        ).exec()
       );
     }
 
-    console.log('Pedido criado com sucesso:', order);
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
+    }
 
+    console.log('Pedido criado com sucesso:', order);
     res.status(201).json(order);
+
   } catch (error) {
     console.error("Erro ao criar pedido:", error);
     res.status(500).json({
@@ -116,68 +141,52 @@ export const createOrderHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Controlador para solicitar fechamento de conta de uma mesa
-export const requestTableCheckoutHandler = async (req: Request, res: Response) => {
-  const { restaurantUnitId, restaurantId, tableId, splitCount, guestId } = req.body;
+// Controlador para requisição de pagamento por pedido de cliente
+export const requestOrderCheckout = async (req: Request, res: Response) => {
+  const { orderIds, guestId, splitCount } = req.body;
 
   try {
-    // Construa a query com base no que está disponível
-    const query: any = {
-      'meta.tableId': String(tableId),  // Certifique-se de que ambos são strings
-      status: { $nin: ['completed', 'cancelled'] },
+    if (!orderIds?.length || !guestId) {
+      return res.status(400).json({
+        message: "IDs dos pedidos e ID do cliente são obrigatórios"
+      });
+    }
+
+    const orders = await OrderModel.find({
+      _id: { $in: orderIds },
+      'guestInfo.id': guestId,
       isPaid: false,
-      'meta.guestId': guestId
-    };
+      status: { $nin: ['completed', 'cancelled', 'payment_requested'] }
+    });
 
-    // Use restaurantUnitId ou restaurantId
-    if (restaurantUnitId) {
-      query.restaurantUnit = restaurantUnitId;
-    } else if (restaurantId) {
-      query.restaurantId = restaurantId;
-    }
-
-    // Se guestId for fornecido, adicione ao query
-    if (guestId) {
-      query['meta.guestId'] = guestId;
-    }
-
-    console.log("Consulta para pedidos ativos:", query);
-    const activeOrders = await OrderModel.find(query);
-    console.log("Pedidos ativos encontrados:", activeOrders);
-
-    if (activeOrders.length === 0) {
+    if (!orders.length) {
       return res.status(404).json({
         message: "Não foram encontrados pedidos ativos"
       });
     }
 
-    const orderIds = activeOrders.map(order => order._id);
-    const total = activeOrders.reduce((sum, order) => sum + order.totalAmount, 0);
-
-    await OrderModel.updateMany(
-      { _id: { $in: orderIds } },
-      {
-        $set: {
-          status: 'payment_requested',
-          'meta.paymentRequestedAt': new Date(),
-          'meta.splitCount': splitCount || 1,
-          'meta.total': total
-        }
-      }
+    const updatedOrders = await Promise.all(
+      orders.map(order =>
+        OrderModel.findByIdAndUpdate(
+          order._id,
+          {
+            $set: {
+              status: 'payment_requested',
+              'meta.splitCount': splitCount,
+              'meta.paymentRequestedAt': new Date()
+            }
+          },
+          { new: true }
+        )
+      )
     );
 
-    res.status(200).json({
-      message: "Solicitação de fechamento enviada com sucesso",
-      ordersUpdated: orderIds.length,
-      splitCount: splitCount || 1,
-      total,
-      amountPerPerson: splitCount > 1 ? total / splitCount : total
-    });
+    res.status(200).json(updatedOrders);
   } catch (error) {
     console.error("Erro ao solicitar fechamento:", error);
     res.status(500).json({
       message: "Erro ao solicitar fechamento",
-      error
+      error: error instanceof Error ? error.message : 'Erro desconhecido'
     });
   }
 };
@@ -199,7 +208,7 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
       'meta.tableId': tableId,
       sessionId: sessionId,
       isPaid: false,
-      status: { $nin: ['cancelled'] }
+      status: { $nin: OrderStatus.CANCELLED }
     });
 
     if (pendingOrders.length === 0) {
@@ -217,7 +226,7 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
       { _id: { $in: orderIds } },
       {
         $set: {
-          status: 'completed',
+          status: OrderStatus.COMPLETED,
           isPaid: true,
           paidAt: now,
           'meta.paymentMethod': paymentMethod,
@@ -292,30 +301,58 @@ export const getOrderByIdController = async (req: Request, res: Response) => {
 // Controlador para atualizar um pedido
 export const updateOrderController = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const { orderId } = req.params;
     const updates = req.body;
 
-    const order = await OrderModel.findById(id);
-    if (!order) {
+    // Primeiro, verifica se o pedido existe
+    const existingOrder = await OrderModel.findOne({
+      _id: orderId,
+      isPaid: false,
+      status: { $ne: OrderStatus.CANCELLED }
+    });
+
+    if (!existingOrder) {
       return res.status(404).json({ message: "Pedido não encontrado" });
     }
-
-    // Atualiza o status se fornecido
+    let itemsUpdate = {};
     if (updates.status) {
-      order.status = updates.status;
+      switch (updates.status as OrderStatusType) {
+        case OrderStatus.COMPLETED: itemsUpdate = {
+          'items.$[].status': OrderItemStatus.COMPLETED
+        };
+          break;
+        case OrderStatus.PROCESSING: itemsUpdate = {
+          'items.$[item].status': OrderItemStatus.ADDED
+        };
+          break;
+        case OrderStatus.CANCELLED: itemsUpdate = {
+          'items.$[].status': OrderItemStatus.CANCELLED
+        };
+          break;
+        case OrderStatus.PAYMENT_REQUESTED:
+          // Lógica específica para pagamento solicitado          
+          break;
+        case OrderStatus.PAID:
+          // Lógica específica para pedido pago          
+          break;
+      }
     }
 
-    // Atualiza os itens se fornecido
-    if (updates.items) {
-      updates.items.forEach((updatedItem: any) => {
-        const item = order.items.find((i: any) => i._id === updatedItem._id);
-        if (item) {
-          item.quantity = updatedItem.quantity; // Atualiza a quantidade
-        }
-      });
+    // Se estiver atualizando o status para 'completed', atualiza também o status dos itens
+    if (updates.status === OrderStatus.COMPLETED) {
+      updates['items'] = existingOrder.items.map(item => ({
+        ...item,
+        status: OrderStatus.COMPLETED
+      }));
     }
 
-    await order.save(); // Salva as alterações
+    // Realiza a atualização
+    const order = await OrderModel.findByIdAndUpdate(
+      orderId,
+      { $set: updates },
+      { new: true }
+    );
+
     res.json(order);
   } catch (error) {
     console.error("Erro ao atualizar pedido:", error);
@@ -371,7 +408,7 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
     const query: any = {
       restaurantUnit: restaurantUnitId,
       'meta.tableId': tableId,
-      status: { $nin: ['cancelled'] }
+      status: { $nin: OrderStatus.CANCELLED },
     };
 
     // Se fornecido guestId, buscar apenas os pedidos daquele convidado
@@ -473,9 +510,9 @@ export const cancelOrderController = async (req: Request, res: Response) => {
       { _id: orderId },
       {
         $set: {
-          status: 'cancelled',
+          status: OrderStatus.CANCELLED,
           isCancelled: true,
-          'items.$[].status': 'cancelled'
+          'items.$[].status': OrderItemStatus.CANCELLED,
         }
       }
     );
@@ -491,6 +528,54 @@ export const cancelOrderController = async (req: Request, res: Response) => {
   }
 };
 
+export const addItemsToOrderController = async (req: Request, res: Response) => {
+  try {
+    const { tableId, guestId } = req.params;
+    const { items, totalAmount } = req.body;
+
+    const existingOrder = await OrderModel.findOne({
+      'meta.tableId': Number(tableId),
+      'guestInfo.id': guestId,
+      status: { $in: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED] },
+      isPaid: false
+    });
+
+    if (existingOrder) {
+      // Adiciona createdAt aos novos itens, se ainda não tiver
+      const enrichedItems = items.map((item: any) => ({
+        ...item,
+        createdAt: item.createdAt || new Date(),
+        addons: (item.addons || []).map((addon: any) => ({
+          ...addon,
+          createdAt: addon.createdAt || new Date()
+        }))
+      }));
+
+      const updatedOrder = await OrderModel.findByIdAndUpdate(
+        existingOrder._id,
+        {
+          $push: { items: { $each: enrichedItems } },
+          $set: { totalAmount: existingOrder.totalAmount + totalAmount }
+        },
+        { new: true }
+      );
+
+      return res.json(updatedOrder);
+    }
+
+    // Caso contrário, retorne erro — não deve criar novo pedido aqui!
+    return res.status(404).json({ message: "Pedido em andamento não encontrado para adicionar itens." });
+
+  } catch (error) {
+    console.error("Erro ao adicionar itens ao pedido:", error);
+    res.status(500).json({
+      message: "Erro ao adicionar itens ao pedido",
+      error: error instanceof Error ? error.message : 'Erro desconhecido'
+    });
+  }
+};
+
+
 export const cancelOrderItemController = async (req: Request, res: Response) => {
   try {
     const { orderId, itemId } = req.params;
@@ -502,7 +587,7 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
       },
       {
         $set: {
-          'items.$.status': 'cancelled'
+          'items.$.status': OrderItemStatus.CANCELLED
         }
       },
       { new: true }
@@ -513,9 +598,9 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
     }
 
     // Verificar se todos os items foram cancelados
-    const allCancelled = order.items.every((item: any) => item.status === 'cancelled');
+    const allCancelled = order.items.every((item: any) => item.status === OrderItemStatus.CANCELLED);
     if (allCancelled) {
-      order.status = 'cancelled';
+      order.status = OrderStatus.CANCELLED;
       order.isCancelled = true;
       await order.save();
     }
@@ -533,37 +618,59 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
 export const updateOrderItemController = async (req: Request, res: Response) => {
   try {
     const { orderId, itemId } = req.params;
-    const { quantity, observations } = req.body;
+    const { quantity, observations, status } = req.body;
 
-    const updateData: any = {};
-    if (quantity !== undefined) updateData['items.$.quantity'] = quantity;
-    if (observations !== undefined) updateData['items.$.observations'] = observations;
+    // Primeiro, verifica se o pedido existe
+    const existingOrder = await OrderModel.findOne({
+      _id: orderId,
+      'items._id': itemId,
+      isPaid: false,
+      status: { $ne: OrderStatus.CANCELLED }
+    });
 
-    const order = await OrderModel.findOneAndUpdate(
+    if (!existingOrder) {
+      return res.status(404).json({ message: "Pedido ou item não encontrado" });
+    }
+
+    const updateData: Partial<IOrderItem> = {};
+    if (quantity !== undefined) {
+      updateData.quantity = quantity;
+      updateData.status = OrderItemStatus.ADDED;
+    }
+
+    if (observations !== undefined) updateData.observations = observations;
+    if (status !== undefined) updateData.status = status as OrderItemStatusType;
+
+    // Atualiza o item
+    const updatedOrder = await OrderModel.findOneAndUpdate(
       {
         _id: orderId,
         'items._id': itemId
       },
-      {
-        $set: updateData
-      },
+      { $set: updateData },
       { new: true }
     );
 
-    if (!order) {
-      return res.status(404).json({ message: "Pedido ou item não encontrado" });
+    if (!updatedOrder) {
+      return res.status(404).json({ message: "Erro ao atualizar item" });
     }
 
-    // Recalcular o total
-    order.totalAmount = order.items.reduce((total, item: any) => {
-      if (item.status !== 'cancelled') {
+    // Recalcula o total
+    const totalAmount = updatedOrder.items.reduce((total, item: any) => {
+      if (item.status !== OrderItemStatus.CANCELLED) {
         return total + (item.price * item.quantity);
       }
       return total;
     }, 0);
 
-    await order.save();
-    res.json(order);
+    // Atualiza o total
+    const finalOrder = await OrderModel.findByIdAndUpdate(
+      orderId,
+      { $set: { totalAmount } },
+      { new: true }
+    );
+
+    res.json(finalOrder);
   } catch (error) {
     console.error("Erro ao atualizar item do pedido:", error);
     res.status(500).json({

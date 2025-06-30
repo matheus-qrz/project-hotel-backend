@@ -5,13 +5,14 @@ import {
   getRestaurantUnitOrdersController,
   getOrderByIdController,
   updateOrderController,
-  requestTableCheckoutHandler,
+  requestOrderCheckout,
   getTableOrdersController,
   processTablePaymentHandler,
   cancelOrderController,
   cancelOrderItemController,
   updateOrderItemController,
-  getGuestOrdersController
+  getGuestOrdersController,
+  addItemsToOrderController
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares/index";
 
@@ -25,7 +26,7 @@ export default (orderRouter: Router) => {
     createOrderHandler);
 
   // Rota para solicitar fechamento de conta (aberta para convidados)
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/request-checkout", requestTableCheckoutHandler);
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/request-checkout", requestOrderCheckout);
 
   // Rota para processar pagamento (requer autenticação de staff)
   orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", isAuthenticated, hasRole('MANAGER'), processTablePaymentHandler);
@@ -48,6 +49,11 @@ export default (orderRouter: Router) => {
   orderRouter.get("/order/:id", getOrderByIdController);
 
   orderRouter.get("/:tableId/guest-orders/:guestId", getGuestOrdersController);
+
+  orderRouter.patch(
+    "/restaurant/:restaurantId/:tableId/order/:orderId/add-items",
+    addItemsToOrderController
+  );
 
   // Atualizar pedido (requer autenticação)
   orderRouter.patch(

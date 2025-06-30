@@ -76,16 +76,32 @@ export const createFoodController = async (
   }
 };
 
+// Controller para buscar produtos de um estabelecimento
 export const getAllFoodsController = async (
   req: express.Request,
   res: express.Response
 ) => {
   try {
     const { id: restaurantId } = req.params;
+    const currentDate = new Date();
 
-    const foods = await getProductsByRestaurant(restaurantId);
+    const products = await getProductsByRestaurant(restaurantId);
 
-    return res.status(200).json(foods);
+    const processedProducts = products.map(product => {
+      const isPromotionValid = product.isOnPromotion &&
+        product.promotionEndDate &&
+        new Date(product.promotionEndDate) > currentDate;
+
+      return {
+        ...product.toObject(),
+        isOnPromotion: isPromotionValid,
+        price: isPromotionValid ? product.promotionalPrice : product.price,
+        originalPrice: isPromotionValid ? product.price : undefined,
+        promotionDiscount: product.discountPercentage
+      };
+    });
+
+    return res.status(200).json(processedProducts);
   } catch (error) {
     console.error("Erro ao buscar produtos:", error);
     return res.status(500).json({ message: "Erro ao buscar produtos" });

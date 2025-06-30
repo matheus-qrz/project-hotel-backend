@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { RestaurantModel } from "./Restaurant";
+import { OperationalCosts } from "../utils/finantials";
 const Schema = mongoose.Schema;
 
 // models/RestaurantUnit.ts
@@ -20,6 +21,7 @@ export interface IRestaurantUnit extends Document {
   orders: mongoose.Types.ObjectId[];
   restaurant: mongoose.Types.ObjectId;
   isActive: boolean;
+  operationalCosts: OperationalCosts;
 };
 
 const restaurantUnitSchema = new Schema({

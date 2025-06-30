@@ -1,36 +1,14 @@
 // routes/dashboardRoutes.ts
-import express from "express";
+import { Router } from "express";
 import {
-    getDashboardSummaryController,
-    getRevenueReportController,
-    getOrdersReportController,
-    getTopProductsController,
-    getDailyRevenueReportController,
-    getGuestVsUserStatsController
+    getDashboardOrdersController,
+    getDashboardFinancialController,
+    getDashboardPromotionsController
 } from "../controllers/DashboardController";
-import { isAuthenticated } from "../middlewares/index"; // Assumindo que você tem um middleware de autenticação
 
-const router = express.Router();
+export default (router: Router) => {
+    router.get("/:unitId/orders", getDashboardOrdersController);
+    router.get("/:restaurantUnitId/financial", getDashboardFinancialController);
+    router.get("/:unitId/promotions", getDashboardPromotionsController);
+};
 
-// Aplicar middleware de autenticação em todas as rotas do dashboard
-router.use(isAuthenticated);
-
-// Rota para obter o resumo geral do dashboard
-router.get('/summary/:unitId', getDashboardSummaryController);
-
-// Rota para obter relatório de faturamento
-router.get('/revenue/:unitId', getRevenueReportController);
-
-// Rota para obter relatório de pedidos
-router.get('/orders/:unitId', getOrdersReportController);
-
-// Rota para obter os produtos mais vendidos
-router.get('/top-products/:unitId', getTopProductsController);
-
-// Rota para obter relatório de faturamento diário
-router.get('/daily-revenue/:unitId', getDailyRevenueReportController);
-
-// Nova rota para estatísticas de convidados vs usuários registrados
-router.get('/guest-vs-user/:unitId', getGuestVsUserStatsController);
-
-export default router;

@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { OperationalCosts } from "../utils/finantials";
 const Schema = mongoose.Schema;
 
 export interface IRestaurant extends Document {
@@ -33,6 +34,7 @@ export interface IRestaurant extends Document {
     open: string;
     close: string;
   }>;
+  operationalCosts: OperationalCosts;
 }
 
 const restaurantSchema = new Schema({
@@ -70,7 +72,20 @@ const restaurantSchema = new Schema({
     open: String,
     close: String
   }],
-  // Campos padrão de timestamp
+  operationalCosts: {
+    fixed: {
+      rent: { type: Number, default: 0 },
+      utilities: { type: Number, default: 0 },
+      salaries: { type: Number, default: 0 },
+      marketing: { type: Number, default: 0 },
+      other: { type: Number, default: 0 }
+    },
+    variable: {
+      costPercentage: { type: Number, default: 40 }, // 40% como padrão            
+      averageIngredientCost: { type: Number, default: 0 },
+      averagePackagingCost: { type: Number, default: 0 }
+    }
+  }
 }, { timestamps: true });
 
 export const RestaurantModel = mongoose.model<IRestaurant>("Restaurant", restaurantSchema);
