@@ -5,7 +5,8 @@
   "target": "esnext",
   "type": "commonjs",
   "scripts": {
-    "start": "ts-node-dev --transpile-only src/server.ts"
+    "dev": "ts-node-dev --transpile-only src/server.ts",
+    "start": "ts-node src/server.ts"
   },
   "keywords": [],
   "author": "",

@@ -51,7 +51,7 @@ export default (orderRouter: Router) => {
   orderRouter.get("/:tableId/guest-orders/:guestId", getGuestOrdersController);
 
   orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/add-items",
+    "/restaurant/:restaurantId/:tableId/order/:orderId/guest/:guestId/add-items",
     addItemsToOrderController
   );
 

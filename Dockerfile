@@ -1,12 +1,7 @@
-FROM node:latest
-
-WORKDIR /seugarcom-backend
-
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
 COPY . .
-
-RUN rm -rf node_modules
-RUN yarn 
-
-CMD ["yarn", "src/config/server.ts"]
-
+CMD ["npm", "start"]
 EXPOSE 3333
