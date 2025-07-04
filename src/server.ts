@@ -10,7 +10,7 @@ import router from "./routes/index";
 import { connectToDb } from "./config/db"; // Importa a função de conexão
 
 // Configuração do dotenv
-dotenv.config({ path: ".env" });
+dotenv.config();
 
 const app = express();
 
