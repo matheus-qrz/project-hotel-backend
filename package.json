@@ -5,9 +5,9 @@
   "target": "esnext",
   "type": "commonjs",
   "scripts": {
-    "dev": "ts-node-dev --transpile-only src/server ",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "dev": "ts-node-dev --transpile-only src/server "
   },
   "keywords": [],
   "author": "",
