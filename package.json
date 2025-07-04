@@ -1,13 +1,13 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "main": "server ",
+  "main": "server",
   "target": "esnext",
   "type": "commonjs",
   "scripts": {
     "build": "tsc",
     "start": "node dist/server.js",
-    "dev": "ts-node-dev --transpile-only src/server "
+    "dev": "ts-node-dev --transpile-only src/server"
   },
   "keywords": [],
   "author": "",
