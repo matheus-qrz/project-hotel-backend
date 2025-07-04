@@ -9,8 +9,8 @@ import {
   updateRestaurant,
   getRestaurantByEmail,
   getRestaurantBySlug,
-} from "../models/Restaurant.ts";
-import { getRestaurantUnitsByRestaurant, RestaurantUnitModel } from "../models/RestaurantUnit.ts";
+} from "../models/Restaurant";
+import { getRestaurantUnitsByRestaurant, RestaurantUnitModel } from "../models/RestaurantUnit";
 
 
 export const getAllRestaurantsController = async (

@@ -7,9 +7,9 @@ import {
   updateRestaurantUnitController,
   addAttendantToUnitController,
   removeAttendantFromUnitController
-} from "../controllers/restaurantUnitController.ts";
-import { hasRole, isAuthenticated } from "../middlewares/index.ts";
-import { getRestaurantUnitOrdersController } from "../controllers/OrderController.ts";
+} from "../controllers/restaurantUnitController";
+import { hasRole, isAuthenticated } from "../middlewares/index";
+import { getRestaurantUnitOrdersController } from "../controllers/OrderController";
 
 export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.post(

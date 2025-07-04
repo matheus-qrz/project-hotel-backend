@@ -10,10 +10,10 @@ import {
   getUserByEmail,
   createUser,
   UserModel,
-} from "../models/User.ts";
-import { authentication, random } from "../helpers/index.ts";
-import { RestaurantUnitModel } from "../models/RestaurantUnit.ts";
-import { RestaurantModel } from "../models/Restaurant.ts";
+} from "../models/User";
+import { authentication, random } from "../helpers/index";
+import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { RestaurantModel } from "../models/Restaurant";
 
 const AVATAR_DIR = path.join(process.cwd(), 'public/avatars');
 

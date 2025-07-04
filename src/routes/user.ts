@@ -6,7 +6,7 @@ import {
   getUserByIdController,
   updateUserController,
   createRestaurantUserController,
-} from "../controllers/UserController.ts";
+} from "../controllers/UserController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (userRouter: express.Router) => {

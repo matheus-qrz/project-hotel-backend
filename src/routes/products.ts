@@ -9,9 +9,9 @@ import {
   getFoodByIdController,
   updateComboController,
   updateFoodController,
-} from "../controllers/ProductController.ts";
-import { hasRole, isAuthenticated } from "../middlewares/index.ts";
-import { upload } from "../middlewares/multer.ts";
+} from "../controllers/ProductController";
+import { hasRole, isAuthenticated } from "../middlewares/index";
+import { upload } from "../middlewares/multer";
 
 export default (productsRouter: Router) => {
   // Criar produto individual

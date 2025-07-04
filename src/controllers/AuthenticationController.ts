@@ -8,7 +8,7 @@ import { generateHash, generateSalt } from "../utils/generateSalt";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_in_production";
 
-const issueJWT = (id: string, email: string, role: string, expiresIn = "7d") => {
+const issueJWT = (id: string, email: string, role: string, expiresIn: string | number = "7d") => {
   const payload = {
     sub: id,
     email,
@@ -16,7 +16,7 @@ const issueJWT = (id: string, email: string, role: string, expiresIn = "7d") => 
     iat: Date.now(),
   };
 
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn });
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
   return token;
 };
 

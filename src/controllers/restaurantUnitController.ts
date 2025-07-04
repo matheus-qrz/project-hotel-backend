@@ -5,9 +5,9 @@ import {
   updateRestaurantUnit,
   RestaurantUnitModel,
   getRestaurantUnitsWithMatrix
-} from "../models/RestaurantUnit.ts";
-import { RestaurantModel, updateRestaurant } from "../models/Restaurant.ts";
-import { UserModel } from "../models/User.ts";
+} from "../models/RestaurantUnit";
+import { RestaurantModel, updateRestaurant } from "../models/Restaurant";
+import { UserModel } from "../models/User";
 
 export const addRestaurantUnitController = async (req: Request, res: Response) => {
   try {

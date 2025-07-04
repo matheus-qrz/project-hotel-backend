@@ -6,7 +6,8 @@ import {
   getProductByName,
   getProductsByRestaurant,
   updateProduct
-} from "../models/Products.ts";
+} from "../models/Products";
+import { IProduct } from "../models";
 
 export const createFoodController = async (
   req: express.Request,
@@ -87,7 +88,7 @@ export const getAllFoodsController = async (
 
     const products = await getProductsByRestaurant(restaurantId);
 
-    const processedProducts = products.map(product => {
+    const processedProducts = products.map((product: IProduct) => {
       const isPromotionValid = product.isOnPromotion &&
         product.promotionEndDate &&
         new Date(product.promotionEndDate) > currentDate;

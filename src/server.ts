@@ -2,11 +2,12 @@ import http from "http";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import swaggerSpec from './swagger.json';
 import swaggerJSDoc from "./swagger.json";
 import swaggerUI from "swagger-ui-express";
 import cookieParser from "cookie-parser";
-import router from "./routes/index.ts";
-import { connectToDb } from "./config/db.ts"; // Importa a função de conexão
+import router from "./routes/index";
+import { connectToDb } from "./config/db"; // Importa a função de conexão
 
 // Configuração do dotenv
 dotenv.config({ path: ".env" });
