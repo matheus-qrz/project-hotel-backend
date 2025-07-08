@@ -21,12 +21,22 @@ const origins = process.env.CORS_ORIGIN
 // Middlewares
 app.use(
     cors({
-        origin: origins,
+        origin: (origin, callback) => {
+            const allowedOrigins = process.env.CORS_ORIGIN?.split(",") || [
+                "http://localhost:3000",
+            ];
+            if (!origin || allowedOrigins.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error("Not allowed by CORS"));
+            }
+        },
+        credentials: true,
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
-        credentials: true,
     })
 );
+
 
 app.use(cookieParser());
 app.use(express.json({ limit: '200mb' }));
