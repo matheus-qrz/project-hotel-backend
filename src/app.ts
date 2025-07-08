@@ -11,21 +11,15 @@ dotenv.config();
 const app = express();
 
 // Pré-flight
-app.options('*', cors({
-    origin: function (origin, callback) {
-        const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
-            "http://localhost:3000",
-            "https://seugarcom-prod.vercel.app",
-        ];
-        if (!origin || allowedOrigins.includes(origin)) {
-            callback(null, true);
-        } else {
-            console.error("❌ Pré-flight bloqueado para origem:", origin);
-            callback(new Error("Not allowed by CORS"));
-        }
-    },
-    credentials: true
-}));
+app.options('/login', (req, res) => {
+    res.set({
+        "Access-Control-Allow-Origin": "http://localhost:3000",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "false" // ou remova se não estiver usando credentials
+    });
+    res.sendStatus(204);
+});
 
 app.use(
     cors({
