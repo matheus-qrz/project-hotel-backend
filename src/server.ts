@@ -14,20 +14,35 @@ dotenv.config();
 
 const app = express();
 
-const origins = process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',')
-    : ["http://localhost:3000", "http://127.0.0.1:3000"];
+// CORS Pré-flight (muito importante para credentials:true)
+app.options('*', cors({
+    origin: function (origin, callback) {
+        const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
+            "http://localhost:3000",
+            "https://seugarcom-prod.vercel.app",
+        ];
+        if (!origin || allowedOrigins.includes(origin)) {
+            callback(null, true);
+        } else {
+            console.error("❌ Pré-flight bloqueado para origem:", origin);
+            callback(new Error("Not allowed by CORS"));
+        }
+    },
+    credentials: true
+}));
 
-// Middlewares
+// Middleware principal CORS
 app.use(
     cors({
-        origin: (origin, callback) => {
-            const allowedOrigins = process.env.CORS_ORIGIN?.split(",") || [
+        origin: function (origin, callback) {
+            const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
                 "http://localhost:3000",
+                "https://seugarcom-prod.vercel.app",
             ];
             if (!origin || allowedOrigins.includes(origin)) {
                 callback(null, true);
             } else {
+                console.error("❌ CORS bloqueado para origem:", origin);
                 callback(new Error("Not allowed by CORS"));
             }
         },
@@ -37,30 +52,20 @@ app.use(
     })
 );
 
-
+// Resto igual
 app.use(cookieParser());
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
-
-// Documentação Swagger
 app.use("/api-docs", swaggerUI.serve, swaggerUI.setup(swaggerJSDoc));
-
-// Conecta ao banco de dados
 connectToDb();
-
-// Tratamento de erros global
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error(err.stack);
-    res.status(500).json({ message: "Erro interno no servidor." });
-});
-
-// Rotas
 app.use("/", router());
 
+// Um único tratamento de erro global
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error(err.stack);
     res.status(500).json({ message: "Erro interno no servidor." });
 });
+
 
 // Inicialização do servidor
 const PORT = process.env.PORT || 3333;
