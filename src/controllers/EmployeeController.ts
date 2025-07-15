@@ -23,7 +23,6 @@ export const getEmployeesByRestaurantController = async (req: Request, res: Resp
         // Busca todos os funcionários associados ao restaurante
         const employees = await UserModel.find({
             restaurant: restaurantId,
-            role: { $in: ["MANAGER", "ATTENDANT"] }
         }).select("firstName lastName avatar restaurantUnit role");
 
         if (employees.length === 0) {
