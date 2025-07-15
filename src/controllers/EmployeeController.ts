@@ -92,7 +92,9 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
         const employee = await UserModel.findOne({
             _id: id,
             role: { $ne: "CLIENT" }
-        }).select("-authentication.password -authentication.salt");
+        }).select("-authentication.password -authentication.salt")
+            .populate('restaurant')
+            .populate('restaurantUnit');
 
         if (!employee) {
             return res.status(404).json({
@@ -112,7 +114,16 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
 // Criar um novo funcionário
 export const createEmployeeController = async (req: Request, res: Response) => {
     try {
-        const { firstName, lastName, email, phone, password, role, id: restaurantId, unitId } = req.body;
+        const {
+            firstName,
+            lastName,
+            email,
+            phone,
+            password,
+            role,
+            restaurant,
+            restaurantUnit
+        } = req.body;
 
         // Verifica campos obrigatórios básicos
         if (!firstName || !lastName || !email || !role) {
@@ -137,46 +148,50 @@ export const createEmployeeController = async (req: Request, res: Response) => {
             });
         }
 
-        // Verifica se pelo menos um dos IDs (restaurante ou unidade) foi fornecido
-        if (!restaurantId && !unitId) {
+        // Verifica se o ID de restaurante foi fornecido
+        if (!restaurant) {
             return res.status(400).json({
-                message: "É necessário fornecer um ID de restaurante ou unidade"
+                message: "O ID do restaurante é obrigatório"
             });
         }
 
-        let restaurant;
-        let unit = null;
-
-        // Verifica primeiro o restaurante
-        if (restaurantId) {
-            if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
-                return res.status(400).json({
-                    message: "ID de restaurante inválido"
-                });
-            }
-            restaurant = await RestaurantModel.findById(restaurantId);
-            if (!restaurant) {
-                return res.status(404).json({
-                    message: "Restaurante não encontrado"
-                });
-            }
+        // Validação do ID do restaurante
+        if (!mongoose.Types.ObjectId.isValid(restaurant)) {
+            return res.status(400).json({
+                message: "ID de restaurante inválido"
+            });
         }
 
-        // Se houver unitId, verifica a unidade
-        if (unitId) {
-            if (!mongoose.Types.ObjectId.isValid(unitId)) {
+        let restaurantDoc = await RestaurantModel.findById(restaurant);
+        if (!restaurantDoc) {
+            return res.status(404).json({
+                message: "Restaurante não encontrado"
+            });
+        }
+
+        let unitDoc = null;
+
+        // Se houver unidade, validar também
+        if (restaurantUnit) {
+            if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
                 return res.status(400).json({
                     message: "ID de unidade inválido"
                 });
             }
-            unit = await RestaurantUnitModel.findById(unitId);
-            if (!unit && !restaurant) {
+
+            unitDoc = await RestaurantUnitModel.findById(restaurantUnit);
+            if (!unitDoc) {
                 return res.status(404).json({
                     message: "Unidade não encontrada"
                 });
             }
-            // Se encontrou a unidade, usa o restaurante associado a ela
-            restaurant = await RestaurantModel.findById(unit?.restaurant);
+
+            // Garante que a unidade pertença ao restaurante informado
+            if (unitDoc.restaurant.toString() !== restaurant) {
+                return res.status(400).json({
+                    message: "Esta unidade não pertence ao restaurante informado"
+                });
+            }
         }
 
         const salt = generateSalt();
@@ -193,23 +208,23 @@ export const createEmployeeController = async (req: Request, res: Response) => {
                 salt,
                 sessionToken: "",
             },
-            restaurant: restaurant?._id,
-            restaurantUnit: unit ? unit._id : restaurant?._id,
+            restaurant: restaurantDoc._id,
+            restaurantUnit: unitDoc ? unitDoc._id : restaurantDoc._id,
             orders: []
         });
 
         await newEmployee.save();
 
         // Atualiza as referências apropriadas
-        if (unit) {
+        if (unitDoc) {
             await RestaurantUnitModel.findByIdAndUpdate(
-                unit._id,
+                unitDoc._id,
                 { $addToSet: { staff: newEmployee._id } }
             );
         }
 
         await RestaurantModel.findByIdAndUpdate(
-            restaurant?._id,
+            restaurantDoc._id,
             { $addToSet: { staff: newEmployee._id } }
         );
 
@@ -221,8 +236,8 @@ export const createEmployeeController = async (req: Request, res: Response) => {
                 lastName: newEmployee.lastName,
                 email: newEmployee.email,
                 role: newEmployee.role,
-                restaurant: restaurant?._id,
-                unit: unit ? unit._id : restaurant?._id,
+                restaurant: newEmployee.restaurant,
+                restaurantUnit: newEmployee.restaurantUnit,
             }
         });
     } catch (error: any) {
@@ -237,74 +252,92 @@ export const createEmployeeController = async (req: Request, res: Response) => {
 export const updateEmployeeController = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { firstName, lastName, email, phone, role, password } = req.body;
-
-        // Verifica se o ID é válido
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                message: "ID de funcionário inválido"
-            });
-        }
+        const {
+            firstName,
+            lastName,
+            email,
+            phone,
+            password,
+            role,
+            restaurant,
+            restaurantUnit
+        } = req.body;
 
         // Verifica se o funcionário existe
-        const employee = await UserModel.findOne({
-            _id: id,
-            role: { $ne: "CLIENT" }
-        });
-
+        const employee = await UserModel.findById(id);
         if (!employee) {
-            return res.status(404).json({
-                message: "Funcionário não encontrado"
-            });
+            return res.status(404).json({ message: "Funcionário não encontrado" });
         }
 
-        // Verifica se o email está sendo alterado e já existe
-        if (email && email !== employee.email) {
-            const existingUserWithEmail = await UserModel.findOne({ email });
-            if (existingUserWithEmail) {
-                return res.status(400).json({
-                    message: "Email já está em uso"
-                });
+        // Valida papel
+        const validRoles = ["ADMIN", "MANAGER", "ATTENDANT"];
+        if (role && !validRoles.includes(role)) {
+            return res.status(400).json({ message: "Função inválida" });
+        }
+
+        // Valida restaurant (se enviado)
+        let restaurantDoc = employee.restaurant;
+        if (restaurant && restaurant !== String(employee.restaurant)) {
+            if (!mongoose.Types.ObjectId.isValid(restaurant)) {
+                return res.status(400).json({ message: "ID de restaurante inválido" });
             }
+            const r = await RestaurantModel.findById(restaurant);
+            if (!r) return res.status(404).json({ message: "Restaurante não encontrado" });
+            restaurantDoc = r._id;
         }
 
-        // Prepara os dados para atualização
-        const updateData: any = {};
-        if (firstName) updateData.firstName = firstName;
-        if (lastName) updateData.lastName = lastName;
-        if (email) updateData.email = email;
-        if (phone) updateData.phone = phone;
-        if (role) {
-            const validRoles = ["ADMIN", "MANAGER", "ATTENDANT"];
-            if (!validRoles.includes(role)) {
-                return res.status(400).json({
-                    message: "Função inválida. Use ADMIN, MANAGER ou ATTENDANT"
-                });
+        // Valida unidade (se enviada)
+        let unitDoc = employee.restaurantUnit;
+        if (restaurantUnit && restaurantUnit !== String(employee.restaurantUnit)) {
+            if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
+                return res.status(400).json({ message: "ID de unidade inválido" });
             }
-            updateData.role = role;
+            const unit = await RestaurantUnitModel.findById(restaurantUnit);
+            if (!unit) {
+                return res.status(404).json({ message: "Unidade não encontrada" });
+            }
+            if (String(unit.restaurant) !== String(restaurantDoc)) {
+                return res.status(400).json({ message: "Unidade não pertence ao restaurante fornecido" });
+            }
+            unitDoc = unit._id;
         }
 
-        // Atualiza a senha se fornecida
-        if (password) {
-            const salt = random();
-            const hashedPassword = authentication(salt, password);
-            updateData["authentication.password"] = hashedPassword;
-            updateData["authentication.salt"] = salt;
+        // Atualiza dados básicos
+        if (firstName) employee.firstName = firstName;
+        if (lastName) employee.lastName = lastName;
+        if (email) employee.email = email;
+        if (phone) employee.phone = phone;
+        if (role) employee.role = role;
+
+        // Atualiza senha se fornecida
+        if (password && password.length >= 6) {
+            const salt = generateSalt();
+            const hashedPassword = generateHash(password, salt);
+            employee.authentication && employee.authentication.password === hashedPassword;
+            employee.authentication && employee.authentication.salt === salt;
         }
 
-        // Atualiza o funcionário
-        const updatedEmployee = await UserModel.findByIdAndUpdate(
-            id,
-            { $set: updateData },
-            { new: true }
-        ).select("-authentication.password -authentication.salt");
+        // Atualiza vínculos
+        employee.restaurant = restaurantDoc;
+        employee.restaurantUnit = unitDoc;
 
-        return res.status(200).json(updatedEmployee);
+        await employee.save();
+
+        return res.status(200).json({
+            message: "Funcionário atualizado com sucesso",
+            employee: {
+                id: employee._id,
+                firstName: employee.firstName,
+                lastName: employee.lastName,
+                email: employee.email,
+                role: employee.role,
+                restaurant: employee.restaurant,
+                restaurantUnit: employee.restaurantUnit
+            }
+        });
     } catch (error: any) {
         console.error("Erro ao atualizar funcionário:", error);
-        return res.status(500).json({
-            message: error.message || "Erro interno no servidor"
-        });
+        return res.status(500).json({ message: error.message || "Erro interno do servidor" });
     }
 };
 
@@ -313,51 +346,33 @@ export const deleteEmployeeController = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
 
-        // Verifica se o ID é válido
-        if (!mongoose.Types.ObjectId.isValid(id)) {
-            return res.status(400).json({
-                message: "ID de funcionário inválido"
-            });
-        }
-
-        // Busca o funcionário para verificar se existe e se não é o último ADMIN
-        const employee = await UserModel.findOne({
-            _id: id,
-            role: { $ne: "CLIENT" }
-        });
-
+        const employee = await UserModel.findById(id);
         if (!employee) {
-            return res.status(404).json({
-                message: "Funcionário não encontrado"
-            });
+            return res.status(404).json({ message: "Funcionário não encontrado" });
         }
 
-        // Se for um ADMIN, verifica se é o último
-        if (employee.role === "ADMIN") {
-            const adminsCount = await UserModel.countDocuments({ role: "ADMIN" });
-            if (adminsCount <= 1) {
-                return res.status(400).json({
-                    message: "Não é possível excluir o último administrador"
-                });
-            }
+        // Remove o vínculo do funcionário da unidade, se existir
+        if (employee.restaurantUnit) {
+            await RestaurantUnitModel.findByIdAndUpdate(
+                employee.restaurantUnit,
+                { $pull: { staff: employee._id } }
+            );
         }
 
-        // Remove o funcionário das unidades em que ele trabalha
-        await RestaurantUnitModel.updateMany(
-            { staff: id },
-            { $pull: { staff: id } }
-        );
+        // Remove o vínculo do funcionário do restaurante (matriz)
+        if (employee.restaurant) {
+            await RestaurantModel.findByIdAndUpdate(
+                employee.restaurant,
+                { $pull: { staff: employee._id } }
+            );
+        }
 
-        // Exclui o funcionário
+        // Deleta o funcionário
         await UserModel.findByIdAndDelete(id);
 
-        return res.status(200).json({
-            message: "Funcionário excluído com sucesso"
-        });
+        return res.status(200).json({ message: "Funcionário removido com sucesso" });
     } catch (error: any) {
-        console.error("Erro ao excluir funcionário:", error);
-        return res.status(500).json({
-            message: error.message || "Erro interno no servidor"
-        });
+        console.error("Erro ao remover funcionário:", error);
+        return res.status(500).json({ message: error.message || "Erro interno do servidor" });
     }
 };
