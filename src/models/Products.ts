@@ -28,6 +28,7 @@ export interface IProduct extends Document {
   name: string;
   quantity: number;
   price: number;
+  costPrice: number;
   description: string;
   isAvailable: boolean;
   isOnPromotion: boolean;
@@ -73,6 +74,10 @@ const productSchema = new Schema<IProduct>({
   price: {
     type: Number,
     required: true,
+  },
+  costPrice: {
+    type: Number,
+    required: false
   },
   isAvailable: {
     type: Boolean,
