@@ -39,7 +39,6 @@ export const createOrderHandler = async (req: Request, res: Response) => {
     const existingOrder = await OrderModel.findOne({
       'guestInfo.id': guestInfo.id,
       'meta.tableId': meta.tableId,
-      sessionId, // <- Adicione esta linha
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] }
     });
