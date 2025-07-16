@@ -529,48 +529,49 @@ export const cancelOrderController = async (req: Request, res: Response) => {
 
 export const addItemsToOrderController = async (req: Request, res: Response) => {
   try {
-    const { tableId, guestId } = req.params;
-    const { items, totalAmount } = req.body;
+    const { restaurantId, tableId } = req.params;
+    const { orderId } = req.params;
+    const { guestId, items, totalAmount } = req.body;
 
-    const existingOrder = await OrderModel.findOne({
-      'meta.tableId': Number(tableId),
-      'guestInfo.id': guestId,
-      status: { $in: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED] },
-      isPaid: false
+    const order = await OrderModel.findOne({
+      _id: orderId,
+      'meta.tableId': tableId,
+      'meta.guestId': guestId,
+      restaurantId,
+      status: { $in: ['processing', 'payment_requested'] }
     });
 
-    if (existingOrder) {
-      // Adiciona createdAt aos novos itens, se ainda não tiver
-      const enrichedItems = items.map((item: any) => ({
-        ...item,
-        createdAt: item.createdAt || new Date(),
-        addons: (item.addons || []).map((addon: any) => ({
-          ...addon,
-          createdAt: addon.createdAt || new Date()
-        }))
-      }));
-
-      const updatedOrder = await OrderModel.findByIdAndUpdate(
-        existingOrder._id,
-        {
-          $push: { items: { $each: enrichedItems } },
-          $set: { totalAmount: existingOrder.totalAmount + totalAmount }
-        },
-        { new: true }
-      );
-
-      return res.json(updatedOrder);
+    if (!order) {
+      return res.status(404).json({ message: 'Pedido não encontrado ou não pode ser alterado.' });
     }
 
-    // Caso contrário, retorne erro — não deve criar novo pedido aqui!
-    return res.status(404).json({ message: "Pedido em andamento não encontrado para adicionar itens." });
+    // Mapeia os itens existentes por ID para fácil comparação
+    const existingItemsMap = new Map(order.items.map(item => [item._id.toString(), item]));
 
+    for (const newItem of items) {
+      const existingItem = existingItemsMap.get(newItem._id);
+
+      if (existingItem) {
+        // Caso o item já exista, soma quantidade ou atualiza se mudou
+        existingItem.quantity += newItem.quantity;
+        existingItem.status = 'added';
+      } else {
+        // Novo item, adiciona diretamente
+        order.items.push({
+          ...newItem,
+          status: 'added',
+          createdAt: new Date()
+        });
+      }
+    }
+
+    order.totalAmount = totalAmount;
+    await order.save();
+
+    res.status(200).json(order);
   } catch (error) {
-    console.error("Erro ao adicionar itens ao pedido:", error);
-    res.status(500).json({
-      message: "Erro ao adicionar itens ao pedido",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    console.error('Erro ao adicionar itens ao pedido:', error);
+    res.status(500).json({ message: 'Erro interno ao adicionar itens ao pedido' });
   }
 };
 

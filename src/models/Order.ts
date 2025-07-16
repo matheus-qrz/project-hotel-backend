@@ -17,6 +17,7 @@ export interface IOrdermeta {
 }
 
 export interface IOrderItem {
+  _id: Number;
   name: String;
   price: Number;
   quantity: Number;
