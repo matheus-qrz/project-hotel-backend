@@ -475,9 +475,8 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
   }
 };
 
-
 export const getGuestOrdersController = async (req: Request, res: Response) => {
-  const { guestId, tableId } = req.params;
+  const { tableId, guestId } = req.params;
 
   if (!tableId) { return res.status(400).json({ message: "O parâmetro tableId é necessário." }); }
 
@@ -529,9 +528,8 @@ export const cancelOrderController = async (req: Request, res: Response) => {
 
 export const addItemsToOrderController = async (req: Request, res: Response) => {
   try {
-    const { restaurantId, tableId } = req.params;
-    const { orderId } = req.params;
-    const { guestId, items, totalAmount } = req.body;
+    const { restaurantId, tableId, orderId, guestId } = req.params;
+    const { items, totalAmount } = req.body;
 
     const order = await OrderModel.findOne({
       _id: orderId,
@@ -574,7 +572,6 @@ export const addItemsToOrderController = async (req: Request, res: Response) => 
     res.status(500).json({ message: 'Erro interno ao adicionar itens ao pedido' });
   }
 };
-
 
 export const cancelOrderItemController = async (req: Request, res: Response) => {
   try {

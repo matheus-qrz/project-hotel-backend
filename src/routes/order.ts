@@ -48,10 +48,10 @@ export default (orderRouter: Router) => {
   // como um token temporário para convidados
   orderRouter.get("/order/:id", getOrderByIdController);
 
-  orderRouter.get("/:tableId/guest-orders/:guestId", getGuestOrdersController);
+  orderRouter.get("/restaurant/table/:tableId/guest/:guestId/orders", getGuestOrdersController);
 
   orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/guest/:guestId/add-items",
+    "/restaurant/:restaurantId/table/:tableId/order/:orderId/guest/:guestId/add-items",
     addItemsToOrderController
   );
 
