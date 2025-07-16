@@ -155,15 +155,12 @@ export const getDashboardOrdersController = async (req: Request, res: Response) 
   }
 };
 
-// controllers/DashboardController.ts
-
 export const getDashboardFinancialController = async (req: Request, res: Response) => {
   try {
     const { unitId } = req.params;
     const today = new Date();
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
 
-    // Agregação de dados financeiros dos pedidos
     const financialMetrics = await OrderModel.aggregate([
       {
         $match: {
@@ -174,14 +171,6 @@ export const getDashboardFinancialController = async (req: Request, res: Respons
       },
       {
         $unwind: "$items"
-      },
-      {
-        $lookup: {
-          from: "products",
-          localField: "items._id",
-          foreignField: "_id",
-          as: "productDetails"
-        }
       },
       {
         $group: {
@@ -206,13 +195,9 @@ export const getDashboardFinancialController = async (req: Request, res: Respons
           },
           totalCost: {
             $sum: {
-              $multiply: [
-                { $arrayElemAt: ["$productDetails.costPrice", 0] },
-                "$items.quantity"
-              ]
+              $multiply: ["$items.costPrice", "$items.quantity"]
             }
           },
-          // Inclui receita de addons
           addonRevenue: {
             $sum: {
               $reduce: {
@@ -257,17 +242,12 @@ export const getDashboardFinancialController = async (req: Request, res: Respons
             ]
           },
           operationalCosts: {
-            $arrayElemAt: ["$restaurantInfo.operationalCosts.fixed", 0]
+            $ifNull: [{ $arrayElemAt: ["$restaurantInfo.operationalCosts.fixed", 0] }, 0]
           },
           variableCosts: {
             $multiply: [
               "$totalCost",
-              {
-                $arrayElemAt: [
-                  "$restaurantInfo.operationalCosts.variable.costPercentage",
-                  0
-                ]
-              }
+              { $ifNull: [{ $arrayElemAt: ["$restaurantInfo.operationalCosts.variable.costPercentage", 0] }, 0] }
             ]
           }
         }
