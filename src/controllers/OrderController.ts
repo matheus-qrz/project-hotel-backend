@@ -280,20 +280,18 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
+  const { tableId, guestId } = req.params;
+
   try {
-    const { id } = req.params;
-    const order = await OrderModel.findById(id)
-      .populate('user', 'firstName lastName email')
-      .populate('restaurantUnit', 'name address');
+    const orders = await OrderModel.find({
+      'meta.tableId': Number(tableId),    // ✅ correto, conforme model
+      'guestInfo.id': guestId             // ✅ busca pelo local certo
+    }).sort({ createdAt: -1 });
 
-    if (!order) {
-      return res.status(404).json({ message: "Pedido não encontrado" });
-    }
-
-    res.json(order);
+    return res.status(200).json(Array.isArray(orders) ? orders : []);
   } catch (error) {
-    console.error("Erro ao buscar pedido:", error);
-    res.status(500).json({ message: "Erro ao buscar pedido", error });
+    console.error('Erro ao buscar pedidos:', error);
+    return res.status(500).json({ message: 'Erro interno ao buscar pedidos.' });
   }
 };
 
@@ -484,7 +482,6 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
       'meta.guestId': guestId
     }).sort({ createdAt: -1 });
 
-    // ✅ Sempre retorna array, mesmo vazio
     return res.status(200).json(Array.isArray(orders) ? orders : []);
   } catch (error) {
     console.error("Erro ao buscar pedidos do convidado:", error);

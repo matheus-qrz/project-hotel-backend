@@ -1,5 +1,4 @@
 import mongoose from "mongoose";
-import { IProduct } from ".";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from '../types/order.types'
 const Schema = mongoose.Schema;
 
