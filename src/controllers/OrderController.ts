@@ -482,7 +482,7 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
   try {
     const orders = await OrderModel.find({
       'meta.tableId': Number(tableId),
-      'meta.guestId': guestId
+      'guestInfo.id': guestId
     }).sort({ createdAt: -1 });
 
     return res.status(200).json(Array.isArray(orders) ? orders : []);
