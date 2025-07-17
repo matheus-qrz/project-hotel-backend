@@ -478,19 +478,17 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 export const getGuestOrdersController = async (req: Request, res: Response) => {
   const { tableId, guestId } = req.params;
 
-  if (!tableId) { return res.status(400).json({ message: "O parâmetro tableId é necessário." }); }
-
   try {
-    const orders = await getGuestOrders(guestId, String(tableId));
+    const orders = await OrderModel.find({
+      'meta.tableId': Number(tableId),
+      'meta.guestId': guestId
+    }).sort({ createdAt: -1 });
 
-    if (orders.length === 0) {
-      return res.status(200).json({ message: "Nenhum pedido encontrado para este convidado." });
-    }
-
-    res.status(200).json({ orders });
+    // ✅ Sempre retorna array, mesmo vazio
+    return res.status(200).json(Array.isArray(orders) ? orders : []);
   } catch (error) {
     console.error("Erro ao buscar pedidos do convidado:", error);
-    res.status(500).json({ message: "Erro ao buscar pedidos do convidado", error });
+    return res.status(500).json({ message: 'Erro interno ao buscar pedidos.' });
   }
 };
 
