@@ -74,6 +74,8 @@ export const createOrderHandler = async (req: Request, res: Response) => {
       return res.status(200).json(updatedOrder);
     }
 
+    const resolvedSessionId = req.body.sessionId || crypto.randomUUID();
+
     // Preparação dos dados para novo pedido
     const orderData = {
       restaurantUnit: establishmentId,
@@ -86,7 +88,7 @@ export const createOrderHandler = async (req: Request, res: Response) => {
         name: guestInfo.name,
         joinedAt: guestInfo.joinedAt || new Date()
       },
-      sessionId: sessionId || crypto.randomUUID(),
+      sessionId: resolvedSessionId,
       isGuest: true,
       meta: {
         ...meta,
