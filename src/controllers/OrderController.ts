@@ -282,11 +282,14 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 export const getOrderByIdController = async (req: Request, res: Response) => {
   const { tableId, guestId } = req.params;
 
+  const numericTableId = Number(tableId);
+
   try {
     const orders = await OrderModel.find({
-      'meta.tableId': Number(tableId),    // ✅ correto, conforme model
-      'guestInfo.id': guestId             // ✅ busca pelo local certo
-    }).sort({ createdAt: -1 });
+      'guestInfo.id': guestId,
+      'meta.tableId': numericTableId,
+      status: { $in: ['processing', 'payment_requested'] }
+    });
 
     return res.status(200).json(Array.isArray(orders) ? orders : []);
   } catch (error) {
