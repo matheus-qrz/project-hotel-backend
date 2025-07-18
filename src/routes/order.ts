@@ -17,10 +17,10 @@ import { isAuthenticated, hasRole } from "../middlewares/index";
 
 export default (orderRouter: Router) => {
   // Rota para criação de pedidos (aberta para convidados)
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/new", initiateOrderController);
+  orderRouter.post("/restaurant/:restaurantId/order/initiate", initiateOrderController);
 
   // Rota para usuários autenticados criarem pedidos
-  orderRouter.post("/user/:id/order/create",
+  orderRouter.post("/:userId/:restaurantId/order/initiate",
     isAuthenticated,
     initiateOrderController);
 
