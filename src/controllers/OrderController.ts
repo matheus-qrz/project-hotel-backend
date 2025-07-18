@@ -1,144 +1,83 @@
 import { Request, Response } from "express";
-import { IOrderItem, OrderModel, getGuestOrders } from "../models/Order";
-import { IUser, UserModel } from "../models/User";
+import { IOrderItem, OrderModel } from "../models/Order";
+import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
-import { IRestaurant, RestaurantModel } from "../models/Restaurant";
-import mongoose, { Model } from "mongoose";
+import mongoose from "mongoose";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from "../types/order.types";
 
-// Controlador para criar pedidos
-export const createOrderHandler = async (req: Request, res: Response) => {
+export const initiateOrderController = async (req: Request, res: Response) => {
   const {
-    userId,
-    restaurantUnitId,
-    restaurantId,
-    items,
-    totalAmount,
     guestInfo,
     meta,
+    items,
+    totalAmount,
+    restaurantUnitId,
+    restaurantId,
     sessionId
   } = req.body;
 
   try {
-    if (!meta?.tableId || !guestInfo?.id || !guestInfo.name) {
-      return res.status(400).json({
-        message: "Número da mesa e guestId são obrigatórios"
-      });
-    }
+    const guestId = guestInfo.id;
+    const tableId = Number(meta.tableId);
 
-    const establishmentId = restaurantUnitId || restaurantId;
-
-    if (!establishmentId) {
-      return res.status(400).json({
-        message: "ID do restaurante ou unidade é obrigatório"
-      });
-    }
-
-    // Busca por pedido existente com critérios mais específicos
     const existingOrder = await OrderModel.findOne({
-      'guestInfo.id': guestInfo.id,
-      'meta.tableId': meta.tableId,
+      'guestInfo.id': guestId,
+      'meta.tableId': tableId,
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] }
     });
 
-
     const itemsWithStatus = items.map((item: any) => ({
       ...item,
-      status: OrderItemStatus.ADDED,
-      createdAt: new Date()
+      status: 'added',
+      createdAt: new Date(),
+      addons: item.addons?.map((addon: any) => ({
+        ...addon,
+        status: 'added',
+        createdAt: new Date()
+      }))
     }));
 
-
     if (existingOrder) {
-      // Atualiza o pedido existente usando $set e $push
-      const updatedOrder = await OrderModel.findOneAndUpdate(
-        { _id: existingOrder._id },
+      const updatedOrder = await OrderModel.findByIdAndUpdate(
+        existingOrder._id,
         {
           $push: { items: { $each: itemsWithStatus } },
-          $inc: { totalAmount: totalAmount },
+          $inc: { totalAmount },
           $set: {
             updatedAt: new Date(),
-            'meta.orderType': meta.orderType,
-            'meta.observations': meta.observations
+            status: 'processing',
+            'meta.observations': meta.observations,
+            'meta.orderType': meta.orderType
           }
         },
-        {
-          new: true,
-          upsert: false
-        }
+        { new: true }
       );
-
-      console.log('Pedido atualizado com sucesso:', updatedOrder);
       return res.status(200).json(updatedOrder);
     }
 
-    const resolvedSessionId = req.body.sessionId || crypto.randomUUID();
-
-    // Preparação dos dados para novo pedido
-    const orderData = {
-      restaurantUnit: establishmentId,
-      items,
-      totalAmount,
-      status: OrderStatus.PROCESSING,
-      isPaid: false,
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name,
-        joinedAt: guestInfo.joinedAt || new Date()
-      },
-      sessionId: resolvedSessionId,
-      isGuest: true,
+    const newOrder = new OrderModel({
+      guestInfo,
       meta: {
         ...meta,
         orderCreatedAt: new Date(),
-        sessionGroup: `table_${meta.tableId}_${new Date().toISOString().split('T')[0]}`,
-        guestId: guestInfo.id
-      }
-    };
-
-    // Cria novo pedido
-    const order = new OrderModel(orderData);
-    await order.save();
-
-    // Atualiza referências
-    const updatePromises: Promise<any>[] = [];
-
-    if (userId) {
-      updatePromises.push(
-        UserModel.findByIdAndUpdate<IUser>(
-          userId,
-          { $addToSet: { orders: order._id } },
-          { new: true }
-        ).exec()
-      );
-    }
-
-    if (establishmentId) {
-      const updateModel = restaurantUnitId ? RestaurantUnitModel : RestaurantModel;
-      updatePromises.push(
-        (updateModel as Model<IRestaurant>).findByIdAndUpdate(
-          establishmentId,
-          { $addToSet: { orders: order._id } },
-          { new: true }
-        ).exec()
-      );
-    }
-
-    if (updatePromises.length > 0) {
-      await Promise.all(updatePromises);
-    }
-
-    console.log('Pedido criado com sucesso:', order);
-    res.status(201).json(order);
-
-  } catch (error) {
-    console.error("Erro ao criar pedido:", error);
-    res.status(500).json({
-      message: "Erro ao criar pedido",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
+        sessionGroup: `table_${tableId}_${new Date().toISOString().split('T')[0]}`
+      },
+      restaurantUnit: restaurantUnitId || restaurantId,
+      items: itemsWithStatus,
+      totalAmount,
+      status: 'processing',
+      isPaid: false,
+      isGuest: true,
+      sessionId: sessionId || crypto.randomUUID()
     });
+
+    await newOrder.save();
+    return res.status(201).json(newOrder);
+  } catch (error) {
+    console.error("Erro ao iniciar pedido:", error);
+    return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
 
@@ -523,53 +462,6 @@ export const cancelOrderController = async (req: Request, res: Response) => {
       message: "Erro ao cancelar pedido",
       error: error instanceof Error ? error.message : 'Erro desconhecido'
     });
-  }
-};
-
-export const addItemsToOrderController = async (req: Request, res: Response) => {
-  try {
-    const { restaurantId, tableId, orderId, guestId } = req.params;
-    const { items, totalAmount } = req.body;
-
-    const order = await OrderModel.findOne({
-      _id: orderId,
-      'meta.tableId': tableId,
-      'meta.guestId': guestId,
-      restaurantId,
-      status: { $in: ['processing', 'payment_requested'] }
-    });
-
-    if (!order) {
-      return res.status(404).json({ message: 'Pedido não encontrado ou não pode ser alterado.' });
-    }
-
-    // Mapeia os itens existentes por ID para fácil comparação
-    const existingItemsMap = new Map(order.items.map(item => [item._id.toString(), item]));
-
-    for (const newItem of items) {
-      const existingItem = existingItemsMap.get(newItem._id);
-
-      if (existingItem) {
-        // Caso o item já exista, soma quantidade ou atualiza se mudou
-        existingItem.quantity += newItem.quantity;
-        existingItem.status = 'added';
-      } else {
-        // Novo item, adiciona diretamente
-        order.items.push({
-          ...newItem,
-          status: 'added',
-          createdAt: new Date()
-        });
-      }
-    }
-
-    order.totalAmount = totalAmount;
-    await order.save();
-
-    res.status(200).json(order);
-  } catch (error) {
-    console.error('Erro ao adicionar itens ao pedido:', error);
-    res.status(500).json({ message: 'Erro interno ao adicionar itens ao pedido' });
   }
 };
 
