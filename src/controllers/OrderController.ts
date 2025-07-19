@@ -25,7 +25,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       'guestInfo.id': guestId,
       'meta.tableId': tableId,
       isPaid: false,
-      status: { $in: ['processing', 'payment_requested'] }
+      status: { $in: ['processing', 'completed', 'payment_requested'] }
     });
 
     const itemsWithStatus = items.map((item: any) => ({
