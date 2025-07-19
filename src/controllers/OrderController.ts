@@ -488,8 +488,8 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
       return res.status(404).json({ message: "Pedido ou item não encontrado" });
     }
 
-    // Verificar se todos os items foram cancelados
-    const allCancelled = order.items.every((item: any) => item.status === OrderItemStatus.CANCELLED);
+    // Verificar se todos os itens foram cancelados
+    const allCancelled = order.items.every(item => item.status === OrderItemStatus.CANCELLED);
     if (allCancelled) {
       order.status = OrderStatus.CANCELLED;
       order.isCancelled = true;
