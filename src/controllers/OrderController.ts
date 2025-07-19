@@ -242,66 +242,34 @@ export const getOrderByIdController = async (req: Request, res: Response) => {
 };
 
 // Controlador para atualizar um pedido
-export const updateOrderController = async (req: Request, res: Response) => {
+export const updateOrderStatusController = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    const updates = req.body;
+    const { status } = req.body;
 
-    // Primeiro, verifica se o pedido existe
-    const existingOrder = await OrderModel.findOne({
-      _id: orderId,
-      isPaid: false,
-      status: { $ne: OrderStatus.CANCELLED }
-    });
-
-    if (!existingOrder) {
-      return res.status(404).json({ message: "Pedido não encontrado" });
-    }
-    let itemsUpdate = {};
-    if (updates.status) {
-      switch (updates.status as OrderStatusType) {
-        case OrderStatus.COMPLETED: itemsUpdate = {
-          'items.$[].status': OrderItemStatus.COMPLETED
-        };
-          break;
-        case OrderStatus.PROCESSING: itemsUpdate = {
-          'items.$[item].status': OrderItemStatus.ADDED
-        };
-          break;
-        case OrderStatus.CANCELLED: itemsUpdate = {
-          'items.$[].status': OrderItemStatus.CANCELLED
-        };
-          break;
-        case OrderStatus.PAYMENT_REQUESTED:
-          // Lógica específica para pagamento solicitado          
-          break;
-        case OrderStatus.PAID:
-          // Lógica específica para pedido pago          
-          break;
-      }
+    if (!status) {
+      return res.status(400).json({ message: "Status não fornecido." });
     }
 
-    // Se estiver atualizando o status para 'completed', atualiza também o status dos itens
-    if (updates.status === OrderStatus.COMPLETED) {
-      updates['items'] = existingOrder.items.map(item => ({
-        ...item,
-        status: OrderStatus.COMPLETED
-      }));
-    }
-
-    // Realiza a atualização
-    const order = await OrderModel.findByIdAndUpdate(
+    const updatedOrder = await OrderModel.findByIdAndUpdate(
       orderId,
-      { $set: updates },
+      {
+        $set: { status, updatedAt: new Date() }
+      },
       { new: true }
     );
 
-    res.json(order);
+    if (!updatedOrder) {
+      return res.status(404).json({ message: "Pedido não encontrado." });
+    }
+
+    return res.status(200).json(updatedOrder);
   } catch (error) {
-    console.error("Erro ao atualizar pedido:", error);
-    res.status(500).json({ message: "Erro ao atualizar pedido", error });
+    console.error("Erro ao atualizar status do pedido:", error);
+    return res.status(500).json({ message: "Erro interno." });
   }
 };
+
 
 // Controlador para excluir um pedido
 export const deleteOrderController = async (req: Request, res: Response) => {

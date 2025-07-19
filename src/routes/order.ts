@@ -3,7 +3,7 @@ import {
   deleteOrderController,
   getRestaurantUnitOrdersController,
   getOrderByIdController,
-  updateOrderController,
+  updateOrderStatusController,
   requestOrderCheckout,
   getTableOrdersController,
   processTablePaymentHandler,
@@ -51,8 +51,9 @@ export default (orderRouter: Router) => {
 
   // Atualizar pedido (requer autenticação)
   orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/update",
-    updateOrderController
+    '/restaurant/:restaurantId/order/:orderId/status',
+    isAuthenticated,
+    updateOrderStatusController
   );
 
   // Excluir pedido (requer autenticação)
