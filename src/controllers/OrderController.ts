@@ -19,7 +19,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
   try {
     const guestId = guestInfo.id;
-    const tableId = Number(meta.tableId);
+    const tableId = meta.tableId;
 
     const existingOrder = await OrderModel.findOne({
       'guestInfo.id': guestId,
@@ -40,6 +40,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     }));
 
     if (existingOrder) {
+      console.log("Pedido existente encontrado:", existingOrder._id);
       const updatedOrder = await OrderModel.findByIdAndUpdate(
         existingOrder._id,
         {
@@ -54,27 +55,28 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         },
         { new: true }
       );
+      console.log("pedido atualizado: ", updatedOrder);
       return res.status(200).json(updatedOrder);
+    } else {
+      const newOrder = new OrderModel({
+        guestInfo,
+        meta: {
+          ...meta,
+          orderCreatedAt: new Date(),
+          sessionGroup: `table_${tableId}_${new Date().toISOString().split('T')[0]}`
+        },
+        restaurantUnit: restaurantUnitId || restaurantId,
+        items: itemsWithStatus,
+        totalAmount,
+        status: 'processing',
+        isPaid: false,
+        isGuest: true,
+        sessionId: sessionId || crypto.randomUUID()
+      });
+
+      await newOrder.save();
+      return res.status(201).json(newOrder);
     }
-
-    const newOrder = new OrderModel({
-      guestInfo,
-      meta: {
-        ...meta,
-        orderCreatedAt: new Date(),
-        sessionGroup: `table_${tableId}_${new Date().toISOString().split('T')[0]}`
-      },
-      restaurantUnit: restaurantUnitId || restaurantId,
-      items: itemsWithStatus,
-      totalAmount,
-      status: 'processing',
-      isPaid: false,
-      isGuest: true,
-      sessionId: sessionId || crypto.randomUUID()
-    });
-
-    await newOrder.save();
-    return res.status(201).json(newOrder);
   } catch (error) {
     console.error("Erro ao iniciar pedido:", error);
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
