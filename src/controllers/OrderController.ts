@@ -28,21 +28,22 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       status: { $in: ['processing', 'completed', 'payment_requested'] }
     });
 
+    // Garante _id único e adiciona productId (preservado do frontend)
     const itemsWithStatus = items.map((item: any) => ({
       ...item,
-      _id: new mongoose.Types.ObjectId(), // Garante _id único
+      _id: new mongoose.Types.ObjectId(),
+      productId: item.productId ?? null, // Se não vier, mantém como null
       status: 'added',
       createdAt: new Date(),
       addons: item.addons?.map((addon: any) => ({
         ...addon,
-        _id: new mongoose.Types.ObjectId(), // Garante _id único para o addon também
+        _id: new mongoose.Types.ObjectId(),
         status: 'added',
         createdAt: new Date()
       }))
     }));
 
     if (existingOrder) {
-      console.log("Pedido existente encontrado:", existingOrder._id);
       const updatedOrder = await OrderModel.findByIdAndUpdate(
         existingOrder._id,
         {
@@ -57,7 +58,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         },
         { new: true }
       );
-      console.log("pedido atualizado: ", updatedOrder);
       return res.status(200).json(updatedOrder);
     } else {
       const newOrder = new OrderModel({
