@@ -1,9 +1,9 @@
+import mongoose from "mongoose";
 import { Request, Response } from "express";
 import { IOrderItem, OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
-import mongoose from "mongoose";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from "../types/order.types";
 
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -30,10 +30,12 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
     const itemsWithStatus = items.map((item: any) => ({
       ...item,
+      _id: new mongoose.Types.ObjectId(), // Garante _id único
       status: 'added',
       createdAt: new Date(),
       addons: item.addons?.map((addon: any) => ({
         ...addon,
+        _id: new mongoose.Types.ObjectId(), // Garante _id único para o addon também
         status: 'added',
         createdAt: new Date()
       }))
