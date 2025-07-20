@@ -272,7 +272,6 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
   }
 };
 
-
 // Controlador para excluir um pedido
 export const deleteOrderController = async (req: Request, res: Response) => {
   try {
@@ -391,11 +390,18 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 
 export const getGuestOrdersController = async (req: Request, res: Response) => {
   const { tableId, guestId } = req.params;
+  const sessionId = req.headers['x-session-id'];
+
+  if (!sessionId) {
+    return res.status(400).json({ message: 'Session ID não informado.' });
+  }
 
   try {
     const orders = await OrderModel.find({
       'meta.tableId': Number(tableId),
-      'guestInfo.id': guestId
+      'guestInfo.id': guestId,
+      sessionId: sessionId,
+      status: { $in: ['processing', 'payment_requested', 'completed'] }
     }).sort({ createdAt: -1 });
 
     return res.status(200).json(Array.isArray(orders) ? orders : []);
@@ -404,6 +410,7 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Erro interno ao buscar pedidos.' });
   }
 };
+
 
 export const cancelOrderController = async (req: Request, res: Response) => {
   try {
