@@ -7,13 +7,12 @@ export const OrderStatus = {
     CANCELLED: 'cancelled'
 } as const;
 
-export const OrderItemStatus = {
-    ADDED: 'added',
-    REMOVED: 'removed',
-    PROCESSING: 'processing',
-    CANCELLED: 'cancelled',
-    COMPLETED: 'completed'
-} as const;
+export enum OrderItemStatus {
+    ADDED = "added",
+    CANCELLED = "cancelled",
+    COMPLETED = "completed",
+    REDUCED = "reduced",
+}
 
 export type OrderStatusType = typeof OrderStatus[keyof typeof OrderStatus];
 export type OrderItemStatusType = typeof OrderItemStatus[keyof typeof OrderItemStatus];

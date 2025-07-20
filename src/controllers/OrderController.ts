@@ -495,16 +495,33 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       return res.status(404).json({ message: "Pedido ou item não encontrado" });
     }
 
-    const updateData: Partial<IOrderItem> = {};
-    if (quantity !== undefined) {
-      updateData.quantity = quantity;
-      updateData.status = OrderItemStatus.ADDED;
+    // Captura o item atual para comparação de quantidade
+    const item = existingOrder.items.find((i: any) => i._id?.toString() === itemId);
+
+    if (!item) {
+      return res.status(404).json({ message: "Item não encontrado no pedido" });
     }
 
     const setUpdate: any = {};
-    if (quantity !== undefined) setUpdate["items.$.quantity"] = quantity;
-    if (observations !== undefined) setUpdate["items.$.observations"] = observations;
-    if (status !== undefined) setUpdate["items.$.status"] = status;
+
+    // Aplica a lógica de REDUÇÃO
+    if (quantity !== undefined) {
+      setUpdate["items.$.quantity"] = quantity;
+
+      if (quantity < item.quantity) {
+        setUpdate["items.$.status"] = OrderItemStatus.REDUCED; // ← aplica status 'reduced'
+      } else {
+        setUpdate["items.$.status"] = OrderItemStatus.ADDED; // ← mantém 'added' para aumentos
+      }
+    }
+
+    if (observations !== undefined) {
+      setUpdate["items.$.observations"] = observations;
+    }
+
+    if (status !== undefined) {
+      setUpdate["items.$.status"] = status;
+    }
 
     const updatedOrder = await OrderModel.findOneAndUpdate(
       {

@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from '../types/order.types'
 const Schema = mongoose.Schema;
 
+
 // Interfaces
 export interface IOrdermeta {
   guestId: string;
