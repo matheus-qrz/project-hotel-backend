@@ -411,7 +411,6 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
   }
 };
 
-
 export const cancelOrderController = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
