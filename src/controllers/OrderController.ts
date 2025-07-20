@@ -499,16 +499,17 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       updateData.status = OrderItemStatus.ADDED;
     }
 
-    if (observations !== undefined) updateData.observations = observations;
-    if (status !== undefined) updateData.status = status as OrderItemStatusType;
+    const setUpdate: any = {};
+    if (quantity !== undefined) setUpdate["items.$.quantity"] = quantity;
+    if (observations !== undefined) setUpdate["items.$.observations"] = observations;
+    if (status !== undefined) setUpdate["items.$.status"] = status;
 
-    // Atualiza o item
     const updatedOrder = await OrderModel.findOneAndUpdate(
       {
         _id: orderId,
         'items._id': itemId
       },
-      { $set: updateData },
+      { $set: setUpdate },
       { new: true }
     );
 
