@@ -1,438 +1,221 @@
-// controllers/DashboardController.ts
 import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
-import { UserModel } from "../models/User";
-import { ProductModel } from "../models/Products";
-import { RestaurantModel } from "../models/Restaurant";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import mongoose from "mongoose";
-import { formatMonthlyData } from "../utils/formatMonthlyData";
-import { calculateAverageOrderTime, calculateAcquisitionCost, calculateAverageDiscount, calculateBreakEvenPoint, calculateCMPCMO, calculateOperationalProfit, calculatePromotionalRevenue, calculatePromotionConversionRate, calculatePromotionROI } from "../utils/finantials";
+import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
+import {
+  CustomersDashboardData,
+  CustomersSummary,
+  FinancialDashboardData,
+  FinancialSummary,
+  MonthlyCustomerReport,
+  OrderSummary,
+  OrdersDashboardData,
+  PromotionUsage,
+  PromotionsDashboardData,
+  RecentSale,
+  TopCustomer,
+  TopOrder
+} from '../types/dashboard';
 
-// Interfaces
-interface OrderMetrics {
-  inProgress: number;
-  approved: number;
-  cancelled: number;
-  averageTicket: number;
-  conversionRate: number;
-  averageTime: number;
-}
-
-interface FinancialMetrics {
-  revenue: number;
-  totalSales: number;
-  averageTicket: number;
-  cmpCmo: number;
-  breakEvenPoint: number;
-  operationalProfit: number;
-}
-
-interface UnitData {
-  isMatrix: boolean;
-  id: mongoose.Types.ObjectId;
-  restaurantId: mongoose.Types.ObjectId;
-}
-
-// Função auxiliar para verificar e obter dados da unidade
-async function getUnitData(unitId: string): Promise<UnitData> {
-  const restaurant = await RestaurantModel.findById(unitId);
-  if (restaurant) {
-    return {
-      isMatrix: true,
-      id: restaurant._id,
-      restaurantId: restaurant._id
-    };
-  }
-
-  const unit = await RestaurantUnitModel.findById(unitId);
-  if (!unit) {
-    throw new Error("Unidade não encontrada");
-  }
-
-  return {
-    isMatrix: false,
-    id: unit._id,
-    restaurantId: unit.restaurant
-  };
-}
-
-export const getDashboardOrdersController = async (req: Request, res: Response) => {
+// ------------------ FINANCIAL DASHBOARD ------------------
+export const getFinancialDashboardDataController = async (
+  req: Request,
+  res: Response
+) => {
   try {
-    const { unitId } = req.params;
-    const unitData = await getUnitData(unitId);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const filter = buildDashboardFilterFromRequest(req);
 
-    const baseQuery = unitData.isMatrix
-      ? { restaurant: unitData.restaurantId }
-      : { restaurantUnit: unitData.id };
-
-    // Buscar pedidos do dia
-    const orders = await OrderModel.find({
-      ...baseQuery,
-      createdAt: { $gte: today }
-    });
-
-    // Calcular métricas
-    const metrics: OrderMetrics = {
-      inProgress: orders.filter(order => order.status === 'processing').length,
-      approved: orders.filter(order => order.status === 'completed').length,
-      cancelled: orders.filter(order => order.status === 'cancelled').length,
-      averageTicket: orders.reduce((sum, order) => sum + order.totalAmount, 0) / orders.length || 0,
-      conversionRate: (orders.filter(order => order.status === 'completed').length / orders.length) * 100 || 0,
-      averageTime: calculateAverageOrderTime(orders)
-    };
-
-    // Buscar pedidos por hora nos últimos 12 meses
-    const ordersByMonth = await OrderModel.aggregate([
+    const summary = await OrderModel.aggregate([
       {
         $match: {
-          ...(unitData.isMatrix
-            ? { restaurant: unitData.restaurantId }
-            : { restaurantUnit: unitData.id }
-          ),
-          createdAt: { $gte: new Date(new Date().setMonth(today.getMonth() - 11)) }
+          ...filter,
+          status: 'paid'
         }
-      },
-      {
-        $group: {
-          _id: {
-            month: { $month: "$createdAt" },
-            year: { $year: "$createdAt" }
-          },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { "_id.year": 1, "_id.month": 1 } }
-    ]);
-
-    // Buscar produtos mais pedidos
-    const topProducts = await OrderModel.aggregate([
-      {
-        $match: {
-          ...(unitData.isMatrix
-            ? { restaurant: unitData.restaurantId }
-            : { restaurantUnit: unitData.id }
-          )
-        }
-      },
-      { $unwind: "$items" },
-      {
-        $group: {
-          _id: "$items.name",
-          count: { $sum: 1 },
-          totalRevenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
-        }
-      },
-      { $sort: { count: -1 } },
-      { $limit: 5 },
-      {
-        $project: {
-          name: "$_id",
-          orderCount: "$count",
-          revenue: { $round: ["$totalRevenue", 2] }
-        }
-      }
-    ]);
-
-    res.status(200).json({
-      inProgress: metrics.inProgress,
-      approved: metrics.approved,
-      cancelled: metrics.cancelled,
-      averageTicket: metrics.averageTicket,
-      conversionRate: metrics.conversionRate,
-      averageTime: metrics.averageTime,
-      ordersByMonth: formatMonthlyData(ordersByMonth),
-      topProducts
-    });
-  } catch (error) {
-    console.error("Erro no getDashboardOrdersController:", error);
-    res.status(500).json({
-      message: "Erro ao buscar dados de pedidos",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
-  }
-};
-
-export const getDashboardFinancialController = async (req: Request, res: Response) => {
-  try {
-    const { unitId } = req.params;
-    const today = new Date();
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-
-    const financialMetrics = await OrderModel.aggregate([
-      {
-        $match: {
-          restaurantUnit: new mongoose.Types.ObjectId(unitId),
-          status: { $nin: ['cancelled'] },
-          createdAt: { $gte: startOfMonth }
-        }
-      },
-      {
-        $unwind: "$items"
       },
       {
         $group: {
           _id: null,
-          totalRevenue: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "paid"] },
-                { $multiply: ["$items.price", "$items.quantity"] },
-                0
-              ]
-            }
-          },
-          totalSales: {
-            $sum: {
-              $cond: [
-                { $eq: ["$status", "paid"] },
-                1,
-                0
-              ]
-            }
-          },
-          totalCost: {
-            $sum: {
-              $multiply: ["$items.costPrice", "$items.quantity"]
-            }
-          },
-          addonRevenue: {
-            $sum: {
-              $reduce: {
-                input: "$items.addons",
-                initialValue: 0,
-                in: {
-                  $add: [
-                    "$$value",
-                    { $multiply: ["$$this.price", "$$this.quantity"] }
-                  ]
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        $lookup: {
-          from: "restaurants",
-          let: { unitId: new mongoose.Types.ObjectId(unitId) },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $eq: ["$_id", "$$unitId"]
-                }
-              }
-            }
-          ],
-          as: "restaurantInfo"
-        }
-      },
-      {
-        $project: {
-          revenue: { $add: ["$totalRevenue", "$addonRevenue"] },
-          totalSales: 1,
-          averageTicket: {
-            $cond: [
-              { $gt: ["$totalSales", 0] },
-              { $divide: [{ $add: ["$totalRevenue", "$addonRevenue"] }, "$totalSales"] },
-              0
-            ]
-          },
-          operationalCosts: {
-            $ifNull: [{ $arrayElemAt: ["$restaurantInfo.operationalCosts.fixed", 0] }, 0]
-          },
-          variableCosts: {
-            $multiply: [
-              "$totalCost",
-              { $ifNull: [{ $arrayElemAt: ["$restaurantInfo.operationalCosts.variable.costPercentage", 0] }, 0] }
-            ]
-          }
+          revenue: { $sum: '$totalAmount' },
+          cost: { $sum: '$financialMetrics.costPrice' },
+          profit: { $sum: '$financialMetrics.profit' },
+          discounts: { $sum: '$financialMetrics.promotionalDiscount' }
         }
       }
     ]);
 
-    // Buscar receita mensal dos últimos 6 meses
-    const monthlyRevenue = await OrderModel.aggregate([
-      {
-        $match: {
-          restaurantUnit: new mongoose.Types.ObjectId(unitId),
-          status: "paid",
-          createdAt: {
-            $gte: new Date(new Date().setMonth(today.getMonth() - 6))
-          }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            month: { $month: "$createdAt" },
-            year: { $year: "$createdAt" }
-          },
-          revenue: {
-            $sum: "$totalAmount"
-          }
-        }
-      },
-      {
-        $sort: {
-          "_id.year": 1,
-          "_id.month": 1
-        }
-      }
-    ]);
-
-    // Buscar vendas recentes
     const recentSales = await OrderModel.find({
-      restaurantUnit: new mongoose.Types.ObjectId(unitId),
-      status: "paid"
+      ...filter,
+      status: 'paid'
     })
       .sort({ createdAt: -1 })
       .limit(5)
-      .select('items totalAmount createdAt')
+      .select('guestInfo.name totalAmount sessionId')
       .lean();
 
-    // Calcular métricas finais
-    const metrics = financialMetrics[0] || {
-      revenue: 0,
-      totalSales: 0,
-      averageTicket: 0
-    };
+    const formattedSales = recentSales.map((sale) => ({
+      name: sale.guestInfo?.name || `Cliente ${sale.sessionId?.substring(0, 5)}`,
+      value: sale.totalAmount
+    }));
 
-    const operationalCosts = metrics.operationalCosts || 0;
-    const variableCosts = metrics.variableCosts || 0;
-    const totalCosts = operationalCosts + variableCosts;
-
-    // Cálculo do Break Even Point
-    const breakEvenPoint = totalCosts > 0 ?
-      totalCosts / (metrics.averageTicket || 1) : 0;
-
-    // Cálculo do CMP (Custo Médio por Pedido)
-    const cmpCmo = metrics.totalSales > 0 ?
-      totalCosts / metrics.totalSales : 0;
-
-    // Lucro Operacional
-    const operationalProfit = metrics.revenue - totalCosts;
-
-    res.status(200).json({
-      revenue: metrics.revenue || 0,
-      totalSales: metrics.totalSales || 0,
-      averageTicket: metrics.averageTicket || 0,
-      cmpCmo: cmpCmo,
-      breakEvenPoint: breakEvenPoint,
-      operationalProfit: operationalProfit,
-      monthlyRevenue: monthlyRevenue,
-      recentSales: recentSales
+    return res.status(200).json({
+      summary: summary[0] || {},
+      recentSales: formattedSales
     });
-
   } catch (error) {
-    console.error("Erro no getDashboardFinancialController:", error);
-    res.status(500).json({
-      message: "Erro ao buscar dados financeiros",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    console.error('Erro ao gerar dashboard financeiro:', error);
+    return res.status(500).json({ message: 'Erro ao gerar dashboard financeiro' });
   }
 };
 
-export const getDashboardPromotionsController = async (req: Request, res: Response) => {
+// ------------------ CUSTOMERS DASHBOARD ------------------
+export const getCustomersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const { unitId } = req.params;
-    const unitData = await getUnitData(unitId);
+    const filter = buildDashboardFilterFromRequest(req);
 
-    const baseQuery = unitData.isMatrix
-      ? { restaurant: unitData.restaurantId }
-      : { restaurantUnit: unitData.id };
-
-    // Buscar promoções ativas
-    const activePromotions = await ProductModel.find({
-      ...baseQuery,
-      isOnPromotion: true,
-      promotionEndDate: { $gte: new Date() }
-    });
-
-    // Buscar pedidos com itens promocionais
-    const promotionalOrders = await OrderModel.find({
-      ...baseQuery,
-      'items.isPromotional': true
-    });
-
-    // Calcular métricas de promoções
-    const metrics = {
-      activeCount: activePromotions.length,
-      conversionRate: calculatePromotionConversionRate(promotionalOrders),
-      averageDiscount: calculateAverageDiscount(activePromotions),
-      averageROI: calculatePromotionROI(promotionalOrders),
-      acquisitionCost: calculateAcquisitionCost(promotionalOrders),
-      promotionalRevenue: calculatePromotionalRevenue(promotionalOrders)
+    const summary: CustomersSummary = {
+      total: 254,
+      totalChange: 12,
+      new: 38,
+      newChange: 5,
+      retention: 82,
+      retentionChange: 3,
+      avgTicket: 49.95,
+      avgTicketChange: 1.5,
+      frequency: 2,
+      frequencyChange: 1,
+      nps: 80,
+      npsChange: 2
     };
 
-    // Buscar uso de promoções por mês
-    const promotionUsage = await OrderModel.aggregate([
+    const customerReport: { monthly: MonthlyCustomerReport[] } = {
+      monthly: [
+        { month: 'Jan', count: 35 },
+        { month: 'Feb', count: 42 },
+        { month: 'Mar', count: 38 },
+        { month: 'Apr', count: 49 },
+        { month: 'May', count: 57 },
+        { month: 'Jun', count: 33 }
+      ]
+    };
+
+    const topCustomers: TopCustomer[] = await OrderModel.aggregate([
       {
         $match: {
-          ...(unitData.isMatrix
-            ? { restaurant: unitData.restaurantId }
-            : { restaurantUnit: unitData.id }
-          ),
-          'items.isPromotional': true,
-          createdAt: { $gte: new Date(new Date().setMonth(new Date().getMonth() - 11)) }
+          ...filter,
+          status: 'paid',
+          'guestInfo.id': { $ne: null }
         }
       },
       {
         $group: {
-          _id: {
-            month: { $month: "$createdAt" },
-            year: { $year: "$createdAt" }
-          },
-          count: { $sum: 1 }
+          _id: '$guestInfo.id',
+          name: { $first: '$guestInfo.name' },
+          value: { $sum: '$totalAmount' }
         }
       },
-      { $sort: { "_id.year": 1, "_id.month": 1 } }
+      {
+        $sort: { value: -1 }
+      },
+      {
+        $limit: 5
+      }
     ]);
 
-    // Buscar promoções populares
-    const popularPromotions = await OrderModel.aggregate([
+    return res.status(200).json({
+      summary,
+      customerReport,
+      topCustomers
+    });
+  } catch (error) {
+    console.error('Erro ao gerar dashboard de clientes:', error);
+    return res.status(500).json({ message: 'Erro ao gerar dashboard de clientes' });
+  }
+};
+
+// ------------------ PROMOTIONS DASHBOARD ------------------
+export const getPromotionsDashboardController = async (req: Request, res: Response) => {
+  try {
+    const filter = buildDashboardFilterFromRequest(req);
+
+    const promotions = await OrderModel.aggregate([
       {
         $match: {
-          ...(unitData.isMatrix
-            ? { restaurant: unitData.restaurantId }
-            : { restaurantUnit: unitData.id }
-          ),
-          'items.isPromotional': true
+          ...filter,
+          status: 'paid',
+          'items.addons.promotionId': { $exists: true, $ne: null }
         }
       },
-      { $unwind: "$items" },
-      { $match: { 'items.isPromotional': true } },
+      {
+        $unwind: '$items'
+      },
+      {
+        $unwind: '$items.addons'
+      },
+      {
+        $match: {
+          'items.addons.promotionId': { $exists: true, $ne: null }
+        }
+      },
       {
         $group: {
-          _id: "$items.name",
-          uses: { $sum: 1 },
-          revenue: { $sum: { $multiply: ["$items.price", "$items.quantity"] } }
+          _id: '$items.addons.promotionId',
+          totalUsed: { $sum: 1 },
+          name: { $first: '$items.addons.name' }
         }
       },
-      { $sort: { uses: -1 } },
+      {
+        $sort: { totalUsed: -1 }
+      }
+    ]);
+
+    return res.status(200).json({ promotions });
+  } catch (error) {
+    console.error('Erro ao gerar dashboard de promoções:', error);
+    return res.status(500).json({ message: 'Erro ao gerar dashboard de promoções' });
+  }
+};
+
+// ------------------ ORDERS DASHBOARD ------------------
+export const getOrdersDashboardDataController = async (req: Request, res: Response) => {
+  try {
+    const filter = buildDashboardFilterFromRequest(req);
+
+    const totalOrders = await OrderModel.countDocuments({ ...filter });
+
+    const completedOrders = await OrderModel.countDocuments({ ...filter, status: 'completed' });
+    const paidOrders = await OrderModel.countDocuments({ ...filter, status: 'paid' });
+    const cancelledOrders = await OrderModel.countDocuments({ ...filter, status: 'cancelled' });
+
+    const topOrders = await OrderModel.aggregate([
+      { $match: { ...filter } },
+      { $unwind: '$items' },
+      {
+        $group: {
+          _id: '$items.name',
+          value: { $sum: '$items.quantity' }
+        }
+      },
+      { $sort: { value: -1 } },
       { $limit: 5 },
       {
         $project: {
-          name: "$_id",
-          uses: 1,
-          revenue: { $round: ["$revenue", 2] }
+          name: '$_id',
+          value: 1,
+          _id: 0
         }
       }
     ]);
 
-    res.status(200).json({
-      metrics,
-      promotionUsage: formatMonthlyData(promotionUsage),
-      popularPromotions
+    return res.status(200).json({
+      summary: {
+        total: totalOrders,
+        completed: completedOrders,
+        paid: paidOrders,
+        cancelled: cancelledOrders
+      },
+      topOrders
     });
   } catch (error) {
-    console.error("Erro no getDashboardPromotionsController:", error);
-    res.status(500).json({
-      message: "Erro ao buscar dados de promoções",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    console.error('Erro ao gerar dashboard de pedidos:', error);
+    return res.status(500).json({ message: 'Erro ao gerar dashboard de pedidos' });
   }
 };

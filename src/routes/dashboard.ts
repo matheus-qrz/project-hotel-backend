@@ -1,14 +1,8 @@
-// routes/dashboardRoutes.ts
 import { Router } from "express";
-import {
-    getDashboardOrdersController,
-    getDashboardFinancialController,
-    getDashboardPromotionsController
-} from "../controllers/DashboardController";
+import { getDashboardByScopeController } from "../controllers/DashboardByScopeController";
 
 export default (router: Router) => {
-    router.get("/:unitId/orders", getDashboardOrdersController);
-    router.get("/:restaurantUnitId/financial", getDashboardFinancialController);
-    router.get("/:unitId/promotions", getDashboardPromotionsController);
+    router.get("/dashboard/:scope/:id/:type", getDashboardByScopeController);
 };
+
 

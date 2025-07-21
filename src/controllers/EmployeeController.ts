@@ -3,7 +3,6 @@ import { Request, Response } from "express";
 import mongoose from "mongoose";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import { authentication, random } from "../helpers";
 import { generateHash, generateSalt } from "../utils/generateSalt";
 import { RestaurantModel } from "../models/Restaurant";
 
