@@ -28,8 +28,6 @@ export const getDashboardByScopeController = async (req: Request, res: Response)
         case 'financial':
             return getFinancialDashboardDataController(req, res);
         case 'customers':
-            // If getCustomersDashboardDataController expects a Request, create a mock Request object
-            // Otherwise, update its signature to accept (filter, res)
             return getCustomersDashboardDataController(req, res);
         case 'promotions':
             return getPromotionsDashboardController(req, res);

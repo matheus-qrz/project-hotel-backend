@@ -1,6 +1,6 @@
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
-import { OrderModel } from "../models/Order";
+import { OrderModel as Order } from "../models/Order";
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
   CustomersDashboardData,
@@ -16,6 +16,7 @@ import {
   TopCustomer,
   TopOrder
 } from '../types/dashboard';
+import { groupOrdersByMonth } from '../utils/aggregation';
 
 // ------------------ FINANCIAL DASHBOARD ------------------
 export const getFinancialDashboardDataController = async (
@@ -25,7 +26,7 @@ export const getFinancialDashboardDataController = async (
   try {
     const filter = buildDashboardFilterFromRequest(req);
 
-    const summary = await OrderModel.aggregate([
+    const summary = await Order.aggregate([
       {
         $match: {
           ...filter,
@@ -43,7 +44,7 @@ export const getFinancialDashboardDataController = async (
       }
     ]);
 
-    const recentSales = await OrderModel.find({
+    const recentSales = await Order.find({
       ...filter,
       status: 'paid'
     })
@@ -98,7 +99,7 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
       ]
     };
 
-    const topCustomers: TopCustomer[] = await OrderModel.aggregate([
+    const topCustomers: TopCustomer[] = await Order.aggregate([
       {
         $match: {
           ...filter,
@@ -137,7 +138,7 @@ export const getPromotionsDashboardController = async (req: Request, res: Respon
   try {
     const filter = buildDashboardFilterFromRequest(req);
 
-    const promotions = await OrderModel.aggregate([
+    const promotions = await Order.aggregate([
       {
         $match: {
           ...filter,
@@ -178,16 +179,19 @@ export const getPromotionsDashboardController = async (req: Request, res: Respon
 // ------------------ ORDERS DASHBOARD ------------------
 export const getOrdersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const filter = buildDashboardFilterFromRequest(req);
+    const filter = req.dashboardFilter || {};
 
-    const totalOrders = await OrderModel.countDocuments({ ...filter });
+    // Totais simples (já existentes)
+    const [total, completed, paid, cancelled] = await Promise.all([
+      Order.countDocuments(filter),
+      Order.countDocuments({ ...filter, status: 'completed' }),
+      Order.countDocuments({ ...filter, status: 'paid' }),
+      Order.countDocuments({ ...filter, status: 'cancelled' }),
+    ]);
 
-    const completedOrders = await OrderModel.countDocuments({ ...filter, status: 'completed' });
-    const paidOrders = await OrderModel.countDocuments({ ...filter, status: 'paid' });
-    const cancelledOrders = await OrderModel.countDocuments({ ...filter, status: 'cancelled' });
-
-    const topOrders = await OrderModel.aggregate([
-      { $match: { ...filter } },
+    // Top 5 itens mais pedidos
+    const topOrdersAgg = await Order.aggregate([
+      { $match: filter },
       { $unwind: '$items' },
       {
         $group: {
@@ -199,24 +203,24 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       { $limit: 5 },
       {
         $project: {
+          _id: 0,
           name: '$_id',
-          value: 1,
-          _id: 0
+          value: 1
         }
       }
     ]);
 
-    return res.status(200).json({
-      summary: {
-        total: totalOrders,
-        completed: completedOrders,
-        paid: paidOrders,
-        cancelled: cancelledOrders
-      },
-      topOrders
+    // Pedidos por mês
+    const orders = await Order.find(filter);
+    const ordersByMonth = groupOrdersByMonth(orders);
+
+    return res.json({
+      summary: { total, completed, paid, cancelled },
+      topOrders: topOrdersAgg,
+      ordersByMonth
     });
   } catch (error) {
-    console.error('Erro ao gerar dashboard de pedidos:', error);
-    return res.status(500).json({ message: 'Erro ao gerar dashboard de pedidos' });
+    console.error('[DASHBOARD ORDERS]', error);
+    return res.status(500).json({ message: 'Erro ao carregar dados do dashboard de pedidos.' });
   }
 };
