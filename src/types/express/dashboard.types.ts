@@ -1,7 +1,8 @@
+import 'express';
 import { FilterQuery } from 'mongoose';
 import { IOrder } from '../../models/Order';
 
-declare module 'express-serve-static-core' {
+declare module 'express' {
     interface Request {
         dashboardFilter?: FilterQuery<IOrder>;
     }

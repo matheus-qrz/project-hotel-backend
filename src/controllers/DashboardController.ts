@@ -1,3 +1,4 @@
+import '../types/express/dashboard.types';
 import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";

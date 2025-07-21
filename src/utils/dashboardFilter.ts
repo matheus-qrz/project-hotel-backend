@@ -1,8 +1,6 @@
 import { Request } from 'express';
 import mongoose from 'mongoose';
 
-type ScopeType = 'unit' | 'restaurant';
-
 export function buildDashboardFilterFromRequest(req: Request) {
     const { scope, id } = req.query;
 
