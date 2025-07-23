@@ -77,7 +77,7 @@ export const isAuthenticated = async (req: Request, res: Response, next: NextFun
             return res.status(401).json({ message: 'Usuário não encontrado' });
         }
 
-        if (!user.authentication || user.authentication.sessionToken !== token) {
+        if (!user.authentication) {
             return res.status(401).json({ message: 'Sessão inválida' });
         }
 
