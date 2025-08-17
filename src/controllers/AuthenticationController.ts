@@ -531,10 +531,10 @@ export const registerAttendantHandler = async (req: Request, res: Response) => {
       }
     } else if (req.user && req.user.role === "MANAGER") {
       // Gerente
-      restaurantId = req.user.restaurant;
+      restaurantId = req.user.restaurantId;
 
       // Verificar se o gerente é responsável por esta unidade
-      if (req.user.restaurantUnit?.toString() !== restaurantUnitId) {
+      if (req.user.unitId?.toString() !== restaurantUnitId) {
         return res
           .status(403)
           .json({ message: "Você só pode cadastrar atendentes para sua unidade" });
@@ -592,57 +592,66 @@ export const registerAttendantHandler = async (req: Request, res: Response) => {
 };
 
 // Verificar token JWT (útil para validação de sessão)
-// controllers/AuthenticationController.ts
 export const validateTokenHandler = async (req: Request, res: Response) => {
   try {
-    // Aqui, o middleware já verificou o token
-    if (req.isRestaurantAdmin && req.restaurant) {
-      const restaurant = req.restaurant;
-
-      // Buscar unidades (simplifique se necessário)
-      const units = await RestaurantUnitModel.find({
-        _id: { $in: restaurant.units || [] }
-      }).select('_id name');
-
-      return res.status(200).json({
-        isValid: true,
-        user: {
-          _id: restaurant._id,
-          firstName: restaurant.admin.fullName,
-          lastName: "",
-          email: restaurant.admin.email,
-          role: "ADMIN" // Garantir que retorne "ADMIN" e não "RESTAURANT"
-        },
-        restaurant: {
-          _id: restaurant._id,
-          name: restaurant.name
-        },
-        units: units || []
-      });
-    } else if (req.user) {
-      return res.status(200).json({
-        isValid: true,
-        role: 'CLIENT',
-        user: {
-          _id: req.user._id,
-          firstName: req.user.firstName,
-          lastName: req.user.lastName,
-          email: req.user.email,
-          role: req.user.role,
-        }
-      });
-    } else {
-      return res.status(401).json({
-        isValid: false,
-        message: "Token inválido ou expirado"
-      });
+    // requer que o middleware isAuthenticated tenha populado req.user
+    if (!req.user?.id) {
+      return res.status(401).json({ isValid: false, message: "Não autenticado" });
     }
+
+    // Pegamos os dados básicos do usuário para devolver ao front
+    const user = await UserModel.findById(req.user.id)
+      .select("firstName lastName email role restaurant restaurantUnit")
+      .lean();
+
+    if (!user) {
+      return res.status(401).json({ isValid: false, message: "Usuário inválido" });
+    }
+
+    // Resposta base (válida para qualquer papel)
+    const base = {
+      isValid: true,
+      user: {
+        _id: req.user.id,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
+      } as const,
+      restaurant: null as null | { _id: string; name: string },
+      units: [] as Array<{ _id: string; name: string }>,
+    };
+
+    // Para ADMIN/MANAGER, retornamos o restaurante e as unidades (se existirem)
+    if (user.role === "ADMIN" || user.role === "MANAGER") {
+      if (user.restaurant) {
+        const restaurant = await RestaurantModel.findById(user.restaurant)
+          .select("_id name units")
+          .lean();
+
+        if (restaurant) {
+          base.restaurant = { _id: String(restaurant._id), name: restaurant.name };
+
+          if (Array.isArray(restaurant.units) && restaurant.units.length > 0) {
+            const units = await RestaurantUnitModel.find({
+              _id: { $in: restaurant.units },
+            })
+              .select("_id name")
+              .lean();
+
+            base.units = units.map((u) => ({ _id: String(u._id), name: u.name }));
+          }
+        }
+      }
+    }
+
+    return res.status(200).json(base);
   } catch (error: any) {
     console.error("Erro ao validar token:", error);
-    return res.status(500).json({
-      isValid: false,
-      message: "Erro interno do servidor"
-    });
+    return res
+      .status(500)
+      .json({ isValid: false, message: "Erro interno do servidor" });
   }
 };
 
@@ -656,7 +665,7 @@ export const logoutHandler = async (req: Request, res: Response) => {
       });
     } else if (req.user) {
       // Logout de usuário
-      await UserModel.findByIdAndUpdate(req.user._id, {
+      await UserModel.findByIdAndUpdate(req.user.id, {
         "authentication.sessionToken": ""
       });
     } else {
