@@ -24,7 +24,10 @@ export interface IAccompaniment {
 export interface IProduct extends Document {
   restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
   category: string;
-  image: string;
+  image: string;            // URL pública (mantém compatibilidade)
+  imageBlur?: string;       // <<< LQIP (base64) para placeholder
+  imageWidth?: number;      // opcional (pode ajudar no frontend)
+  imageHeight?: number;     // opcional
   name: string;
   quantity: number;
   price: number;
@@ -60,9 +63,10 @@ const productSchema = new Schema<IProduct>({
   category: {
     type: String,
   },
-  image: {
-    type: String,
-  },
+  image: { type: String },
+  imageBlur: { type: String },        
+  imageWidth: { type: Number },       
+  imageHeight: { type: Number },  
   name: {
     type: String,
     required: true,
@@ -176,7 +180,7 @@ export const getProducts = () => ProductModel.find();
 // Obter produtos de um restaurante específico
 export const getProductsByRestaurant = (restaurantId: string) =>
   ProductModel.find({ restaurant: restaurantId })
-    .select('_id name price category image isOnPromotion promotionalPrice promotionEndDate isCombo additionalOptions accompaniments description discountPercentage isAvailable');
+    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate isCombo additionalOptions accompaniments description discountPercentage isAvailable');
 
 // Obter produtos em promoção de um restaurante específico
 export const getPromotionalProducts = (restaurantId: string) =>

@@ -1,3 +1,4 @@
+import path from "path";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -16,7 +17,7 @@ app.options('/login', (req, res) => {
         "Access-Control-Allow-Origin": "http://localhost:3000",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
-        "Access-Control-Allow-Credentials": "false" // ou remova se não estiver usando credentials
+        "Access-Control-Allow-Credentials": "false"
     });
     res.sendStatus(204);
 });
@@ -46,6 +47,16 @@ app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 
 app.use("/api-docs", swaggerUI.serve, swaggerUI.setup(swaggerJSDoc));
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    maxAge: "365d",
+    immutable: true,
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    },
+  })
+);
 app.use("/", router());
 
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {

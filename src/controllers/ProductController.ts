@@ -7,6 +7,7 @@ import {
   getProductsByRestaurant,
   updateProduct
 } from "../models/Products";
+import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 
 export const createFoodController = async (
@@ -20,7 +21,7 @@ export const createFoodController = async (
       category,
       description,
       price,
-      image,
+      image: imageFromBody,
       quantity,
       isOnPromotion,
       discountPercentage,
@@ -44,6 +45,23 @@ export const createFoodController = async (
       return res.status(400).json({ message: "Já existe um produto com este nome" });
     }
 
+    let imageUrl: string | undefined = undefined;
+    let imageBlur: string | undefined = undefined;
+    let imageWidth: number | undefined = undefined;
+    let imageHeight: number | undefined = undefined;
+
+        if (req.file?.buffer) {
+      const out = await processAndSaveProductImage(req.file.buffer, "products");
+      imageUrl = out.url;                     // ex.: "/uploads/products/abc123/original.jpg"
+      imageBlur = out.blurDataURL;            // base64 LQIP
+      imageWidth = out.width;
+      imageHeight = out.height;
+    } else if (imageFromBody) {
+      // Mantém compatibilidade se você já salva uma URL pronta no body
+      imageUrl = imageFromBody;
+    }
+
+
     // Cálculo do preço promocional se não for fornecido
     let calculatedPromotionalPrice = promotionalPrice;
     if (isOnPromotion && discountPercentage && !promotionalPrice) {
@@ -56,7 +74,10 @@ export const createFoodController = async (
       category,
       description,
       price,
-      image,
+      image: imageUrl,          // mantém o campo original
+      imageBlur: imageBlur,     // novo (LQIP)
+      imageWidth,
+      imageHeight,
       quantity,
       isOnPromotion: isOnPromotion || false,
       discountPercentage,
