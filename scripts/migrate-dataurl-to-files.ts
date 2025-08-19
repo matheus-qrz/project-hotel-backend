@@ -4,9 +4,12 @@ import path from 'path';
 import fs from 'fs/promises';
 import sharp from 'sharp';
 import mongoose from 'mongoose';
-import { customAlphabet } from 'nanoid';
+import { randomBytes } from 'crypto';
 
-const nanoid = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 12);
+function makeId(len = 12) {
+  // base64url reduz colisões e evita caracteres problemáticos
+  return randomBytes(Math.ceil((len * 3) / 4)).toString('base64url').slice(0, len);
+}
 
 // ---- Ajuste o caminho do seu model:
 import { ProductModel } from '../src/models/Products';
@@ -26,7 +29,7 @@ function parseDataURL(dataUrl: string): { mime: string; buffer: Buffer } | null 
 }
 
 async function processAndSaveProductImage(buf: Buffer) {
-  const id = nanoid();
+ const id = makeId();
   const baseDir = path.join(UPLOADS_DIR, id);
   await fs.mkdir(baseDir, { recursive: true });
 
