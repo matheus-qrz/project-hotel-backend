@@ -144,7 +144,7 @@ const productSchema = new Schema<IProduct>({
     conversionCount: { type: Number, default: 0 },
     marketingCost: { type: Number, default: 0 },
     acquisitionCost: { type: Number, default: 0 },
-    costPrice: { type: Number, required: true }
+    costPrice: { type: Number, default: 0 }
   }
 });
 

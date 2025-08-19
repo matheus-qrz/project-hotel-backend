@@ -4,4 +4,5 @@ export interface PromotionalMetrics {
     conversionCount: number;
     marketingCost: number;
     acquisitionCost: number;
+    costPrice: number;
 }

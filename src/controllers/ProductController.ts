@@ -7,8 +7,26 @@ import {
   getProductsByRestaurant,
   updateProduct
 } from "../models/Products";
+import { parseDataURL } from "../utils/parseDataURL";
 import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
+
+async function handleIncomingImage(req: express.Request) {
+  // 1) arquivo multipart
+  if (req.file?.buffer) {
+    return await processAndSaveProductImage(req.file.buffer, "products");
+  }
+  // 2) data URL enviada no body (caso clientes antigos ainda mandem base64)
+  const raw = req.body.image;
+  if (typeof raw === "string" && raw.startsWith("data:image/")) {
+    const parsed = parseDataURL(raw);
+    if (parsed) {
+      return await processAndSaveProductImage(parsed.buffer, "products");
+    }
+  }
+  // 3) nenhuma imagem nova -> retornar null (mantém a existente)
+  return null;
+}
 
 export const createFoodController = async (
   req: express.Request,
@@ -50,17 +68,16 @@ export const createFoodController = async (
     let imageWidth: number | undefined = undefined;
     let imageHeight: number | undefined = undefined;
 
-        if (req.file?.buffer) {
-      const out = await processAndSaveProductImage(req.file.buffer, "products");
-      imageUrl = out.url;                     // ex.: "/uploads/products/abc123/original.jpg"
-      imageBlur = out.blurDataURL;            // base64 LQIP
-      imageWidth = out.width;
-      imageHeight = out.height;
+    const imgOut = await handleIncomingImage(req);
+        if (imgOut) {
+      imageUrl = imgOut.url;                     // ex.: "/uploads/products/abc123/original.jpg"
+      imageBlur = imgOut.blurDataURL;            // base64 LQIP
+      imageWidth = imgOut.width;
+      imageHeight = imgOut.height;
     } else if (imageFromBody) {
       // Mantém compatibilidade se você já salva uma URL pronta no body
       imageUrl = imageFromBody;
     }
-
 
     // Cálculo do preço promocional se não for fornecido
     let calculatedPromotionalPrice = promotionalPrice;

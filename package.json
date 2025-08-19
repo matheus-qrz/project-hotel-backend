@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/start.js",
-    "dev": "ts-node-dev --transpile-only src/server"
+    "dev": "ts-node-dev --transpile-only src/server",
+    "migrate:images": "ts-node -r dotenv/config scripts/migrate-dataurl-to-files.ts"
   },
   "keywords": [],
   "author": "",
