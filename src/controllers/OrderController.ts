@@ -1,11 +1,12 @@
 import mongoose from "mongoose";
 import { Request, Response } from "express";
-import { IOrderItem, OrderModel } from "../models/Order";
+import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
-import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from "../types/order.types";
+import {  OrderStatus } from "../types/order.types";
 
+// Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   const {
     guestInfo,
@@ -87,51 +88,57 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
-  const { orderIds, guestId, splitCount } = req.body;
+  const { tableId, orderId } = req.params as { tableId: string; orderId: string };
+  const { guestId, splitCount } = (req.body || {}) as { guestId?: string; splitCount?: number };
 
   try {
-    if (!orderIds?.length || !guestId) {
-      return res.status(400).json({
-        message: "IDs dos pedidos e ID do cliente são obrigatórios"
-      });
-    }
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
-    const orders = await OrderModel.find({
-      _id: { $in: orderIds },
-      'guestInfo.id': guestId,
+    // Filtro base (idempotente)
+    const filter: any = {
+      _id: orderId,
+      'meta.tableId': tableNum,
       isPaid: false,
-      status: { $nin: ['completed', 'cancelled', 'payment_requested'] }
-    });
+      status: { $nin: ['cancelled', 'payment_requested', 'paid'] }
+    };
 
-    if (!orders.length) {
-      return res.status(404).json({
-        message: "Não foram encontrados pedidos ativos"
-      });
-    }
+    // Se veio guestId, tratar como chamada do convidado
+    if (guestId) filter['guestInfo.id'] = guestId;
 
-    const updatedOrders = await Promise.all(
-      orders.map(order =>
-        OrderModel.findByIdAndUpdate(
-          order._id,
-          {
-            $set: {
-              status: 'payment_requested',
-              'meta.splitCount': splitCount,
-              'meta.paymentRequestedAt': new Date()
-            }
-          },
-          { new: true }
-        )
-      )
+    // Se veio sessionId no header, amarrar também
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
+
+    const updated = await OrderModel.findOneAndUpdate(
+      filter,
+      {
+        $set: {
+          status: 'payment_requested',
+          'meta.paymentRequestedAt': new Date(),
+          ...(splitCount && splitCount > 1 ? { 'meta.splitCount': splitCount } : {})
+        }
+      },
+      { new: true }
     );
 
-    res.status(200).json(updatedOrders);
-  } catch (error) {
-    console.error("Erro ao solicitar fechamento:", error);
-    res.status(500).json({
-      message: "Erro ao solicitar fechamento",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    if (updated) return res.status(200).json(updated);
+
+    // Diagnóstico amigável
+    const existing = await OrderModel.findById(orderId).select('status isPaid meta.tableId guestInfo.id');
+    if (!existing) return res.status(404).json({ message: 'Pedido não encontrado.' });
+    if (Number(existing.meta?.tableId) !== tableNum)
+      return res.status(403).json({ message: 'Pedido não pertence a esta mesa.' });
+    if (guestId && existing.guestInfo?.id !== guestId)
+      return res.status(403).json({ message: 'Este pedido pertence a outro cliente.' });
+    if (['payment_requested','paid'].includes(existing.status))
+      return res.status(409).json({ message: `Pedido já está em ${existing.status}.` });
+    if (existing.isPaid) return res.status(409).json({ message: 'Pedido já foi pago.' });
+
+    return res.status(409).json({ message: 'Não foi possível solicitar fechamento.' });
+  } catch (e) {
+    console.error('Erro ao solicitar fechamento:', e);
+    return res.status(500).json({ message: 'Erro ao solicitar fechamento.' });
   }
 };
 
@@ -225,21 +232,26 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
-  const { tableId, guestId } = req.params;
-
-  const numericTableId = Number(tableId);
+  const { tableId, orderId } = req.params as { tableId: string; orderId: string };
+  const { guestId } = (req.query || {}) as { guestId?: string };
 
   try {
-    const orders = await OrderModel.find({
-      'guestInfo.id': guestId,
-      'meta.tableId': numericTableId,
-      status: { $in: ['processing', 'payment_requested'] }
-    });
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
-    return res.status(200).json(Array.isArray(orders) ? orders : []);
-  } catch (error) {
-    console.error('Erro ao buscar pedidos:', error);
-    return res.status(500).json({ message: 'Erro interno ao buscar pedidos.' });
+    const filter: any = { _id: orderId, 'meta.tableId': tableNum };
+    if (guestId) filter['guestInfo.id'] = guestId;
+
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim() && guestId) filter.sessionId = hdr.trim();
+
+    const order = await OrderModel.findOne(filter);
+    if (!order) return res.status(404).json({ message: 'Pedido não encontrado.' });
+
+    return res.json(order);
+  } catch (e) {
+    console.error('Erro ao buscar pedido:', e);
+    return res.status(500).json({ message: 'Erro ao buscar pedido.' });
   }
 };
 
@@ -312,257 +324,169 @@ export const deleteOrderController = async (req: Request, res: Response) => {
   }
 };
 
+// Listar pedidos de mesa específica
 export const getTableOrdersController = async (req: Request, res: Response) => {
-  try {
-    const { restaurantUnitId, tableId } = req.params;
-    const { guestId } = req.query; // Novo parâmetro
+  const { tableId } = req.params as { tableId: string };
+  const { activeOnly } = (req.query || {}) as { activeOnly?: string };
 
-    const query: any = {
-      restaurantUnit: restaurantUnitId,
-      'meta.tableId': tableId,
-      status: { $nin: OrderStatus.CANCELLED },
+  try {
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+
+    const filter: any = { 'meta.tableId': tableNum };
+
+    if (activeOnly) {
+      filter.isPaid = false;
+      filter.status = { $in: ['processing', 'payment_requested'] };
+    }
+
+    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
+    return res.json(orders);
+  } catch (e) {
+    console.error('Erro ao listar pedidos da mesa:', e);
+    return res.status(500).json({ message: 'Erro ao listar pedidos da mesa.' });
+  }
+};
+
+// Listar pedidos de convidado específico
+export const getGuestOrdersController = async (req: Request, res: Response) => {
+   const { tableId, guestId } = req.params as { tableId: string; guestId: string };
+  const { activeOnly } = (req.query || {}) as { activeOnly?: string };
+
+  try {
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+
+    const filter: any = {
+      'meta.tableId': tableNum,
+      'guestInfo.id': guestId
     };
 
-    // Se fornecido guestId, buscar apenas os pedidos daquele convidado
-    if (guestId) {
-      query['meta.guestId'] = guestId;
+    if (activeOnly) {
+      filter.isPaid = false;
+      filter.status = { $in: ['processing', 'payment_requested'] };
     }
 
-    const orders = await OrderModel.find(query)
-      .sort({ createdAt: -1 })
-      .lean();
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
-    if (!orders || orders.length === 0) {
-      return res.json({
-        orders: [],
-        summary: {
-          total: 0,
-          itemCount: 0,
-          orderCount: 0,
-          paymentRequested: false,
-          allPaid: false,
-          splitCount: 1,
-          amountPerPerson: 0
-        }
-      });
-    }
-
-    // Agrupar pedidos por convidado
-    const ordersByGuest = orders.reduce((acc: { [key: string]: typeof orders }, order) => {
-      const guestId = order.meta?.guestId || 'unknown';
-      if (!acc[guestId]) {
-        acc[guestId] = [];
-      }
-      acc[guestId].push(order);
-      return acc;
-    }, {} as { [key: string]: typeof orders });
-
-    // Se um guestId específico foi solicitado, retornar apenas seus pedidos
-    const relevantOrders = guestId ? orders : Object.values(ordersByGuest).flat();
-
-    const total = relevantOrders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
-    const items = relevantOrders.flatMap(order => order.items);
-    const paymentRequested = relevantOrders.some(order => order.status === 'payment_requested');
-    const allPaid = relevantOrders.every(order => order.isPaid);
-    const splitCount = relevantOrders[0]?.meta?.splitCount || 1;
-
-    res.json({
-      orders: relevantOrders,
-      summary: {
-        total,
-        itemCount: items.length,
-        orderCount: relevantOrders.length,
-        paymentRequested,
-        allPaid,
-        splitCount,
-        amountPerPerson: splitCount > 1 ? total / splitCount : total,
-        guestsCount: Object.keys(ordersByGuest).length // Número de convidados únicos
-      }
-    });
-  } catch (error) {
-    console.error("Erro ao buscar pedidos:", error);
-    res.status(500).json({
-      message: "Erro ao buscar pedidos",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
+    return res.json(orders);
+  } catch (e) {
+    console.error('Erro ao listar pedidos do guest:', e);
+    return res.status(500).json({ message: 'Erro ao listar pedidos do guest.' });
   }
 };
 
-export const getGuestOrdersController = async (req: Request, res: Response) => {
-  const { tableId, guestId } = req.params;
-  const sessionId = req.headers['x-session-id'];
-
-  if (!sessionId) {
-    return res.status(400).json({ message: 'Session ID não informado.' });
-  }
-
-  try {
-    const orders = await OrderModel.find({
-      'meta.tableId': Number(tableId),
-      'guestInfo.id': guestId,
-      sessionId: sessionId,
-      status: { $in: ['processing', 'payment_requested', 'completed'] }
-    }).sort({ createdAt: -1 });
-
-    return res.status(200).json(Array.isArray(orders) ? orders : []);
-  } catch (error) {
-    console.error("Erro ao buscar pedidos do convidado:", error);
-    return res.status(500).json({ message: 'Erro interno ao buscar pedidos.' });
-  }
-};
-
+// Cancelar pedido como um todo
 export const cancelOrderController = async (req: Request, res: Response) => {
+  const { tableId, orderId } = req.params as { tableId: string; orderId: string };
+  const { guestId } = (req.body || {}) as { guestId?: string };
+
   try {
-    const { orderId } = req.params;
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
-    const order = await OrderModel.findById(orderId);
-    if (!order) {
-      return res.status(404).json({ message: "Pedido não encontrado" });
-    }
-
-    // Atualizar usando updateOne para evitar problemas de tipagem
-    await OrderModel.updateOne(
-      { _id: orderId },
-      {
-        $set: {
-          status: OrderStatus.CANCELLED,
-          isCancelled: true,
-          'items.$[].status': OrderItemStatus.CANCELLED,
-        }
-      }
-    );
-
-    const updatedOrder = await OrderModel.findById(orderId);
-    res.json(updatedOrder);
-  } catch (error) {
-    console.error("Erro ao cancelar pedido:", error);
-    res.status(500).json({
-      message: "Erro ao cancelar pedido",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
-  }
-};
-
-export const cancelOrderItemController = async (req: Request, res: Response) => {
-  try {
-    const { orderId, itemId } = req.params;
-
-    // Atualiza apenas o item correspondente
-    const order = await OrderModel.findOneAndUpdate(
-      {
-        _id: orderId,
-        'items._id': itemId
-      },
-      {
-        $set: {
-          'items.$.status': OrderItemStatus.CANCELLED
-        }
-      },
-      { new: true }
-    );
-
-    if (!order) {
-      return res.status(404).json({ message: "Pedido ou item não encontrado" });
-    }
-
-    // Verificar se todos os items foram cancelados
-    const allCancelled = order.items.every((item: any) => item.status === OrderItemStatus.CANCELLED);
-
-    if (allCancelled) {
-      order.status = OrderStatus.CANCELLED;
-      order.isCancelled = true;
-      await order.save();
-    }
-
-    res.json(order);
-  } catch (error) {
-    console.error("Erro ao cancelar item do pedido:", error);
-    res.status(500).json({
-      message: "Erro ao cancelar item do pedido",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
-  }
-};
-
-export const updateOrderItemController = async (req: Request, res: Response) => {
-  try {
-    const { orderId, itemId } = req.params;
-    const { quantity, observations, status } = req.body;
-
-    // Primeiro, verifica se o pedido existe
-    const existingOrder = await OrderModel.findOne({
+    const filter: any = {
       _id: orderId,
-      'items._id': itemId,
+      'meta.tableId': tableNum,
       isPaid: false,
-      status: { $ne: OrderStatus.CANCELLED }
-    });
+      status: { $in: ['processing', 'payment_requested'] }
+    };
 
-    if (!existingOrder) {
-      return res.status(404).json({ message: "Pedido ou item não encontrado" });
-    }
+    if (guestId) filter['guestInfo.id'] = guestId;
 
-    // Captura o item atual para comparação de quantidade
-    const item = existingOrder.items.find((i: any) => i._id?.toString() === itemId);
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
-    if (!item) {
-      return res.status(404).json({ message: "Item não encontrado no pedido" });
-    }
-
-    const setUpdate: any = {};
-
-    // Aplica a lógica de REDUÇÃO
-    if (quantity !== undefined) {
-      setUpdate["items.$.quantity"] = quantity;
-
-      if (quantity < item.quantity) {
-        setUpdate["items.$.status"] = OrderItemStatus.REDUCED; // ← aplica status 'reduced'
-      } else {
-        setUpdate["items.$.status"] = OrderItemStatus.ADDED; // ← mantém 'added' para aumentos
-      }
-    }
-
-    if (observations !== undefined) {
-      setUpdate["items.$.observations"] = observations;
-    }
-
-    if (status !== undefined) {
-      setUpdate["items.$.status"] = status;
-    }
-
-    const updatedOrder = await OrderModel.findOneAndUpdate(
-      {
-        _id: orderId,
-        'items._id': itemId
-      },
-      { $set: setUpdate },
+    const updated = await OrderModel.findOneAndUpdate(
+      filter,
+      { $set: { status: 'cancelled', 'meta.cancelledAt': new Date() } },
       { new: true }
     );
 
-    if (!updatedOrder) {
-      return res.status(404).json({ message: "Erro ao atualizar item" });
-    }
+    if (!updated) return res.status(404).json({ message: 'Pedido não encontrado ou já cancelado/fechado.' });
+    return res.json(updated);
+  } catch (e) {
+    console.error('Erro ao cancelar pedido:', e);
+    return res.status(500).json({ message: 'Erro ao cancelar pedido.' });
+  }
+};
 
-    // Recalcula o total
-    const totalAmount = updatedOrder.items.reduce((total, item: any) => {
-      if (item.status !== OrderItemStatus.CANCELLED) {
-        return total + (item.price * item.quantity);
-      }
-      return total;
-    }, 0);
+// Cancelar item de pedido
+export const cancelOrderItemController = async (req: Request, res: Response) => {
+ const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: string; itemId: string };
+  const { guestId } = (req.body || {}) as { guestId?: string };
 
-    // Atualiza o total
-    const finalOrder = await OrderModel.findByIdAndUpdate(
-      orderId,
-      { $set: { totalAmount } },
+  try {
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+
+    const filter: any = {
+      _id: orderId,
+      'meta.tableId': tableNum,
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+      'items._id': itemId
+    };
+
+    if (guestId) filter['guestInfo.id'] = guestId;
+
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
+
+    const updated = await OrderModel.findOneAndUpdate(
+      filter,
+      { $set: { 'items.$.status': 'cancelled' } },
       { new: true }
     );
 
-    res.json(finalOrder);
-  } catch (error) {
-    console.error("Erro ao atualizar item do pedido:", error);
-    res.status(500).json({
-      message: "Erro ao atualizar item do pedido",
-      error: error instanceof Error ? error.message : 'Erro desconhecido'
-    });
+    if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
+    return res.json(updated);
+  } catch (e) {
+    console.error('Erro ao cancelar item:', e);
+    return res.status(500).json({ message: 'Erro ao cancelar item.' });
+  }
+};
+
+// Atualizar quantidade/detalhes de item específico de um pedido
+export const updateOrderItemController = async (req: Request, res: Response) => {
+const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: string; itemId: string };
+  const { guestId, quantity, status } = (req.body || {}) as { guestId?: string; quantity?: number; status?: string };
+
+  try {
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+
+    const filter: any = {
+      _id: orderId,
+      'meta.tableId': tableNum,
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+      'items._id': itemId
+    };
+
+    if (guestId) filter['guestInfo.id'] = guestId;
+
+    const hdr = req.headers['x-session-id'];
+    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
+
+    const $set: any = {};
+    if (typeof quantity === 'number') $set['items.$.quantity'] = quantity;
+    if (typeof status === 'string')   $set['items.$.status'] = status;
+
+    if (!Object.keys($set).length) return res.status(400).json({ message: 'Nada para atualizar.' });
+
+    const updated = await OrderModel.findOneAndUpdate(
+      filter,
+      { $set },
+      { new: true }
+    );
+
+    if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou bloqueado para edição.' });
+    return res.json(updated);
+  } catch (e) {
+    console.error('Erro ao atualizar item:', e);
+    return res.status(500).json({ message: 'Erro ao atualizar item.' });
   }
 };

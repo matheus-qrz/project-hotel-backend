@@ -22,10 +22,14 @@ export default (orderRouter: Router) => {
   // Rota para usuários autenticados criarem pedidos
   orderRouter.post("/:userId/:restaurantId/order/initiate",
     isAuthenticated,
+    hasRole(['CLIENT']),
     initiateOrderController);
 
-  // Rota para solicitar fechamento de conta (aberta para convidados)
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/request-checkout", requestOrderCheckout);
+  // Rota para solicitar fechamento de conta 
+  orderRouter.post(
+    "/restaurant/:restaurantId/:tableId/order/:orderId/request-checkout",
+    requestOrderCheckout
+  );
 
   // Rota para processar pagamento (requer autenticação de staff)
   orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", isAuthenticated, hasRole('MANAGER'), processTablePaymentHandler);
@@ -33,26 +37,25 @@ export default (orderRouter: Router) => {
   // Listar pedidos de uma unidade (requer autenticação)
   orderRouter.get(
     "/restaurant/:restaurantUnitId/orders",
+    isAuthenticated,
+    hasRole(['ADMIN', 'MANAGER']),
     getRestaurantUnitOrdersController
   );
 
   // Listar pedidos de uma mesa específica
-  orderRouter.get(
-    "/restaurant/:restaurantUnitId/:tableId/orders",
-    getTableOrdersController
-  );
+  orderRouter.get("/restaurant/:restaurantId/:tableId/orders", getTableOrdersController);
 
   // Visualizar um pedido específico
-  // Não requer autenticação, mas seria bom adicionar alguma validação
-  // como um token temporário para convidados
-  orderRouter.get("/order/:id", getOrderByIdController);
+  orderRouter.get("/restaurant/:restaurantId/:tableId/order/:orderId", getOrderByIdController);
 
-  orderRouter.get("/restaurant/table/:tableId/guest/:guestId/orders", getGuestOrdersController);
+  // Listar pedidos de convidado específico
+  orderRouter.get("/restaurant/:restaurantId/:tableId/guest/:guestId/orders", getGuestOrdersController);
 
-  // Atualizar pedido (requer autenticação)
+  // Atualizar status de pedido (requer autenticação)
   orderRouter.patch(
     '/restaurant/:restaurantId/order/:orderId/status',
     isAuthenticated,
+    hasRole(['MANAGER', 'ATTENDANT']),
     updateOrderStatusController
   );
 
@@ -63,19 +66,12 @@ export default (orderRouter: Router) => {
     deleteOrderController
   );
 
-  // Adicionar às rotas existentes:
-  orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/cancel",
-    cancelOrderController
-  );
+  // Cancelar pedido:
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/:orderId/cancel", cancelOrderController);
 
-  orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/item/:itemId/cancel",
-    cancelOrderItemController
-  );
+  // Cancelar item de pedido
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/:orderId/items/:itemId/cancel", cancelOrderItemController);
 
-  orderRouter.patch(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/item/:itemId/update",
-    updateOrderItemController
-  );
+  // Atualizar quantidade/detalhes de item específico de um pedido
+  orderRouter.patch("/restaurant/:restaurantId/:tableId/order/:orderId/items/:itemId", updateOrderItemController);
 };
