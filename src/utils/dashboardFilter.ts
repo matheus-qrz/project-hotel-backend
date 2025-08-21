@@ -1,22 +1,27 @@
+// utils/dashboard.ts (ou onde estiver)
 import { Request } from 'express';
 import mongoose from 'mongoose';
 
 export function buildDashboardFilterFromRequest(req: Request) {
-    const { scope, id } = req.query;
+  const scope = (req.params as any)?.scope ?? (req.query as any)?.scope;
+  const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
 
-    if (!scope || !id) {
-        throw new Error('Parâmetros "scope" e "id" são obrigatórios');
-    }
+  if (!scope || !id) {
+    throw new Error('Parâmetros "scope" e "id" são obrigatórios');
+  }
+  if (!mongoose.isValidObjectId(String(id))) {
+    throw new Error('ID inválido');
+  }
 
-    const objectId = new mongoose.Types.ObjectId(String(id));
+  const objectId = new mongoose.Types.ObjectId(String(id));
 
-    if (scope === 'unit') {
-        return { restaurantUnit: objectId };
-    }
+  if (scope === 'unit') {
+    return { restaurantUnit: objectId };
+  }
 
-    if (scope === 'restaurant') {
-        return { 'restaurantUnitData.restaurant': objectId };
-    }
+  if (scope === 'restaurant') {
+    return { 'restaurantUnitData.restaurant': objectId };
+  }
 
-    throw new Error(`Escopo "${scope}" não reconhecido`);
+  throw new Error(`Escopo "${scope}" não reconhecido`);
 }
