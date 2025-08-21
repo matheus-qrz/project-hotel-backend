@@ -19,39 +19,69 @@ import {
 import { groupOrdersByMonth } from '../utils/aggregation';
 
 // ------------------ FINANCIAL DASHBOARD ------------------
-// controllers/DashboardController.ts
+import mongoose from 'mongoose';
 
-export const getFinancialDashboardDataController = async (
-  req: Request,
-  res: Response
-) => {
+export const getFinancialDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const filter = buildDashboardFilterFromRequest(req);
+    // leia de params (com fallback pra query)
+    const scope = (req.params as any)?.scope ?? (req.query as any)?.scope;
+    const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
+
+    if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
+      return res.status(400).json({ message: 'Parâmetros inválidos' });
+    }
+    const objectId = new mongoose.Types.ObjectId(String(id));
+
+    // Se o escopo for restaurant, precisamos criar restaurantUnitData via $lookup
+    const preStages = scope === 'restaurant'
+      ? [
+          {
+            $lookup: {
+              from: 'restaurantunits',              // <== ajuste se o nome real da coleção for diferente
+              localField: 'restaurantUnit',
+              foreignField: '_id',
+              as: 'restaurantUnitData'
+            }
+          },
+          { $unwind: '$restaurantUnitData' }
+        ]
+      : [];
+
+    // Filtro final para o $match (após os preStages)
+    const matchFilter =
+      scope === 'unit'
+        ? { restaurantUnit: objectId, status: 'paid' }
+        : { 'restaurantUnitData.restaurant': objectId, status: 'paid' };
 
     // ---- Resumo (receita, custo, lucro, descontos)
     const [summaryAgg] = await Order.aggregate([
-      { $match: { ...filter, status: 'paid' } },
+      ...preStages,
+      { $match: matchFilter },
+      // (opcional) normalize se houver legado string:
+      // { $addFields: { totalAmount: { $toDouble: '$totalAmount' } } },
       {
         $group: {
           _id: null,
-          revenue: { $sum: { $ifNull: ['$totalAmount', 0] } },
-          cost: { $sum: { $ifNull: ['$financialMetrics.costPrice', 0] } },
-          profit: { $sum: { $ifNull: ['$financialMetrics.profit', 0] } },
+          revenue:   { $sum: { $ifNull: ['$totalAmount', 0] } },
+          cost:      { $sum: { $ifNull: ['$financialMetrics.costPrice', 0] } },
+          profit:    { $sum: { $ifNull: ['$financialMetrics.profit', 0] } },
           discounts: { $sum: { $ifNull: ['$financialMetrics.promotionalDiscount', 0] } }
         }
       }
     ]);
 
     const summary: FinancialSummary = {
-      revenue: summaryAgg?.revenue ?? 0,
-      cost: summaryAgg?.cost ?? 0,
-      profit: summaryAgg?.profit ?? 0,
+      revenue:   summaryAgg?.revenue   ?? 0,
+      cost:      summaryAgg?.cost      ?? 0,
+      profit:    summaryAgg?.profit    ?? 0,
       discounts: summaryAgg?.discounts ?? 0
     };
 
     // ---- Faturamento por mês (últimos 6)
     const monthlyAgg = await Order.aggregate([
-      { $match: { ...filter, status: 'paid' } },
+      ...preStages,
+      { $match: matchFilter },
+      // { $addFields: { totalAmount: { $toDouble: '$totalAmount' } } }, // use se precisar
       {
         $group: {
           _id: { y: { $year: '$createdAt' }, m: { $month: '$createdAt' } },
@@ -66,16 +96,24 @@ export const getFinancialDashboardDataController = async (
       .slice(-6)
       .map((d: any) => ({ month: monthNames[d._id.m - 1], value: d.value }));
 
-    // ---- Vendas recentes (opcional no card)
-    const recentSalesDb = await Order.find({ ...filter, status: 'paid' })
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select('guestInfo.name totalAmount sessionId')
-      .lean();
+    // ---- Vendas recentes (precisa de lookup no escopo restaurant)
+    const recentSalesAgg = await Order.aggregate([
+      ...preStages,
+      { $match: matchFilter },
+      { $sort: { createdAt: -1 } },
+      { $limit: 5 },
+      {
+        $project: {
+          _id: 0,
+          guestName: '$guestInfo.name',
+          totalAmount: '$totalAmount',
+          sessionId: '$sessionId'
+        }
+      }
+    ]);
 
-    const recentSales = (recentSalesDb ?? []).map((s) => ({
-      title: s.guestInfo?.name ?? 'Cliente',
-      subtitle: s.sessionId ? `sess ${s.sessionId.slice(0, 5)}` : '-',
+    const recentSales: RecentSale[] = (recentSalesAgg ?? []).map((s: any) => ({
+      name: s.guestName ?? 'Cliente',
       value: s.totalAmount ?? 0
     }));
 
@@ -91,7 +129,6 @@ export const getFinancialDashboardDataController = async (
     return res.status(500).json({ message: 'Erro ao gerar dashboard financeiro' });
   }
 };
-
 
 // ------------------ CUSTOMERS DASHBOARD ------------------
 export const getCustomersDashboardDataController = async (req: Request, res: Response) => {

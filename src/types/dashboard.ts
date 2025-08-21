@@ -25,8 +25,7 @@ export interface FinancialSummary {
 }
 
 export interface RecentSale {
-    title: string;
-    subtitle: string;
+    name: string;
     value: number;
 }
 
