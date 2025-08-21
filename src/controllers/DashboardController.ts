@@ -1,6 +1,8 @@
+import mongoose from 'mongoose';
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
 import { OrderModel as Order } from "../models/Order";
+import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
   CustomersDashboardData,
@@ -19,45 +21,43 @@ import {
 import { groupOrdersByMonth } from '../utils/aggregation';
 
 // ------------------ FINANCIAL DASHBOARD ------------------
-import mongoose from 'mongoose';
-
 export const getFinancialDashboardDataController = async (req: Request, res: Response) => {
   try {
-    // leia de params (com fallback pra query)
     const scope = (req.params as any)?.scope ?? (req.query as any)?.scope;
     const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
 
     if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
       return res.status(400).json({ message: 'Parâmetros inválidos' });
     }
-    const objectId = new mongoose.Types.ObjectId(String(id));
+    const restaurantOrUnitId = new mongoose.Types.ObjectId(String(id));
 
-    // Se o escopo for restaurant, precisamos criar restaurantUnitData via $lookup
-    const preStages = scope === 'restaurant'
-      ? [
-          {
-            $lookup: {
-              from: 'restaurantunits',              // <== ajuste se o nome real da coleção for diferente
-              localField: 'restaurantUnit',
-              foreignField: '_id',
-              as: 'restaurantUnitData'
-            }
-          },
-          { $unwind: '$restaurantUnitData' }
-        ]
-      : [];
+    // ----- monta o filtro base
+    let matchFilter: any = { status: 'paid' };
 
-    // Filtro final para o $match (após os preStages)
-    const matchFilter =
-      scope === 'unit'
-        ? { restaurantUnit: objectId, status: 'paid' }
-        : { 'restaurantUnitData.restaurant': objectId, status: 'paid' };
+    if (scope === 'unit') {
+      matchFilter.restaurantUnit = restaurantOrUnitId;
+    } else if (scope === 'restaurant') {
+      // 1) busca unidades filhas (se existirem)
+      const units = await RestaurantUnit
+        .find({ restaurant: restaurantOrUnitId })
+        .select('_id')
+        .lean();
 
-    // ---- Resumo (receita, custo, lucro, descontos)
+      // 2) SEMPRE inclui a matriz (restaurantId também vale como restaurantUnit)
+      const unitIds = [
+        ...units.map(u => u._id as mongoose.Types.ObjectId),
+        restaurantOrUnitId
+      ];
+
+      matchFilter.restaurantUnit = { $in: unitIds };
+    } else {
+      return res.status(400).json({ message: 'Escopo inválido' });
+    }
+
+    // ----- resumo
     const [summaryAgg] = await Order.aggregate([
-      ...preStages,
       { $match: matchFilter },
-      // (opcional) normalize se houver legado string:
+      // descomente se houver legado com totalAmount string:
       // { $addFields: { totalAmount: { $toDouble: '$totalAmount' } } },
       {
         $group: {
@@ -70,18 +70,16 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
       }
     ]);
 
-    const summary: FinancialSummary = {
+    const summary = {
       revenue:   summaryAgg?.revenue   ?? 0,
       cost:      summaryAgg?.cost      ?? 0,
       profit:    summaryAgg?.profit    ?? 0,
       discounts: summaryAgg?.discounts ?? 0
     };
 
-    // ---- Faturamento por mês (últimos 6)
+    // ----- mensal (últimos 6)
     const monthlyAgg = await Order.aggregate([
-      ...preStages,
       { $match: matchFilter },
-      // { $addFields: { totalAmount: { $toDouble: '$totalAmount' } } }, // use se precisar
       {
         $group: {
           _id: { y: { $year: '$createdAt' }, m: { $month: '$createdAt' } },
@@ -92,38 +90,24 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
     ]);
 
     const monthNames = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-    const monthlyRevenue = monthlyAgg
-      .slice(-6)
-      .map((d: any) => ({ month: monthNames[d._id.m - 1], value: d.value }));
+    const monthlyRevenue = monthlyAgg.slice(-6).map((d: any) => ({
+      month: monthNames[d._id.m - 1],
+      value: d.value
+    }));
 
-    // ---- Vendas recentes (precisa de lookup no escopo restaurant)
-    const recentSalesAgg = await Order.aggregate([
-      ...preStages,
-      { $match: matchFilter },
-      { $sort: { createdAt: -1 } },
-      { $limit: 5 },
-      {
-        $project: {
-          _id: 0,
-          guestName: '$guestInfo.name',
-          totalAmount: '$totalAmount',
-          sessionId: '$sessionId'
-        }
-      }
-    ]);
+    // ----- vendas recentes
+    const recentSalesDb = await Order.find(matchFilter)
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('guestInfo.name totalAmount')
+      .lean();
 
-    const recentSales: RecentSale[] = (recentSalesAgg ?? []).map((s: any) => ({
-      name: s.guestName ?? 'Cliente',
+    const recentSales = (recentSalesDb ?? []).map((s) => ({
+      name: s.guestInfo?.name ?? 'Cliente',
       value: s.totalAmount ?? 0
     }));
 
-    const payload: FinancialDashboardData = {
-      summary,
-      monthlyRevenue,
-      recentSales
-    };
-
-    return res.status(200).json(payload);
+    return res.status(200).json({ summary, monthlyRevenue, recentSales });
   } catch (error) {
     console.error('Erro ao gerar dashboard financeiro:', error);
     return res.status(500).json({ message: 'Erro ao gerar dashboard financeiro' });
