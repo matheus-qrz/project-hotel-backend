@@ -25,13 +25,20 @@ export interface FinancialSummary {
 }
 
 export interface RecentSale {
-    name: string;
-    value: number; // total pago pelo cliente
+    title: string;
+    subtitle: string;
+    value: number;
+}
+
+export interface MonthlyRevenue {
+    month: string;
+    value: number;
 }
 
 export interface FinancialDashboardData {
     summary: FinancialSummary;
     recentSales: RecentSale[];
+    monthlyRevenue: MonthlyRevenue[];
 }
 
 // --- Clientes ---
