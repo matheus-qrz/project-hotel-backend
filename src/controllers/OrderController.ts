@@ -18,8 +18,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
+    const amount = Math.round((Number(totalAmount) || 0) * 100) / 100;
 
-    // Normaliza itens (mantém total do front, como no seu fluxo antigo)
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it.status ?? 'added',
@@ -33,21 +33,19 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // 🔑 Filtro de "pedido aberto" sem depender de sessionId (evita misturar/quebrar se sessão mudar)
     const filter = {
-      restaurant: restaurantId,            // troque para 'restaurantUnit' se o seu schema usa esse nome
+      restaurant: restaurantId,                 // ajuste p/ 'restaurantUnit' se seu schema usa esse nome
       'guestInfo.id': guestInfo.id,
       'meta.tableId': Number(meta.tableId),
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] },
     };
 
-    // Upsert: se existe, acumula; se não, cria
     const upserted = await OrderModel.findOneAndUpdate(
       filter,
       {
         $push: { items: { $each: itemsWithStatus } },
-        $inc: { totalAmount: Number(totalAmount) || 0 },   // usa o total enviado pelo front
+        $inc:  { totalAmount: amount },         // 👈 SOMENTE aqui; NÃO repita em $setOnInsert
         $set: {
           status: 'processing',
           updatedAt: now,
@@ -70,21 +68,18 @@ export const initiateOrderController = async (req: Request, res: Response) => {
             orderCreatedAt: now,
           },
           isPaid: false,
-          totalAmount: Number(totalAmount) || 0,
           createdAt: now,
+          updatedAt: now,
+          // ❌ NÃO colocar totalAmount aqui para não conflitar com $inc
         },
       },
       { new: true, upsert: true }
     );
 
-    return res.status(upserted?.createdAt?.getTime() === now.getTime() ? 201 : 200).json(upserted);
+    return res.status( upserted ? 200 : 201 ).json(upserted);
   } catch (e: any) {
-    // Se você tiver índice único parcial em (restaurant, guestId, tableId) para pedidos abertos,
-    // duplas requisições podem disparar E11000. Trate de forma amigável.
     if (e?.code === 11000) {
-      return res.status(409).json({
-        message: 'Já existe um pedido em aberto para este convidado nesta mesa. Tente novamente em instantes.',
-      });
+      return res.status(409).json({ message: 'Já existe um pedido em aberto para este convidado nesta mesa.' });
     }
     console.error('Erro ao iniciar pedido:', e);
     return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
