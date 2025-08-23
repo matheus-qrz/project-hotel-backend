@@ -11,69 +11,76 @@ import { computeTotal } from "../utils/computeTotal";
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
-    const { guestInfo, meta, items } = req.body as {
+    const {
+      guestInfo,
+      meta,
+      items,
+      totalAmount, // 👈 vem do front
+    } = req.body as {
       guestInfo: { id: string; name?: string; joinedAt?: string };
       meta: { tableId: number | string; orderType?: 'local' | 'takeaway'; observations?: string; splitCount?: number };
-      items: Array<any>;
+      items: any[];
+      totalAmount: number;
     };
 
-    // validação básica
-    const tableId = Number(meta?.tableId);
-    if (!restaurantId || !guestInfo?.id || Number.isNaN(tableId) || !Array.isArray(items) || items.length === 0) {
+    if (!restaurantId || !guestInfo?.id || !meta?.tableId || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
-    // sessão é opcional para o match; usamos apenas para atualizar, se vier
-    const sessionIdHeader = typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : undefined;
+    const sessionIdHeader = typeof req.headers['x-session-id'] === 'string'
+      ? String(req.headers['x-session-id'])
+      : '';
 
-    // normaliza itens enviados do front
     const now = new Date();
+
+    // normaliza itens, mas mantém o total vindo do cliente
     const itemsWithStatus = items.map((it) => ({
-      // se você guarda o id do produto, mantenha em outro campo (ex.: productId)
-      name: it.name,
-      price: Number(it.price) || 0,
-      costPrice: Number(it.costPrice) || 0,
-      quantity: Math.max(1, Number(it.quantity) || 1),
-      image: it.image ?? '',
-      addons: Array.isArray(it.addons) ? it.addons : [],
-      status: 'added',
-      createdAt: now,
+      ...it,
+      status: it.status ?? 'added',
+      createdAt: it.createdAt ? new Date(it.createdAt) : now,
+      addons: Array.isArray(it.addons)
+        ? it.addons.map((ad: any) => ({
+            ...ad,
+            status: ad.status ?? 'added',
+            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
+          }))
+        : [],
     }));
 
-    const totalAmount = computeTotal(itemsWithStatus);
-
-    // 1) Tenta acumular: pedido aberto para MESMA mesa + MESMO guest
-    const existing = await OrderModel.findOne({
-      restaurant: restaurantId,         // ajuste se seu schema usa outro campo
+    // ===== tenta acumular em pedido aberto (com sessionId, como antes) =====
+    const existingOrder = await OrderModel.findOne({
+      restaurant: restaurantId,                  // <- troque para 'restaurantUnit' se seu schema usar
       'guestInfo.id': guestInfo.id,
-      'meta.tableId': tableId,
+      'meta.tableId': Number(meta.tableId),
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] },
+      ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
     }).sort({ createdAt: -1 });
 
-    if (existing && existing.meta) {
+    if (existingOrder && existingOrder.meta) {
       await OrderModel.updateOne(
-        { _id: existing._id },
+        { _id: existingOrder._id },
         {
           $push: { items: { $each: itemsWithStatus } },
+          $inc: { totalAmount: Number(totalAmount) || 0 }, // 👈 incrementa pelo total enviado
           $set: {
-            status: 'processing',
             updatedAt: now,
-            'meta.orderType': meta?.orderType ?? existing.meta.orderType,
-            'meta.observations': meta?.observations ?? existing.meta.observations,
-            'meta.splitCount': Number(meta?.splitCount) || existing.meta.splitCount || 1,
+            status: 'processing',
+            'meta.orderType': meta?.orderType ?? existingOrder.meta.orderType,
+            'meta.observations': meta?.observations ?? existingOrder.meta.observations,
+            'meta.splitCount': Number(meta?.splitCount) || existingOrder.meta.splitCount || 1,
             ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
           },
         }
       );
 
-      const recomputed = await recomputeAndReturn(String(existing._id));
-      return res.status(200).json(recomputed);
+      const updated = await OrderModel.findById(existingOrder._id);
+      return res.status(200).json(updated);
     }
 
-    // 2) Não há pedido aberto → cria um do zero
+    // ===== cria novo pedido =====
     const doc = new OrderModel({
-      restaurant: restaurantId,         // ajuste aqui também conforme seu schema
+      restaurant: restaurantId,                  // <- troque para 'restaurantUnit' se seu schema usar
       guestInfo: {
         id: guestInfo.id,
         name: guestInfo.name ?? '',
@@ -82,29 +89,26 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       items: itemsWithStatus,
       status: 'processing',
       isPaid: false,
-      sessionId: sessionIdHeader,
+      sessionId: sessionIdHeader || undefined,
       meta: {
-        tableId,
+        tableId: Number(meta.tableId),
         orderType: meta?.orderType ?? 'local',
         observations: meta?.observations ?? '',
         splitCount: Number(meta?.splitCount) || 1,
         orderCreatedAt: now,
       },
-      totalAmount,
+      totalAmount: Number(totalAmount) || 0,    
       createdAt: now,
       updatedAt: now,
     });
 
-    await doc.save(); 
-    const recomputedNew = await recomputeAndReturn(String(doc._id));
-    return res.status(201).json(recomputedNew ?? doc);
-  } catch (e: any) {
+    await doc.save();
+    return res.status(201).json(doc);
+  } catch (e) {
     console.error('Erro ao iniciar pedido:', e);
-    // devolve mensagem mais útil se for validação do mongoose
-    return res.status(500).json({ message: e?.message || 'Erro interno ao iniciar pedido.' });
+    return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
-
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
   const { tableId, orderId } = req.params as { tableId: string; orderId: string };
