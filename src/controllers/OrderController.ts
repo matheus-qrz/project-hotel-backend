@@ -501,6 +501,11 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     const $set: any = {};
     if (typeof quantity === 'number') $set['items.$.quantity'] = quantity;
     if (typeof status === 'string')   $set['items.$.status']   = status;
+        if (typeof quantity === 'number' && quantity <= 0) {
+      // política: zerou quantidade ⇒ vira cancelado e quantity = 0
+      $set['items.$.quantity'] = 0;
+      $set['items.$.status'] = 'cancelled';
+    }
     if (!Object.keys($set).length) return res.status(400).json({ message: 'Nada para atualizar.' });
 
     const updated = await OrderModel.findOneAndUpdate(filter, { $set }, { new: true });

@@ -18,12 +18,12 @@ export interface IOrdermeta {
 export interface IOrderItem {
   _id: Number;
   name: String;
-  price: Number;
-  quantity: Number;
+  price: number;
+  quantity: number;
   status: OrderItemStatusType;
   observations: String,
   image: String,
-  addons?: any[]; // Explicitly type addons as an array
+  addons?: any[]; 
   isOnPromotion?: boolean;
   originalPrice?: number;
 }
