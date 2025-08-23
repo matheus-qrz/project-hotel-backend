@@ -260,52 +260,116 @@ export const getOrderByIdController = async (req: Request, res: Response) => {
 export const updateOrderStatusController = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    const { status } = req.body;
+    const { status } = req.body as { status?: string };
 
     if (!status) return res.status(400).json({ message: 'Status não fornecido.' });
 
-    // somente completa se pedido está editável
     const editable = ['processing', 'payment_requested'];
 
+    // --- COMPLETED ---
     if (status === 'completed') {
       const result = await OrderModel.updateOne(
         { _id: orderId, status: { $in: editable } },
         {
           $set: {
             status: 'completed',
-            // 👉 só itens em estado “completável” e com quantity > 0
             'items.$[i].status': 'completed',
             updatedAt: new Date(),
           },
         },
         {
           arrayFilters: [
-            { 'i.status': { $in: ['processing', 'added', 'reduced'] } },
-            { 'i.quantity': { $gt: 0 } },
+            { 'i.status': { $in: ['processing', 'added', 'reduced'] }, 'i.quantity': { $gt: 0 } },
           ],
         }
       );
 
       if (result.matchedCount === 0) {
+        // idempotência: se já está completed, devolve OK
+        const found = await OrderModel.findById(orderId).select('status');
+        if (found?.status === 'completed') return res.json(found);
         return res.status(409).json({ message: 'Pedido não está disponível para conclusão.' });
       }
 
-      // Recalcula total/financeiro
       const recomputed = await recomputeAndReturn(orderId);
       return res.json(recomputed);
     }
 
-    // … outros status (cancelled, processing etc.) como você já tem
+    // --- CANCELLED ---
+    if (status === 'cancelled') {
+      const result = await OrderModel.updateOne(
+        { _id: orderId, status: { $in: editable } },
+        {
+          $set: {
+            status: 'cancelled',
+            // cancela tudo que não esteja concluído
+            'items.$[i].status': 'cancelled',
+            updatedAt: new Date(),
+          },
+        },
+        {
+          arrayFilters: [
+            { 'i.status': { $nin: ['completed', 'cancelled'] } },
+          ],
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        const found = await OrderModel.findById(orderId).select('status');
+        if (found?.status === 'cancelled') return res.json(found);
+        return res.status(409).json({ message: 'Pedido não está disponível para cancelamento.' });
+      }
+
+      const recomputed = await recomputeAndReturn(orderId);
+      return res.json(recomputed);
+    }
+
+    // --- PAID ---
+    if (status === 'paid') {
+      // permitir pagar a partir de completed OU payment_requested (dependendo da sua regra)
+      const payable = ['completed', 'payment_requested'];
+
+      const result = await OrderModel.updateOne(
+        { _id: orderId, status: { $in: payable }, isPaid: { $ne: true } },
+        {
+          $set: {
+            status: 'paid',
+            isPaid: true,
+            paidAt: new Date(),
+            // garante que itens elegíveis fiquem completed
+            'items.$[i].status': 'completed',
+            updatedAt: new Date(),
+          },
+        },
+        {
+          arrayFilters: [
+            { 'i.status': { $in: ['processing', 'added', 'reduced'] }, 'i.quantity': { $gt: 0 } },
+          ],
+        }
+      );
+
+      if (result.matchedCount === 0) {
+        // idempotência: se já está paid, devolve OK
+        const found = await OrderModel.findById(orderId).select('status isPaid paidAt');
+        if (found?.isPaid || found?.status === 'paid') return res.json(found);
+        return res.status(409).json({ message: 'Pedido não está disponível para pagamento.' });
+      }
+
+      const recomputed = await recomputeAndReturn(orderId);
+      return res.json(recomputed);
+    }
+
+    // --- OUTROS STATUS (ex.: processing, payment_requested) ---
     const updated = await OrderModel.findByIdAndUpdate(
       orderId,
       { $set: { status, updatedAt: new Date() } },
       { new: true }
     );
-
     if (!updated) return res.status(404).json({ message: 'Pedido não encontrado.' });
 
     const recomputed = await recomputeAndReturn(orderId);
     return res.json(recomputed ?? updated);
+
   } catch (e) {
     console.error('Erro ao atualizar status do pedido:', e);
     return res.status(500).json({ message: 'Erro interno.' });
