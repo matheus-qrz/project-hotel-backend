@@ -7,146 +7,98 @@ import {  OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.t
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
 
-function safeNumber(n: any): number {
-  const x = Number(n);
-  return Number.isFinite(x) ? x : 0;
-}
-
-function computeItemsTotal(items: any[]): number {
-  return items.reduce((sum, it) => {
-    const base = safeNumber(it.price) * safeNumber(it.quantity || 1);
-    const addons = Array.isArray(it.addons)
-      ? it.addons.reduce((aSum: number, a: any) => {
-          return aSum + safeNumber(a.price) * safeNumber(a.quantity || 1);
-        }, 0)
-      : 0;
-    return sum + base + addons;
-  }, 0);
-}
-
-const ORDER_OPEN_STATUSES = ["processing", "payment_requested"] as const;
-
 // Inicializador do pedido
-export async function initiateOrderController(req: Request, res: Response) {
+export const initiateOrderController = async (req: Request, res: Response) => {
   try {
-    const {
-      restaurantId,
-      restaurantUnitId, // opcional
-      items,
-      guestInfo,
-      meta,
-      sessionId,
-      tableId, 
-    } = req.body || {};
+    const { restaurantId } = req.params as { restaurantId: string };
+    const { guestInfo, meta, items, totalAmount } = req.body as any;
 
-    // ---- validação básica
-    if (!restaurantId) {
-      return res.status(400).json({ message: "restaurantId é obrigatório." });
-    }
-    if (!guestInfo?.id) {
-      return res.status(400).json({ message: "guestInfo.id é obrigatório." });
+    if (
+      !restaurantId ||
+      !guestInfo?.id ||
+      !meta?.tableId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-    const metaTableId =
-      meta?.tableId ?? (typeof tableId !== "undefined" ? Number(tableId) : undefined);
-    if (!Number.isFinite(metaTableId)) {
-      return res.status(400).json({ message: "tableId inválido/ausente." });
-    }
+    const now = new Date();
+    const amount = Math.round((Number(totalAmount) || 0) * 100) / 100;
 
-    if (!Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: "items vazio." });
-    }
-
-     if (restaurantUnitId) {
-       const unit = await RestaurantUnitModel.findById(restaurantUnitId).lean();
-       if (!unit) return res.status(404).json({ message: "Unidade não encontrada." });
-     }
-
-    // ---- normalização dos itens (evita erros se vier com campos a mais/menos)
-    const normalizedItems = items.map((it: any) => ({
-      _id: it._id, // se você usa o _id do produto como id do item
-      name: String(it.name ?? ""),
-      price: safeNumber(it.price),
-      costPrice: safeNumber(it.costPrice),
-      quantity: safeNumber(it.quantity || 1),
-      image: it.image || null,
-      status: it.status || "added",
-      createdAt: it.createdAt ? new Date(it.createdAt) : new Date(),
-      observations: it.observations || '',
+    // Garante status/createdAt em itens e addons
+    const itemsWithStatus = items.map((it: any) => ({
+      ...it,
+      status: it.status ?? "added",
+      createdAt: it.createdAt ? new Date(it.createdAt) : now,
       addons: Array.isArray(it.addons)
-        ? it.addons.map((a: any) => ({
-            _id: a._id ?? undefined,
-            name: String(a.name ?? ""),
-            price: safeNumber(a.price),
-            quantity: safeNumber(a.quantity || 1),
-            status: a.status || "added",
-            createdAt: a.createdAt ? new Date(a.createdAt) : new Date(),
+        ? it.addons.map((ad: any) => ({
+            ...ad,
+            status: ad.status ?? "added",
+            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
     }));
 
-    const computedTotal = computeItemsTotal(normalizedItems);
-
-    // ---- buscar pedido aberto do mesmo convidado/mesa
-    const query: any = {
-      restaurantId,
-      "meta.guestId": guestInfo.id,
-      "meta.tableId": metaTableId,
-      status: { $in: ORDER_OPEN_STATUSES },
+    // Filtro: pedido aberto do mesmo convidado na mesma mesa
+    const filter: any = {
+      restaurant: restaurantId, // (se seu schema usa restaurantUnit, troque a chave aqui)
+      "guestInfo.id": guestInfo.id,
+      "meta.tableId": Number(meta.tableId),
+      isPaid: false,
+      status: { $in: ["processing", "payment_requested"] },
     };
-    if (restaurantUnitId) query.restaurantUnitId = restaurantUnitId;
 
-    let existing = await OrderModel.findOne(query);
+    const upserted = await OrderModel.findOneAndUpdate(
+      filter,
+      {
+        $push: { items: { $each: itemsWithStatus } },
+        $inc: { totalAmount: amount },
+        $set: {
+          status: "processing",
+          updatedAt: now,
+          "meta.orderType": meta?.orderType ?? "local",
+          "meta.observations": meta?.observations ?? "",
+          "meta.splitCount": Number(meta?.splitCount) || 1,
+        },
+        $setOnInsert: {
+          restaurant: restaurantId,
+          guestInfo: {
+            id: guestInfo.id,
+            name: guestInfo.name ?? "",
+            joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+          },
+          meta: {
+            tableId: Number(meta.tableId),
+            orderType: meta?.orderType ?? "local",
+            observations: meta?.observations ?? "",
+            splitCount: Number(meta?.splitCount) || 1,
+            orderCreatedAt: now,
+          },
+          isPaid: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      { new: true, upsert: true }
+    );
 
-    if (existing) {
-      // mesclar itens (simples: apenas concatenar; se quiser deduplicar por _id, faça aqui)
-      existing.items.push(...normalizedItems);
-      existing.totalAmount = safeNumber(existing.totalAmount) + computedTotal;
-      existing.updatedAt = new Date();
-      await existing.save();
-      return res.status(200).json(existing);
+    return res.status(200).json(upserted);
+  } catch (e: any) {
+    if (e?.code === 11000) {
+      return res.status(409).json({
+        message:
+          "Já existe um pedido em aberto para este convidado nesta mesa.",
+      });
     }
-
-    // ---- criar novo pedido
-    const doc = await OrderModel.create({
-      restaurantId,
-      ...(restaurantUnitId ? { restaurantUnitId } : {}),
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name ?? "",
-        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : new Date(),
-      },
-      meta: {
-        tableId: metaTableId,
-        guestId: guestInfo.id,
-        orderType: meta?.orderType ?? "local",
-        observations: meta?.observations ?? "",
-        splitCount: safeNumber(meta?.splitCount || 1),
-        orderCreatedAt: meta?.orderCreatedAt
-          ? new Date(meta.orderCreatedAt)
-          : new Date(),
-      },
-      items: normalizedItems,
-      totalAmount: computedTotal,
-      status: "processing",
-      sessionId: sessionId ?? null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    return res.status(201).json(doc);
-  } catch (err: any) {
-    // Ajuda MUITO identificar o 500 de fato
-    console.error("initiateOrderController error:", {
-      message: err?.message,
-      name: err?.name,
-      stack: err?.stack,
-      body: req.body,
-    });
-    return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
+    console.error("Erro ao iniciar pedido:", e);
+    return res
+      .status(500)
+      .json({ message: "Erro interno ao iniciar pedido." });
   }
-}
-
+};
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
