@@ -5,6 +5,7 @@ import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import crypto from "crypto";
 import {  OrderStatus } from "../types/order.types";
+import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -435,14 +436,15 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
     const hdr = req.headers['x-session-id'];
     if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
-    const updated = await OrderModel.findOneAndUpdate(
-      filter,
-      { $set: { 'items.$.status': 'cancelled' } },
-      { new: true }
-    );
+  const updated = await OrderModel.findOneAndUpdate(
+    filter,
+    { $set: { 'items.$.status': 'cancelled' } },
+    { new: true }
+  );
+  if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
 
-    if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
-    return res.json(updated);
+  const recomputed = await recomputeAndReturn(orderId);
+  return res.json(recomputed ?? updated);
   } catch (e) {
     console.error('Erro ao cancelar item:', e);
     return res.status(500).json({ message: 'Erro ao cancelar item.' });
@@ -451,7 +453,7 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
 
 // Atualizar quantidade/detalhes de item específico de um pedido
 export const updateOrderItemController = async (req: Request, res: Response) => {
-const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: string; itemId: string };
+  const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: string; itemId: string };
   const { guestId, quantity, status } = (req.body || {}) as { guestId?: string; quantity?: number; status?: string };
 
   try {
@@ -463,28 +465,23 @@ const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: s
       'meta.tableId': tableNum,
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] },
-      'items._id': itemId
+      'items._id': itemId,
     };
-
     if (guestId) filter['guestInfo.id'] = guestId;
-
     const hdr = req.headers['x-session-id'];
     if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
     const $set: any = {};
     if (typeof quantity === 'number') $set['items.$.quantity'] = quantity;
-    if (typeof status === 'string')   $set['items.$.status'] = status;
-
+    if (typeof status === 'string')   $set['items.$.status']   = status;
     if (!Object.keys($set).length) return res.status(400).json({ message: 'Nada para atualizar.' });
 
-    const updated = await OrderModel.findOneAndUpdate(
-      filter,
-      { $set },
-      { new: true }
-    );
-
+    const updated = await OrderModel.findOneAndUpdate(filter, { $set }, { new: true });
     if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou bloqueado para edição.' });
-    return res.json(updated);
+
+    // 👇 força recálculo de total/financeiro
+    const recomputed = await recomputeAndReturn(orderId);
+    return res.json(recomputed ?? updated);
   } catch (e) {
     console.error('Erro ao atualizar item:', e);
     return res.status(500).json({ message: 'Erro ao atualizar item.' });
