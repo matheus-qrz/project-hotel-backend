@@ -3,8 +3,9 @@ import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import {  OrderStatus } from "../types/order.types";
+import {  OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
+import { computeTotal } from "../utils/computeTotal";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -38,6 +39,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       status: 'added',
       createdAt: now,
     }));
+
+    const totalAmount = computeTotal(itemsWithStatus);
 
     // 1) Tenta acumular: pedido aberto para MESMA mesa + MESMO guest
     const existing = await OrderModel.findOne({
@@ -87,12 +90,12 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         splitCount: Number(meta?.splitCount) || 1,
         orderCreatedAt: now,
       },
+      totalAmount,
       createdAt: now,
       updatedAt: now,
     });
 
-    await doc.save(); // se seu schema tem pre('save') que computa totals, isso já resolve
-    // se preferir padronizar:
+    await doc.save(); 
     const recomputedNew = await recomputeAndReturn(String(doc._id));
     return res.status(201).json(recomputedNew ?? doc);
   } catch (e: any) {
@@ -274,120 +277,76 @@ export const getOrderByIdController = async (req: Request, res: Response) => {
 // Controlador para atualizar um pedido
 export const updateOrderStatusController = async (req: Request, res: Response) => {
   try {
-    const { orderId } = req.params;
-    const { status } = req.body as { status?: string };
+    const { orderId } = req.params as { orderId: string };
+    const { status } = req.body as { status: OrderStatusType };
 
     if (!status) return res.status(400).json({ message: 'Status não fornecido.' });
 
-    const editable = ['processing', 'payment_requested'];
+    // Fluxo especial para PAID (idempotente e consistente)
+    if (status === OrderStatus.PAID) {
+      const order = await OrderModel.findById(orderId);
+      if (!order) return res.status(404).json({ message: 'Pedido não encontrado.' });
 
-    // --- COMPLETED ---
-    if (status === 'completed') {
-      const result = await OrderModel.updateOne(
-        { _id: orderId, status: { $in: editable } },
-        {
-          $set: {
-            status: 'completed',
-            'items.$[i].status': 'completed',
-            updatedAt: new Date(),
-          },
-        },
-        {
-          arrayFilters: [
-            { 'i.status': { $in: ['processing', 'added', 'reduced'] }, 'i.quantity': { $gt: 0 } },
-          ],
-        }
-      );
-
-      if (result.matchedCount === 0) {
-        // idempotência: se já está completed, devolve OK
-        const found = await OrderModel.findById(orderId).select('status');
-        if (found?.status === 'completed') return res.json(found);
-        return res.status(409).json({ message: 'Pedido não está disponível para conclusão.' });
+      // idempotência
+      if (order.isPaid === true || order.status === OrderStatus.PAID) {
+        return res.status(200).json(order);
       }
 
-      const recomputed = await recomputeAndReturn(orderId);
-      return res.json(recomputed);
-    }
-
-    // --- CANCELLED ---
-    if (status === 'cancelled') {
-      const result = await OrderModel.updateOne(
-        { _id: orderId, status: { $in: editable } },
-        {
-          $set: {
-            status: 'cancelled',
-            // cancela tudo que não esteja concluído
-            'items.$[i].status': 'cancelled',
-            updatedAt: new Date(),
-          },
-        },
-        {
-          arrayFilters: [
-            { 'i.status': { $nin: ['completed', 'cancelled'] } },
-          ],
-        }
-      );
-
-      if (result.matchedCount === 0) {
-        const found = await OrderModel.findById(orderId).select('status');
-        if (found?.status === 'cancelled') return res.json(found);
-        return res.status(409).json({ message: 'Pedido não está disponível para cancelamento.' });
+      // só deixa pagar se já estiver concluído ou com pagamento solicitado
+      if (order.status !== OrderStatus.COMPLETED &&
+          order.status !== OrderStatus.PAYMENT_REQUESTED) {
+        return res.status(409).json({
+          message: 'Só é possível marcar como pago um pedido concluído ou com pagamento solicitado.'
+        });
       }
 
-      const recomputed = await recomputeAndReturn(orderId);
-      return res.json(recomputed);
-    }
+      const newTotal = computeTotal(order.items);
 
-    // --- PAID ---
-    if (status === 'paid') {
-      // permitir pagar a partir de completed OU payment_requested (dependendo da sua regra)
-      const payable = ['completed', 'payment_requested'];
-
-      const result = await OrderModel.updateOne(
-        { _id: orderId, status: { $in: payable }, isPaid: { $ne: true } },
+      // Atualiza pedido e marca itens pendentes como completed em uma única operação
+      await OrderModel.updateOne(
+        { _id: orderId },
         {
           $set: {
-            status: 'paid',
+            status: OrderStatus.PAID,
             isPaid: true,
             paidAt: new Date(),
-            // garante que itens elegíveis fiquem completed
-            'items.$[i].status': 'completed',
+            totalAmount: newTotal,
             updatedAt: new Date(),
           },
+          // itens "ativos" viram completed ao fechar a conta
+          $setOnInsert: {}
         },
+        { runValidators: false }
+      );
+
+      // aplica status completed nos itens ativos usando arrayFilters
+      await OrderModel.updateOne(
+        { _id: orderId },
+        { $set: { 'items.$[i].status': OrderItemStatus.COMPLETED } },
         {
           arrayFilters: [
-            { 'i.status': { $in: ['processing', 'added', 'reduced'] }, 'i.quantity': { $gt: 0 } },
+            { 'i.status': { $in: ['added', 'processing', 'reduced'] }, 'i.quantity': { $gt: 0 } }
           ],
+          runValidators: false
         }
       );
 
-      if (result.matchedCount === 0) {
-        // idempotência: se já está paid, devolve OK
-        const found = await OrderModel.findById(orderId).select('status isPaid paidAt');
-        if (found?.isPaid || found?.status === 'paid') return res.json(found);
-        return res.status(409).json({ message: 'Pedido não está disponível para pagamento.' });
-      }
-
-      const recomputed = await recomputeAndReturn(orderId);
-      return res.json(recomputed);
+      const updated = await OrderModel.findById(orderId);
+      return res.status(200).json(updated);
     }
 
-    // --- OUTROS STATUS (ex.: processing, payment_requested) ---
-    const updated = await OrderModel.findByIdAndUpdate(
+    // Demais status: atualização simples + updatedAt
+    const updatedOrder = await OrderModel.findByIdAndUpdate(
       orderId,
       { $set: { status, updatedAt: new Date() } },
       { new: true }
     );
-    if (!updated) return res.status(404).json({ message: 'Pedido não encontrado.' });
 
-    const recomputed = await recomputeAndReturn(orderId);
-    return res.json(recomputed ?? updated);
-
-  } catch (e) {
-    console.error('Erro ao atualizar status do pedido:', e);
-    return res.status(500).json({ message: 'Erro interno.' });
+    if (!updatedOrder) return res.status(404).json({ message: 'Pedido não encontrado.' });
+    return res.status(200).json(updatedOrder);
+  } catch (error: any) {
+    console.error('Erro ao atualizar status do pedido:', error);
+    return res.status(500).json({ message: error?.message || 'Erro interno.' });
   }
 };
 

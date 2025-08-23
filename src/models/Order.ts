@@ -231,13 +231,12 @@ orderSchema.pre('save', function (next) {
 orderSchema.methods.canTransitionTo = function (newStatus: OrderStatusType): boolean {
   const validTransitions: Record<OrderStatusType, OrderStatusType[]> = {
     [OrderStatus.PROCESSING]: [OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.PAYMENT_REQUESTED],
-    [OrderStatus.COMPLETED]: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED],
+    [OrderStatus.COMPLETED]: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED, OrderStatus.PAID], // 👈 add PAID
     [OrderStatus.PAYMENT_REQUESTED]: [OrderStatus.PAID, OrderStatus.PROCESSING],
     [OrderStatus.PAID]: [],
-    [OrderStatus.CANCELLED]: [OrderStatus.PROCESSING]
+    [OrderStatus.CANCELLED]: [],
   };
-
-  return validTransitions[this.status as OrderStatusType].includes(newStatus);
+  return validTransitions[this.status as OrderStatusType]?.includes(newStatus);
 };
 
 orderSchema.methods.canUpdateItems = function (): boolean {
