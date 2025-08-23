@@ -3,87 +3,102 @@ import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import crypto from "crypto";
 import {  OrderStatus } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
-  const {
-    guestInfo,
-    meta,
-    items,
-    totalAmount,
-    restaurantUnitId,
-    restaurantId,
-    sessionId
-  } = req.body;
-
   try {
-    const guestId = guestInfo.id;
-    const tableId = meta.tableId;
+    const { restaurantId } = req.params as { restaurantId: string };
+    const { guestInfo, meta, items } = req.body as {
+      guestInfo: { id: string; name?: string; joinedAt?: string };
+      meta: { tableId: number | string; orderType?: 'local' | 'takeaway'; observations?: string; splitCount?: number };
+      items: Array<any>;
+    };
 
-    const existingOrder = await OrderModel.findOne({
-      'guestInfo.id': guestId,
-      'meta.tableId': tableId,
-      isPaid: false,
-      status: { $in: ['processing', 'completed', 'payment_requested'] }
-    });
+    // validação básica
+    const tableId = Number(meta?.tableId);
+    if (!restaurantId || !guestInfo?.id || Number.isNaN(tableId) || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
+    }
 
-    // Garante _id único e adiciona productId (preservado do frontend)
-    const itemsWithStatus = items.map((item: any) => ({
-      ...item,
-      _id: new mongoose.Types.ObjectId(),
-      productId: item.productId ?? null, // Se não vier, mantém como null
+    // sessão é opcional para o match; usamos apenas para atualizar, se vier
+    const sessionIdHeader = typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : undefined;
+
+    // normaliza itens enviados do front
+    const now = new Date();
+    const itemsWithStatus = items.map((it) => ({
+      // se você guarda o id do produto, mantenha em outro campo (ex.: productId)
+      name: it.name,
+      price: Number(it.price) || 0,
+      costPrice: Number(it.costPrice) || 0,
+      quantity: Math.max(1, Number(it.quantity) || 1),
+      image: it.image ?? '',
+      addons: Array.isArray(it.addons) ? it.addons : [],
       status: 'added',
-      createdAt: new Date(),
-      addons: item.addons?.map((addon: any) => ({
-        ...addon,
-        _id: new mongoose.Types.ObjectId(),
-        status: 'added',
-        createdAt: new Date()
-      }))
+      createdAt: now,
     }));
 
-    if (existingOrder) {
-      const updatedOrder = await OrderModel.findByIdAndUpdate(
-        existingOrder._id,
+    // 1) Tenta acumular: pedido aberto para MESMA mesa + MESMO guest
+    const existing = await OrderModel.findOne({
+      restaurant: restaurantId,         // ajuste se seu schema usa outro campo
+      'guestInfo.id': guestInfo.id,
+      'meta.tableId': tableId,
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+    }).sort({ createdAt: -1 });
+
+    if (existing && existing.meta) {
+      await OrderModel.updateOne(
+        { _id: existing._id },
         {
           $push: { items: { $each: itemsWithStatus } },
           $set: {
-            updatedAt: new Date(),
             status: 'processing',
-            'meta.observations': meta.observations,
-            'meta.orderType': meta.orderType
-          }
-        },
-        { new: true }
+            updatedAt: now,
+            'meta.orderType': meta?.orderType ?? existing.meta.orderType,
+            'meta.observations': meta?.observations ?? existing.meta.observations,
+            'meta.splitCount': Number(meta?.splitCount) || existing.meta.splitCount || 1,
+            ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+          },
+        }
       );
-      const recomputed = await recomputeAndReturn(String(existingOrder._id));
-      return res.status(200).json(recomputed ?? updatedOrder);
-    } else {
-      const newOrder = new OrderModel({
-        guestInfo,
-        meta: {
-          ...meta,
-          orderCreatedAt: new Date(),
-          sessionGroup: `table_${tableId}_${new Date().toISOString().split('T')[0]}`
-        },
-        restaurantUnit: restaurantUnitId || restaurantId,
-        items: itemsWithStatus,
-        totalAmount,
-        status: 'processing',
-        isPaid: false,
-        isGuest: true,
-        sessionId: sessionId || crypto.randomUUID()
-      });
 
-      await newOrder.save();
-      return res.status(201).json(newOrder);
+      const recomputed = await recomputeAndReturn(String(existing._id));
+      return res.status(200).json(recomputed);
     }
-  } catch (error) {
-    console.error("Erro ao iniciar pedido:", error);
-    return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
+
+    // 2) Não há pedido aberto → cria um do zero
+    const doc = new OrderModel({
+      restaurant: restaurantId,         // ajuste aqui também conforme seu schema
+      guestInfo: {
+        id: guestInfo.id,
+        name: guestInfo.name ?? '',
+        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+      },
+      items: itemsWithStatus,
+      status: 'processing',
+      isPaid: false,
+      sessionId: sessionIdHeader,
+      meta: {
+        tableId,
+        orderType: meta?.orderType ?? 'local',
+        observations: meta?.observations ?? '',
+        splitCount: Number(meta?.splitCount) || 1,
+        orderCreatedAt: now,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await doc.save(); // se seu schema tem pre('save') que computa totals, isso já resolve
+    // se preferir padronizar:
+    const recomputedNew = await recomputeAndReturn(String(doc._id));
+    return res.status(201).json(recomputedNew ?? doc);
+  } catch (e: any) {
+    console.error('Erro ao iniciar pedido:', e);
+    // devolve mensagem mais útil se for validação do mongoose
+    return res.status(500).json({ message: e?.message || 'Erro interno ao iniciar pedido.' });
   }
 };
 
