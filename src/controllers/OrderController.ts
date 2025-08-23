@@ -50,7 +50,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         existingOrder._id,
         {
           $push: { items: { $each: itemsWithStatus } },
-          $inc: { totalAmount },
           $set: {
             updatedAt: new Date(),
             status: 'processing',
@@ -60,7 +59,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         },
         { new: true }
       );
-      return res.status(200).json(updatedOrder);
+      const recomputed = await recomputeAndReturn(String(existingOrder._id));
+      return res.status(200).json(recomputed ?? updatedOrder);
     } else {
       const newOrder = new OrderModel({
         guestInfo,
