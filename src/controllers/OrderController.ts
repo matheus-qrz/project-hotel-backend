@@ -10,93 +10,95 @@ import { computeTotal } from "../utils/computeTotal";
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
-    const { restaurantId } = req.params as { restaurantId: string };
-    const { guestInfo, meta, items, totalAmount } = req.body as any;
+    const { restaurantId } = req.params as { restaurantId?: string }; 
+    const {
+      guestInfo,
+      meta,
+      items,
+      totalAmount,
+      restaurantUnitId,
+    } = req.body as any;
 
-    if (
-      !restaurantId ||
-      !guestInfo?.id ||
-      !meta?.tableId ||
-      !Array.isArray(items) ||
-      items.length === 0
-    ) {
-      return res
-        .status(400)
-        .json({ message: "Dados insuficientes para iniciar pedido." });
+    if (!guestInfo?.id || !meta?.tableId || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
     const now = new Date();
     const amount = Math.round((Number(totalAmount) || 0) * 100) / 100;
 
-    // Garante status/createdAt em itens e addons
+    // normalização mínima dos itens (mantendo seu comportamento original)
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
-      status: it.status ?? "added",
+      status: it.status ?? 'added',
       createdAt: it.createdAt ? new Date(it.createdAt) : now,
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
-            status: ad.status ?? "added",
+            status: ad.status ?? 'added',
             createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
     }));
 
-    // Filtro: pedido aberto do mesmo convidado na mesma mesa
+    // ===== filtro de upsert =====
     const filter: any = {
-      restaurant: restaurantId, // (se seu schema usa restaurantUnit, troque a chave aqui)
-      "guestInfo.id": guestInfo.id,
-      "meta.tableId": Number(meta.tableId),
+      'guestInfo.id': guestInfo.id,
+      'meta.tableId': Number(meta.tableId),
       isPaid: false,
-      status: { $in: ["processing", "payment_requested"] },
+      status: { $in: ['processing', 'payment_requested'] },
     };
 
-    const upserted = await OrderModel.findOneAndUpdate(
-      filter,
-      {
-        $push: { items: { $each: itemsWithStatus } },
-        $inc: { totalAmount: amount },
-        $set: {
-          status: "processing",
-          updatedAt: now,
-          "meta.orderType": meta?.orderType ?? "local",
-          "meta.observations": meta?.observations ?? "",
-          "meta.splitCount": Number(meta?.splitCount) || 1,
-        },
-        $setOnInsert: {
-          restaurant: restaurantId,
-          guestInfo: {
-            id: guestInfo.id,
-            name: guestInfo.name ?? "",
-            joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
-          },
-          meta: {
-            tableId: Number(meta.tableId),
-            orderType: meta?.orderType ?? "local",
-            observations: meta?.observations ?? "",
-            splitCount: Number(meta?.splitCount) || 1,
-            orderCreatedAt: now,
-          },
-          isPaid: false,
-          createdAt: now,
-          updatedAt: now,
-        },
-      },
-      { new: true, upsert: true }
-    );
+    // se vier restaurantUnitId válido, adicione ao filtro (CAMPO DO SCHEMA!)
+    if (restaurantUnitId && restaurantUnitId !== 'undefined') {
+      filter.restaurantUnit = new mongoose.Types.ObjectId(String(restaurantUnitId));
+    }
 
+    // ===== update de upsert =====
+    const update: any = {
+      $push: { items: { $each: itemsWithStatus } },
+      $inc: { totalAmount: amount },
+      $set: {
+        status: 'processing',
+        updatedAt: now,
+        'meta.orderType': meta?.orderType ?? 'local',
+        'meta.observations': meta?.observations ?? '',
+        'meta.splitCount': Number(meta?.splitCount) || 1,
+      },
+      $setOnInsert: {
+        isPaid: false,
+        guestInfo: {
+          id: guestInfo.id,
+          name: guestInfo.name ?? '',
+          joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+        },
+        meta: {
+          tableId: Number(meta.tableId),
+          orderType: meta?.orderType ?? 'local',
+          observations: meta?.observations ?? '',
+          splitCount: Number(meta?.splitCount) || 1,
+          orderCreatedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+        // ⚠️ não setar totalAmount aqui (para não conflitar com o $inc)
+      },
+    };
+
+    // no insert, também só inclua restaurantUnit se veio válido
+    if (filter.restaurantUnit) {
+      update.$setOnInsert.restaurantUnit = filter.restaurantUnit;
+    }
+
+    const upserted = await OrderModel.findOneAndUpdate(filter, update, { new: true, upsert: true });
     return res.status(200).json(upserted);
   } catch (e: any) {
     if (e?.code === 11000) {
-      return res.status(409).json({
-        message:
-          "Já existe um pedido em aberto para este convidado nesta mesa.",
-      });
+      return res
+        .status(409)
+        .json({ message: 'Já existe um pedido em aberto para este convidado nesta mesa.' });
     }
-    console.error("Erro ao iniciar pedido:", e);
-    return res
-      .status(500)
-      .json({ message: "Erro interno ao iniciar pedido." });
+    console.error('Erro ao iniciar pedido:', e);
+    return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
 
@@ -411,28 +413,57 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 
 // Listar pedidos de convidado específico
 export const getGuestOrdersController = async (req: Request, res: Response) => {
-   const { tableId, guestId } = req.params as { tableId: string; guestId: string };
-  const { activeOnly } = (req.query || {}) as { activeOnly?: string };
+  const { tableId, guestId } = req.params as { tableId: string; guestId: string };
+  const {
+    activeOnly,
+    restaurantUnitId,
+    restaurantId,
+  } = (req.query || {}) as {
+    activeOnly?: string;
+    restaurantUnitId?: string;
+    restaurantId?: string;
+  };
 
   try {
     const tableNum = Number(tableId);
-    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+    if (!Number.isFinite(tableNum)) {
+      return res.status(400).json({ message: 'tableId inválido.' });
+    }
 
     const filter: any = {
-      'meta.tableId': tableNum,
-      'guestInfo.id': guestId
+      'guestInfo.id': String(guestId),
+      // compatibilidade: alguns docs podem ter tableId na raiz
+      $or: [{ 'meta.tableId': tableNum }, { tableId: tableNum }],
     };
 
-    if (activeOnly) {
+    // Escopo opcional (use restaurantUnit se existir no seu schema)
+    if (restaurantUnitId && restaurantUnitId !== 'undefined') {
+      if (!mongoose.isValidObjectId(restaurantUnitId)) {
+        return res.status(400).json({ message: 'restaurantUnitId inválido.' });
+      }
+      filter.restaurantUnit = new mongoose.Types.ObjectId(restaurantUnitId);
+    } else if (restaurantId && restaurantId !== 'undefined') {
+      // use somente se seu schema tiver restaurantId
+      if (!mongoose.isValidObjectId(restaurantId)) {
+        return res.status(400).json({ message: 'restaurantId inválido.' });
+      }
+      filter.restaurantId = new mongoose.Types.ObjectId(restaurantId);
+    }
+
+    // Somente pedidos "abertos"
+    if (String(activeOnly) === 'true' || activeOnly === '1') {
       filter.isPaid = false;
       filter.status = { $in: ['processing', 'payment_requested'] };
     }
 
+    // Suporte LEGADO (opcional) a sessionId no header – não obrigatório
     const hdr = req.headers['x-session-id'];
-    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
+    if (typeof hdr === 'string' && hdr.trim()) {
+      filter.sessionId = hdr.trim();
+    }
 
-    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
-    return res.json(orders);
+    const orders = await OrderModel.find(filter).sort({ createdAt: -1 }).lean();
+    return res.status(200).json(orders);
   } catch (e) {
     console.error('Erro ao listar pedidos do guest:', e);
     return res.status(500).json({ message: 'Erro ao listar pedidos do guest.' });
