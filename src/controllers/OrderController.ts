@@ -11,9 +11,6 @@ import { computeTotal } from "../utils/computeTotal";
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
-    const unitIdFromBody = (req.body?.restaurantUnitId as string) || '';
-    const restaurantUnit = unitIdFromBody || restaurantId;
-
     const { guestInfo, meta, items, totalAmount } = req.body as any;
 
     if (
@@ -26,13 +23,13 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
-    // header de sessão
-    const sessionIdHeader =
+    // ➜ sessão do cliente (como era antes)
+    const sessionId =
       typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : '';
 
     const now = new Date();
 
-    // normalização dos itens
+    // normalização mínima dos itens (como antes)
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it.status ?? 'added',
@@ -46,39 +43,17 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // incremento/valor com arredondamento em centavos
-    const amount = Math.round((Number(totalAmount) || 0) * 100) / 100;
-
-    // filtro base para pedidos em aberto do mesmo cliente/mesa/unidade
-    const baseFilter = {
-      restaurant: restaurantId,
-      restaurantUnit, // matriz = restaurantId
-      'guestInfo.id': guestInfo.id,
-      'meta.tableId': Number(meta.tableId),
-      isPaid: false,
-      status: { $in: ['processing', 'payment_requested'] },
-    } as const;
-
-    // 1) tenta achar pedido aberto DA MESMA SESSÃO
-    let existingOrder =
-      await OrderModel.findOne(
-        sessionIdHeader ? { ...baseFilter, sessionId: sessionIdHeader } : baseFilter
-      ).sort({ createdAt: -1 });
-
-    // 1.b) fallback de migração: se não achou por sessão, tenta SEM sessão e fixa o sessionId
-    if (!existingOrder) {
-      const fallback = await OrderModel.findOne(baseFilter).sort({ createdAt: -1 });
-      if (fallback) {
-        if (sessionIdHeader && !fallback.sessionId) {
-          await OrderModel.updateOne(
-            { _id: fallback._id },
-            { $set: { sessionId: sessionIdHeader, updatedAt: now } }
-          );
-          (fallback as any).sessionId = sessionIdHeader;
-        }
-        existingOrder = fallback;
-      }
-    }
+    // 1) tenta achar pedido aberto da MESMA sessão
+    const existingOrder = await OrderModel
+      .findOne({
+        restaurant: restaurantId,
+        'guestInfo.id': guestInfo.id,
+        'meta.tableId': Number(meta.tableId),
+        isPaid: false,
+        status: { $in: ['processing', 'payment_requested'] },
+        ...(sessionId ? { sessionId } : {}),
+      })
+      .sort({ createdAt: -1 });
 
     // 2) se existir, acumula itens e incrementa total
     if (existingOrder && existingOrder.meta) {
@@ -86,16 +61,11 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         { _id: existingOrder._id },
         {
           $push: { items: { $each: itemsWithStatus } },
-          $inc: { totalAmount: amount },
+          $inc: { totalAmount: Number(totalAmount) || 0 },
           $set: {
             status: 'processing',
             updatedAt: now,
-            restaurantUnit, // garante consistência
-            'meta.orderType': meta?.orderType ?? existingOrder.meta.orderType,
-            'meta.observations': meta?.observations ?? existingOrder.meta.observations,
-            'meta.splitCount':
-              Number(meta?.splitCount) || existingOrder.meta.splitCount || 1,
-            ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+            ...(sessionId ? { sessionId } : {}),
           },
         }
       );
@@ -107,7 +77,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     // 3) senão, cria novo pedido
     const doc = new OrderModel({
       restaurant: restaurantId,
-      restaurantUnit,
       guestInfo: {
         id: guestInfo.id,
         name: guestInfo.name ?? '',
@@ -116,7 +85,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       items: itemsWithStatus,
       status: 'processing',
       isPaid: false,
-      sessionId: sessionIdHeader || undefined,
+      sessionId: sessionId || undefined,
       meta: {
         tableId: Number(meta.tableId),
         orderType: meta?.orderType ?? 'local',
@@ -124,24 +93,19 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         splitCount: Number(meta?.splitCount) || 1,
         orderCreatedAt: now,
       },
-      totalAmount: amount,
+      totalAmount: Number(totalAmount) || 0,
       createdAt: now,
       updatedAt: now,
     });
 
     await doc.save();
     return res.status(201).json(doc);
-  } catch (e: any) {
-    // log enriquecido para E11000 etc.
-    console.error('Erro ao iniciar pedido:', {
-      code: e?.code,
-      message: e?.message,
-      keyPattern: e?.keyPattern,
-      keyValue: e?.keyValue,
-    });
+  } catch (e) {
+    console.error('Erro ao iniciar pedido:', e);
     return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
+
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
