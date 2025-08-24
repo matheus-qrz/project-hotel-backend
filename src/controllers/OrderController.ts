@@ -13,23 +13,15 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const { restaurantId } = req.params as { restaurantId: string };
     const { guestInfo, meta, items, totalAmount } = req.body as any;
 
-    if (
-      !restaurantId ||
-      !guestInfo?.id ||
-      !meta?.tableId ||
-      !Array.isArray(items) ||
-      items.length === 0
-    ) {
+    if (!restaurantId || !guestInfo?.id || !meta?.tableId || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
-    // ➜ sessão do cliente (como era antes)
-    const sessionId =
-      typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : '';
+    const sessionIdFromBody = typeof req.body?.sessionId === 'string' ? req.body.sessionId : '';
+    const sessionIdHeader  = typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : '';
+    const sessionId = sessionIdFromBody || sessionIdHeader;
 
     const now = new Date();
-
-    // normalização mínima dos itens (como antes)
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it.status ?? 'added',
@@ -43,38 +35,42 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // 1) tenta achar pedido aberto da MESMA sessão
-    const existingOrder = await OrderModel
-      .findOne({
-        restaurant: restaurantId,
-        'guestInfo.id': guestInfo.id,
-        'meta.tableId': Number(meta.tableId),
-        isPaid: false,
-        status: { $in: ['processing', 'payment_requested'] },
-        ...(sessionId ? { sessionId } : {}),
-      })
-      .sort({ createdAt: -1 });
+    const baseFilter = {
+      restaurant: restaurantId,
+      'guestInfo.id': guestInfo.id,
+      'meta.tableId': Number(meta.tableId),
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+    };
 
-    // 2) se existir, acumula itens e incrementa total
-    if (existingOrder && existingOrder.meta) {
+    // 1) tenta achar aberto pela MESMA sessão
+    let existingOrder = await OrderModel.findOne(
+      sessionId ? { ...baseFilter, sessionId } : baseFilter
+    ).sort({ createdAt: -1 });
+
+    // 2) fallback: se não achou por sessão, tenta sem sessão (para “colar” de volta)
+    if (!existingOrder && sessionId) {
+      existingOrder = await OrderModel.findOne(baseFilter).sort({ createdAt: -1 });
+      if (existingOrder) {
+        // “cola” a sessão nova ao pedido existente e segue
+        await OrderModel.updateOne({ _id: existingOrder._id }, { $set: { sessionId } });
+      }
+    }
+
+    if (existingOrder) {
       await OrderModel.updateOne(
         { _id: existingOrder._id },
         {
           $push: { items: { $each: itemsWithStatus } },
-          $inc: { totalAmount: Number(totalAmount) || 0 },
-          $set: {
-            status: 'processing',
-            updatedAt: now,
-            ...(sessionId ? { sessionId } : {}),
-          },
+          $inc:  { totalAmount: Number(totalAmount) || 0 },
+          $set:  { status: 'processing', updatedAt: now },
         }
       );
-
       const updated = await OrderModel.findById(existingOrder._id);
       return res.status(200).json(updated);
     }
 
-    // 3) senão, cria novo pedido
+    // 3) cria novo
     const doc = new OrderModel({
       restaurant: restaurantId,
       guestInfo: {
@@ -105,7 +101,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
-
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
