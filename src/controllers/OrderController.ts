@@ -11,81 +11,101 @@ import { computeTotal } from "../utils/computeTotal";
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
+    const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
+    const restaurantUnit = unitIdFromBody || restaurantId;
+
     const { guestInfo, meta, items, totalAmount } = req.body as any;
 
-    if (!restaurantId || !guestInfo?.id || !meta?.tableId || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
+    if (
+      !restaurantId ||
+      !guestInfo?.id ||
+      !meta?.tableId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-    const sessionIdFromBody = typeof req.body?.sessionId === 'string' ? req.body.sessionId : '';
-    const sessionIdHeader  = typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : '';
-    const sessionId = sessionIdFromBody || sessionIdHeader;
+    const sessionIdHeader =
+      typeof req.headers["x-session-id"] === "string"
+        ? String(req.headers["x-session-id"])
+        : "";
 
     const now = new Date();
+
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
-      status: it.status ?? 'added',
+      status: it.status ?? "added",
       createdAt: it.createdAt ? new Date(it.createdAt) : now,
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
-            status: ad.status ?? 'added',
+            status: ad.status ?? "added",
             createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
     }));
 
-    const baseFilter = {
-      restaurant: restaurantId,
-      'guestInfo.id': guestInfo.id,
-      'meta.tableId': Number(meta.tableId),
+    // >>> filtro que FUNCIONA mesmo com docs antigos (sem exigir restaurant/restaurantUnit)
+    const openFilter: any = {
+      "guestInfo.id": guestInfo.id,
+      "meta.tableId": Number(meta.tableId),
       isPaid: false,
-      status: { $in: ['processing', 'payment_requested'] },
+      status: { $in: ["processing", "payment_requested"] },
     };
+    if (sessionIdHeader) openFilter.sessionId = sessionIdHeader;
 
-    // 1) tenta achar aberto pela MESMA sessão
-    let existingOrder = await OrderModel.findOne(
-      sessionId ? { ...baseFilter, sessionId } : baseFilter
-    ).sort({ createdAt: -1 });
+    // 1) tenta achar pedido aberto da MESMA sessão/mesa/guest
+    let existingOrder = await OrderModel.findOne(openFilter).sort({
+      createdAt: -1,
+    });
 
-    // 2) fallback: se não achou por sessão, tenta sem sessão (para “colar” de volta)
-    if (!existingOrder && sessionId) {
-      existingOrder = await OrderModel.findOne(baseFilter).sort({ createdAt: -1 });
-      if (existingOrder) {
-        // “cola” a sessão nova ao pedido existente e segue
-        await OrderModel.updateOne({ _id: existingOrder._id }, { $set: { sessionId } });
-      }
-    }
-
-    if (existingOrder) {
+    if (existingOrder && existingOrder.meta) {
       await OrderModel.updateOne(
         { _id: existingOrder._id },
         {
           $push: { items: { $each: itemsWithStatus } },
-          $inc:  { totalAmount: Number(totalAmount) || 0 },
-          $set:  { status: 'processing', updatedAt: now },
+          $inc: { totalAmount: Number(totalAmount) || 0 },
+          $set: {
+            status: "processing",
+            updatedAt: now,
+            "meta.orderType": meta?.orderType ?? existingOrder.meta.orderType,
+            "meta.observations":
+              meta?.observations ?? existingOrder.meta.observations,
+            "meta.splitCount":
+              Number(meta?.splitCount) || existingOrder.meta.splitCount || 1,
+            // opcionalmente atualize restaurant/restaurantUnit se não existirem
+            ...(existingOrder as any).restaurant ? {} : { restaurant: restaurantId },
+            ...(existingOrder as any).restaurantUnit
+              ? {}
+              : { restaurantUnit },
+          },
         }
       );
+
       const updated = await OrderModel.findById(existingOrder._id);
       return res.status(200).json(updated);
     }
 
-    // 3) cria novo
+    // 2) não achou => cria novo
     const doc = new OrderModel({
       restaurant: restaurantId,
+      restaurantUnit,
       guestInfo: {
         id: guestInfo.id,
-        name: guestInfo.name ?? '',
+        name: guestInfo.name ?? "",
         joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
       },
       items: itemsWithStatus,
-      status: 'processing',
+      status: "processing",
       isPaid: false,
-      sessionId: sessionId || undefined,
+      sessionId: sessionIdHeader || undefined,
       meta: {
         tableId: Number(meta.tableId),
-        orderType: meta?.orderType ?? 'local',
-        observations: meta?.observations ?? '',
+        orderType: meta?.orderType ?? "local",
+        observations: meta?.observations ?? "",
         splitCount: Number(meta?.splitCount) || 1,
         orderCreatedAt: now,
       },
@@ -94,11 +114,34 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       updatedAt: now,
     });
 
-    await doc.save();
-    return res.status(201).json(doc);
+    try {
+      await doc.save();
+      return res.status(201).json(doc);
+    } catch (e: any) {
+      // 3) se deu DUPLICATE por causa de índice, faça fallback p/ update (idempotência)
+      if (e?.code === 11000) {
+        const fallback = await OrderModel.findOne(openFilter).sort({
+          createdAt: -1,
+        });
+        if (fallback) {
+          await OrderModel.updateOne(
+            { _id: fallback._id },
+            {
+              $push: { items: { $each: itemsWithStatus } },
+              $inc: { totalAmount: Number(totalAmount) || 0 },
+              $set: { status: "processing", updatedAt: now },
+            }
+          );
+          const updated = await OrderModel.findById(fallback._id);
+          return res.status(200).json(updated);
+        }
+      }
+      console.error("Erro ao iniciar pedido:", e);
+      return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
+    }
   } catch (e) {
-    console.error('Erro ao iniciar pedido:', e);
-    return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
+    console.error("Erro ao iniciar pedido:", e);
+    return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
 
