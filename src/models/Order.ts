@@ -169,13 +169,16 @@ const orderSchema = new Schema(
 );
 
 // MIDDLEWARES
-orderSchema.index({
-  'guestInfo.id': 1,
-  'meta.tableId': 1,
-  sessionId: 1,
-  isPaid: 1,
-  status: 1
-}, { unique: true, partialFilterExpression: { isPaid: false, status: { $in: ['processing', 'payment_requested'] } } });
+orderSchema.index(
+  { restaurant: 1, restaurantUnit: 1, 'guestInfo.id': 1, 'meta.tableId': 1, sessionId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+    },
+  }
+);
 
 // Validação manual para guestInfo.name
 orderSchema.pre('validate', function (next) {
