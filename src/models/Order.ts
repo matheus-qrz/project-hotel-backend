@@ -179,6 +179,11 @@ orderSchema.pre('validate', function (next) {
   next();
 });
 
+orderSchema.index(
+  { 'guestInfo.id': 1, 'meta.tableId': 1, sessionId: 1 },
+  { unique: true, partialFilterExpression: { isPaid: false } }
+);
+
 //middleware para calcular métricas financeiras
 orderSchema.pre('save', function (next) {
   if (this.items && this.items.length > 0) {
