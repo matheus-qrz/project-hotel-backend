@@ -11,109 +11,101 @@ import { computeTotal } from "../utils/computeTotal";
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
-    const { restaurantUnitId, guestInfo, meta, items, totalAmount } = req.body as any;
+    const {
+      restaurantUnitId,        
+      guestInfo,
+      meta,
+      items,
+      totalAmount,
+    } = req.body as any;
 
-    if (!restaurantId || !guestInfo?.id || !meta?.tableId || !Array.isArray(items) || items.length === 0) {
+    if (
+      !restaurantId ||
+      !guestInfo?.id ||
+      !meta?.tableId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
       return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
-    const restaurantUnit = restaurantUnitId || restaurantId; // matriz se não houver unit
-    const sessionIdHeader =
-      typeof req.headers['x-session-id'] === 'string' ? String(req.headers['x-session-id']) : '';
-
-    const toNum = (v: any) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 0;
-    };
-
     const now = new Date();
+    const sessionIdHeader =
+      typeof req.headers['x-session-id'] === 'string'
+        ? String(req.headers['x-session-id'])
+        : '';
 
-    // normalização dos itens
-    const itemsWithStatus = items.map((it: any) => ({
-      ...it,
-      price: toNum(it.price),
-      costPrice: toNum(it.costPrice),
-      quantity: Math.max(1, toNum(it.quantity) || 1),
-      status: it.status ?? 'added',
-      createdAt: it.createdAt ? new Date(it.createdAt) : now,
-      addons: Array.isArray(it.addons)
-        ? it.addons.map((ad: any) => ({
-            ...ad,
-            price: toNum(ad.price),
-            quantity: Math.max(1, toNum(ad.quantity) || 1),
-            status: ad.status ?? 'added',
-            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
-          }))
-        : [],
-    }));
-
-    // ----- filtro único para achar o pedido aberto desta sessão -----
+    // Filtro que define "um pedido aberto desta sessão"
     const filter: any = {
       restaurant: restaurantId,
-      restaurantUnit,
-      'guestInfo.id': guestInfo.id,
+      restaurantUnit: restaurantUnitId || restaurantId,
+      'guestInfo.id': String(guestInfo.id),
       'meta.tableId': Number(meta.tableId),
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] },
     };
     if (sessionIdHeader) filter.sessionId = sessionIdHeader;
 
-    const existing = await OrderModel.findOne(filter).sort({ createdAt: -1 });
+    // Normalização dos itens
+    const itemsWithStatus = items.map((it: any) => ({
+      ...it,
+      status: it?.status ?? 'added',
+      createdAt: it?.createdAt ? new Date(it.createdAt) : now,
+      addons: Array.isArray(it.addons)
+        ? it.addons.map((ad: any) => ({
+            ...ad,
+            status: ad?.status ?? 'added',
+            createdAt: ad?.createdAt ? new Date(ad.createdAt) : now,
+          }))
+        : [],
+    }));
 
-    if (existing) {
-      // agrega itens ao pedido da mesma sessão
-      const incTotal = toNum(totalAmount);
-      await OrderModel.updateOne(
-        { _id: existing._id },
-        {
-          $push: { items: { $each: itemsWithStatus } },
-          ...(incTotal ? { $inc: { totalAmount: incTotal } } : {}),
-          $set: {
-            status: 'processing',
-            updatedAt: now,
-            'meta.orderType': meta?.orderType ?? existing.meta?.orderType ?? 'local',
-            'meta.observations': meta?.observations ?? existing.meta?.observations ?? '',
-            'meta.splitCount': toNum(meta?.splitCount) || existing.meta?.splitCount || 1,
-            ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
-          },
-        }
-      );
-      const updated = await OrderModel.findById(existing._id);
-      return res.status(200).json(updated);
-    }
+    // Upsert atômico: se já existir, acrescenta itens; se não existir, cria
+    const update: any = {
+      $push: { items: { $each: itemsWithStatus } },
+      $inc: { totalAmount: Number(totalAmount) || 0 },
+      $set: {
+        status: 'processing',
+        updatedAt: now,
+        ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+        'meta.orderType': meta?.orderType ?? 'local',
+        'meta.observations': meta?.observations ?? '',
+        'meta.splitCount': Number(meta?.splitCount) || 1,
+      },
+      $setOnInsert: {
+        restaurant: restaurantId,
+        restaurantUnit: restaurantUnitId || restaurantId,
+        isPaid: false,
+        createdAt: now,
+        sessionId: sessionIdHeader || undefined,
+        guestInfo: {
+          id: String(guestInfo.id),
+          name: guestInfo.name ?? '',
+          joinedAt: guestInfo?.joinedAt ? new Date(guestInfo.joinedAt) : now,
+        },
+        meta: {
+          tableId: Number(meta.tableId),
+          orderType: meta?.orderType ?? 'local',
+          observations: meta?.observations ?? '',
+          splitCount: Number(meta?.splitCount) || 1,
+          orderCreatedAt: now,
+        },
+        totalAmount: 0, // será incrementado no $inc acima
+      },
+    };
 
-    // cria um novo pedido para a sessão
-    const doc = new OrderModel({
-      restaurant: restaurantId,
-      restaurantUnit,
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name ?? '',
-        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
-      },
-      items: itemsWithStatus,
-      status: 'processing',
-      isPaid: false,
-      sessionId: sessionIdHeader || undefined,
-      meta: {
-        tableId: Number(meta.tableId),
-        orderType: meta?.orderType ?? 'local',
-        observations: meta?.observations ?? '',
-        splitCount: toNum(meta?.splitCount) || 1,
-        orderCreatedAt: now,
-      },
-      totalAmount: toNum(totalAmount),
-      createdAt: now,
-      updatedAt: now,
+    const doc = await OrderModel.findOneAndUpdate(filter, update, {
+      new: true,
+      upsert: true,
     });
 
-    await doc.save();
-    return res.status(201).json(doc);
+    return res.status(200).json(doc);
   } catch (e) {
     console.error('Erro ao iniciar pedido:', e);
     return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
+
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
