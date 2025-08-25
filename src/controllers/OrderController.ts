@@ -12,7 +12,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
     const {
-      restaurantUnitId,
+      restaurantUnitId: unitIdFromBody,
       guestInfo,
       meta,
       items,
@@ -26,94 +26,99 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       !Array.isArray(items) ||
       items.length === 0
     ) {
-      return res.status(400).json({ message: 'Dados insuficientes para iniciar pedido.' });
+      return res
+        .status(400)
+        .json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
-    const now = new Date();
-    const unit = restaurantUnitId || restaurantId;
-
+    // sessão (header tem prioridade)
     const sessionIdHeader =
       typeof req.headers['x-session-id'] === 'string'
         ? String(req.headers['x-session-id'])
-        : '';
+        : (req.body?.sessionId as string) || '';
 
-    // filtro do "pedido aberto desta sessão"
-    const filter: any = {
-      restaurant: restaurantId,
-      restaurantUnit: unit,
-      'guestInfo.id': String(guestInfo.id),
-      'meta.tableId': Number(meta.tableId),
-      isPaid: false,
-      status: { $in: ['processing', 'payment_requested'] },
-    };
-    if (sessionIdHeader) filter.sessionId = sessionIdHeader;
+    const now = new Date();
 
-    // itens normalizados
+    // normalização mínima de itens/addons
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
-      status: it?.status ?? 'added',
-      createdAt: it?.createdAt ? new Date(it.createdAt) : now,
+      status: it.status ?? 'added',
+      createdAt: it.createdAt ? new Date(it.createdAt) : now,
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
-            status: ad?.status ?? 'added',
-            createdAt: ad?.createdAt ? new Date(ad.createdAt) : now,
+            status: ad.status ?? 'added',
+            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
     }));
 
-    // documento base para criação
-    const baseDoc = {
-      restaurant: restaurantId,
-      restaurantUnit: unit,
+    // 🔎 procura pedido aberto da MESMA sessão/mesa/convidado
+    const existing = await OrderModel.findOne({
+      restaurantId,                                // <— usa o campo que existe no schema
+      ...(unitIdFromBody ? { restaurantUnitId: unitIdFromBody } : {}), // opcional
+      'guestInfo.id': guestInfo.id,
+      'meta.tableId': Number(meta.tableId),
+      isPaid: false,
+      status: { $in: ['processing', 'payment_requested'] },
+      ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+    }).sort({ createdAt: -1 });
+
+    // ♻️ Se já existe, acumula itens e atualiza total/status
+    if (existing) {
+      await OrderModel.updateOne(
+        { _id: existing._id },
+        {
+          $push: { items: { $each: itemsWithStatus } },
+          $inc: { totalAmount: Number(totalAmount) || 0 },
+          $set: {
+            status: 'processing',
+            updatedAt: now,
+            'meta.orderType': meta?.orderType ?? existing.meta?.orderType ?? 'local',
+            'meta.observations':
+              meta?.observations ?? existing.meta?.observations ?? '',
+            'meta.splitCount':
+              Number(meta?.splitCount) || existing.meta?.splitCount || 1,
+            ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+          },
+        }
+      );
+
+      const updated = await OrderModel.findById(existing._id);
+      return res.status(200).json(updated);
+    }
+
+    // 🆕 Se não existe, cria um novo (somente campos do schema!)
+    const doc = new OrderModel({
+      restaurantId,                                                   // <—
+      ...(unitIdFromBody ? { restaurantUnitId: unitIdFromBody } : {}),// <—
       guestInfo: {
-        id: String(guestInfo.id),
+        id: guestInfo.id,
         name: guestInfo.name ?? '',
-        joinedAt: guestInfo?.joinedAt ? new Date(guestInfo.joinedAt) : now,
+        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
       },
+      sessionId: sessionIdHeader || undefined,
+      items: itemsWithStatus,
+      status: 'processing',
+      isPaid: false,
       meta: {
         tableId: Number(meta.tableId),
+        guestId: guestInfo.id,
         orderType: meta?.orderType ?? 'local',
         observations: meta?.observations ?? '',
         splitCount: Number(meta?.splitCount) || 1,
         orderCreatedAt: now,
       },
-      status: 'processing',
-      isPaid: false,
-      sessionId: sessionIdHeader || undefined,
-      totalAmount: 0,            // será somado no $inc
-      items: [],                 // garante que o $push funcione no upsert
+      totalAmount: Number(totalAmount) || 0,
       createdAt: now,
       updatedAt: now,
-    };
-
-    // upsert atômico
-    const update: any = {
-      $setOnInsert: baseDoc,
-      $push: { items: { $each: itemsWithStatus } },
-      $inc: { totalAmount: Number(totalAmount) || 0 },
-      $set: {
-        status: 'processing',
-        updatedAt: now,
-        'meta.orderType': meta?.orderType ?? 'local',
-        'meta.observations': meta?.observations ?? '',
-        'meta.splitCount': Number(meta?.splitCount) || 1,
-        ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
-      },
-    };
-
-    const doc = await OrderModel.findOneAndUpdate(filter, update, {
-      upsert: true,
-      new: true,
-      runValidators: true,
-      setDefaultsOnInsert: true,
     });
 
-    return res.status(200).json(doc);
-  } catch (e: any) {
+    await doc.save();
+    return res.status(201).json(doc);
+  } catch (e) {
     console.error('Erro ao iniciar pedido:', e);
-    // enquanto testa, devolva a msg real p/ enxergar a causa
-    return res.status(500).json({ message: e?.message || 'Erro interno ao iniciar pedido.' });
+    return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
   }
 };
 
