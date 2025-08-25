@@ -31,6 +31,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         .json({ message: 'Dados insuficientes para iniciar pedido.' });
     }
 
+    // unidade: matriz usa o próprio restaurantId
+    const restaurantUnitId = unitIdFromBody || restaurantId;
+
     // sessão (header tem prioridade)
     const sessionIdHeader =
       typeof req.headers['x-session-id'] === 'string'
@@ -39,7 +42,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
     const now = new Date();
 
-    // normalização mínima de itens/addons
+    // normaliza itens/addons
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it.status ?? 'added',
@@ -53,69 +56,71 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // 🔎 procura pedido aberto da MESMA sessão/mesa/convidado
-    const existing = await OrderModel.findOne({
-      restaurantId,                                // <— usa o campo que existe no schema
-      ...(unitIdFromBody ? { restaurantUnitId: unitIdFromBody } : {}), // opcional
+    // filtro base
+    const baseFilter: any = {
+      restaurantId,
+      restaurantUnitId,
       'guestInfo.id': guestInfo.id,
       'meta.tableId': Number(meta.tableId),
       isPaid: false,
       status: { $in: ['processing', 'payment_requested'] },
-      ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
-    }).sort({ createdAt: -1 });
+    };
 
-    // ♻️ Se já existe, acumula itens e atualiza total/status
-    if (existing) {
-      await OrderModel.updateOne(
-        { _id: existing._id },
-        {
-          $push: { items: { $each: itemsWithStatus } },
-          $inc: { totalAmount: Number(totalAmount) || 0 },
-          $set: {
-            status: 'processing',
-            updatedAt: now,
-            'meta.orderType': meta?.orderType ?? existing.meta?.orderType ?? 'local',
-            'meta.observations':
-              meta?.observations ?? existing.meta?.observations ?? '',
-            'meta.splitCount':
-              Number(meta?.splitCount) || existing.meta?.splitCount || 1,
-            ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
-          },
+    // 👇 se houver sessionId, aceite (1) o mesmo sessionId ou (2) pedidos antigos sem sessionId
+    const filter: any = sessionIdHeader
+      ? {
+          ...baseFilter,
+          $or: [
+            { sessionId: sessionIdHeader },
+            { sessionId: { $exists: false } },
+            { sessionId: null },
+          ],
         }
-      );
+      : baseFilter;
 
-      const updated = await OrderModel.findById(existing._id);
-      return res.status(200).json(updated);
-    }
-
-    // 🆕 Se não existe, cria um novo (somente campos do schema!)
-    const doc = new OrderModel({
-      restaurantId,                                                   // <—
-      ...(unitIdFromBody ? { restaurantUnitId: unitIdFromBody } : {}),// <—
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name ?? '',
-        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+    // upsert atômico: merge se existir, cria se não existir
+    const order = await OrderModel.findOneAndUpdate(
+      filter,
+      {
+        $push: { items: { $each: itemsWithStatus } },
+        $inc: { totalAmount: Number(totalAmount) || 0 },
+        $set: {
+          status: 'processing',
+          updatedAt: now,
+          'meta.orderType': meta?.orderType ?? 'local',
+          'meta.observations': meta?.observations ?? '',
+          'meta.splitCount': Number(meta?.splitCount) || 1,
+          ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+        },
+        $setOnInsert: {
+          restaurantId,
+          restaurantUnitId,
+          guestInfo: {
+            id: guestInfo.id,
+            name: guestInfo.name ?? '',
+            joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+          },
+          items: [], // $push cria o array mesmo sem isto, mas deixa explícito
+          status: 'processing',
+          isPaid: false,
+          meta: {
+            tableId: Number(meta.tableId),
+            guestId: guestInfo.id,
+            orderType: meta?.orderType ?? 'local',
+            observations: meta?.observations ?? '',
+            splitCount: Number(meta?.splitCount) || 1,
+            orderCreatedAt: now,
+          },
+          totalAmount: 0,
+          createdAt: now,
+          updatedAt: now,
+          ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+        },
       },
-      sessionId: sessionIdHeader || undefined,
-      items: itemsWithStatus,
-      status: 'processing',
-      isPaid: false,
-      meta: {
-        tableId: Number(meta.tableId),
-        guestId: guestInfo.id,
-        orderType: meta?.orderType ?? 'local',
-        observations: meta?.observations ?? '',
-        splitCount: Number(meta?.splitCount) || 1,
-        orderCreatedAt: now,
-      },
-      totalAmount: Number(totalAmount) || 0,
-      createdAt: now,
-      updatedAt: now,
-    });
+      { new: true, upsert: true }
+    ).lean();
 
-    await doc.save();
-    return res.status(201).json(doc);
+    return res.status(200).json(order);
   } catch (e) {
     console.error('Erro ao iniciar pedido:', e);
     return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
