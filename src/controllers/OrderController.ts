@@ -12,7 +12,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
     const {
-      restaurantUnitId,        
+      restaurantUnitId,
       guestInfo,
       meta,
       items,
@@ -30,15 +30,17 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     }
 
     const now = new Date();
+    const unit = restaurantUnitId || restaurantId;
+
     const sessionIdHeader =
       typeof req.headers['x-session-id'] === 'string'
         ? String(req.headers['x-session-id'])
         : '';
 
-    // Filtro que define "um pedido aberto desta sessão"
+    // filtro do "pedido aberto desta sessão"
     const filter: any = {
       restaurant: restaurantId,
-      restaurantUnit: restaurantUnitId || restaurantId,
+      restaurantUnit: unit,
       'guestInfo.id': String(guestInfo.id),
       'meta.tableId': Number(meta.tableId),
       isPaid: false,
@@ -46,7 +48,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     };
     if (sessionIdHeader) filter.sessionId = sessionIdHeader;
 
-    // Normalização dos itens
+    // itens normalizados
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it?.status ?? 'added',
@@ -60,52 +62,60 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // Upsert atômico: se já existir, acrescenta itens; se não existir, cria
+    // documento base para criação
+    const baseDoc = {
+      restaurant: restaurantId,
+      restaurantUnit: unit,
+      guestInfo: {
+        id: String(guestInfo.id),
+        name: guestInfo.name ?? '',
+        joinedAt: guestInfo?.joinedAt ? new Date(guestInfo.joinedAt) : now,
+      },
+      meta: {
+        tableId: Number(meta.tableId),
+        orderType: meta?.orderType ?? 'local',
+        observations: meta?.observations ?? '',
+        splitCount: Number(meta?.splitCount) || 1,
+        orderCreatedAt: now,
+      },
+      status: 'processing',
+      isPaid: false,
+      sessionId: sessionIdHeader || undefined,
+      totalAmount: 0,            // será somado no $inc
+      items: [],                 // garante que o $push funcione no upsert
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // upsert atômico
     const update: any = {
+      $setOnInsert: baseDoc,
       $push: { items: { $each: itemsWithStatus } },
       $inc: { totalAmount: Number(totalAmount) || 0 },
       $set: {
         status: 'processing',
         updatedAt: now,
-        ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
         'meta.orderType': meta?.orderType ?? 'local',
         'meta.observations': meta?.observations ?? '',
         'meta.splitCount': Number(meta?.splitCount) || 1,
-      },
-      $setOnInsert: {
-        restaurant: restaurantId,
-        restaurantUnit: restaurantUnitId || restaurantId,
-        isPaid: false,
-        createdAt: now,
-        sessionId: sessionIdHeader || undefined,
-        guestInfo: {
-          id: String(guestInfo.id),
-          name: guestInfo.name ?? '',
-          joinedAt: guestInfo?.joinedAt ? new Date(guestInfo.joinedAt) : now,
-        },
-        meta: {
-          tableId: Number(meta.tableId),
-          orderType: meta?.orderType ?? 'local',
-          observations: meta?.observations ?? '',
-          splitCount: Number(meta?.splitCount) || 1,
-          orderCreatedAt: now,
-        },
-        totalAmount: 0, // será incrementado no $inc acima
+        ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
       },
     };
 
     const doc = await OrderModel.findOneAndUpdate(filter, update, {
-      new: true,
       upsert: true,
+      new: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
     });
 
     return res.status(200).json(doc);
-  } catch (e) {
+  } catch (e: any) {
     console.error('Erro ao iniciar pedido:', e);
-    return res.status(500).json({ message: 'Erro interno ao iniciar pedido.' });
+    // enquanto testa, devolva a msg real p/ enxergar a causa
+    return res.status(500).json({ message: e?.message || 'Erro interno ao iniciar pedido.' });
   }
 };
-
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
