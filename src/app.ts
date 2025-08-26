@@ -27,7 +27,7 @@ app.use(
         origin: function (origin, callback) {
             const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
                 "http://localhost:3000",
-                "https://seugarcom-prod.vercel.app",
+                "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
             ];
             if (!origin || allowedOrigins.includes(origin)) {
                 callback(null, true);
