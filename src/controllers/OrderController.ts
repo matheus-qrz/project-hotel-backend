@@ -16,7 +16,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
     const restaurantUnit = unitIdFromBody || restaurantId;
 
-    const { guestInfo, meta, items, totalAmount } = req.body as any;
+    const { guestInfo, meta, items, totalAmount, _id } = req.body as any;
 
     if (
       !restaurantUnit ||
@@ -50,30 +50,27 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // ---------- procurar pedido aberto desta sessão (sem depender do header) ----------
-    const filter: any = {
-      restaurantUnit,
-      "guestInfo.id": guestInfo.id,
-      "meta.tableId": Number(meta.tableId),
-      isPaid: false,
-      status: { $in: ["processing", "payment_requested"] },
-    };
+    // ---------- verificar se já existe pedido com mesmo _id e sessionId ----------
+    const queryByIdAndSession: any = {};
+    if (_id && sessionIdHeader) {
+      queryByIdAndSession._id = _id;
+      queryByIdAndSession.sessionId = sessionIdHeader;
+    }
 
-    const existing = await OrderModel.findOne(filter);
+    let existing = null;
+    if (_id && sessionIdHeader) {
+      existing = await OrderModel.findOne(queryByIdAndSession);
+    }
 
     if (existing) {
-      // ---------- garante sessionId persistente ----------
-      const sessionToUse = sessionIdHeader || existing.sessionId || uuid();
-
       await OrderModel.updateOne(
         { _id: existing._id },
         {
           $push: { items: { $each: itemsWithStatus } },
           $inc: { totalAmount: Number(totalAmount) || 0 },
           $set: {
-            status: "processing",
             updatedAt: now,
-            sessionId: sessionToUse,
+            status: "processing",
             "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
             "meta.observations":
               meta?.observations ?? existing.meta?.observations ?? "",
@@ -84,11 +81,11 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       );
 
       const updated = await OrderModel.findById(existing._id);
-      res.setHeader("x-session-id", sessionToUse);
+      res.setHeader("x-session-id", sessionIdHeader);
       return res.status(200).json(updated);
     }
 
-    // ---------- cria novo pedido com sessionId novo ou herdado do header ----------
+    // ---------- criar novo pedido ----------
     const sessionToUse = sessionIdHeader || uuid();
 
     const doc = new OrderModel({
