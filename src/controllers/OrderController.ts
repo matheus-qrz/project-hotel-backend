@@ -1,112 +1,125 @@
 import mongoose from "mongoose";
-import { Request, Response } from "express";
 import { v4 as uuid } from "uuid";
-import { IOrderItem, OrderModel } from "../models/Order";
+import { Request, Response } from "express";
+import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import {  OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
+import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
 
-function isSameItem(a: IOrderItem, b: IOrderItem): boolean {
-  return (
-    a.name === b.name &&
-    a.price === b.price &&
-    JSON.stringify(a.addons || []) === JSON.stringify(b.addons || [])
-  );
-}
-
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
-try {
-    const {
-      restaurantUnit,
-      tableId,
-      guestInfo,
-      items = [],
-      status,
-      type,
-      meta,
-    } = req.body;
+  try {
+    const { restaurantId } = req.params as { restaurantId: string };
 
-    const sessionHeader = req.headers["x-session-id"];
-    const incomingSessionId = typeof sessionHeader === "string" && sessionHeader.trim()
-      ? sessionHeader.trim()
-      : undefined;
+    const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
+    const restaurantUnit = unitIdFromBody || restaurantId;
 
-    if (!restaurantUnit || !tableId || !guestInfo?.id || items.length === 0) {
-      return res.status(400).json({ message: "Campos obrigatórios ausentes." });
+    const { guestInfo, meta, items, totalAmount } = req.body as any;
+
+    if (
+      !restaurantUnit ||
+      !guestInfo?.id ||
+      !meta?.tableId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-    // Busca por pedido ativo existente (não pago e com status em andamento)
-    const existingOrder = await OrderModel.findOne({
+    const sessionIdHeader =
+      typeof req.headers["x-session-id"] === "string"
+        ? String(req.headers["x-session-id"])
+        : "";
+
+    const now = new Date();
+
+    const itemsWithStatus = items.map((it: any) => ({
+      ...it,
+      status: it.status ?? "added",
+      createdAt: it.createdAt ? new Date(it.createdAt) : now,
+      addons: Array.isArray(it.addons)
+        ? it.addons.map((ad: any) => ({
+            ...ad,
+            status: ad.status ?? "added",
+            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
+          }))
+        : [],
+    }));
+
+    // ---------- procurar pedido aberto desta sessão (sem depender do header) ----------
+    const filter: any = {
       restaurantUnit,
-      'meta.tableId': Number(tableId),
-      'guestInfo.id': guestInfo.id,
+      "guestInfo.id": guestInfo.id,
+      "meta.tableId": Number(meta.tableId),
       isPaid: false,
-      status: { $in: ["processing", "payment_requested"] }
-    });
+      status: { $in: ["processing", "payment_requested"] },
+    };
 
-    let order;
+    const existing = await OrderModel.findOne(filter);
 
-    if (!existingOrder) {
-      // Cria novo pedido
-      order = new OrderModel({
-        restaurantUnit,
-        guestInfo,
-        isGuest: true,
-        sessionId: incomingSessionId ?? uuid(),
-        items: [],
-        totalAmount: 0,
-        status: status && Object.values(OrderStatus).includes(status)
-          ? status
-          : OrderStatus.PROCESSING,
-        isPaid: false,
-        meta: {
-          ...meta,
-          tableId: Number(tableId),
-          orderType: type ?? 'local',
-        },
-        financialMetrics: {},
-      });
-    } else {
-      // Atualiza pedido existente
-      order = existingOrder;
+    if (existing) {
+      // ---------- garante sessionId persistente ----------
+      const sessionToUse = sessionIdHeader || existing.sessionId || uuid();
 
-      if (incomingSessionId) {
-        order.sessionId = incomingSessionId;
-      }
-
-      if (status && Object.values(OrderStatus).includes(status)) {
-        order.status = status;
-      }
-    }
-
-    // Realiza merge dos itens
-    for (const newItem of items) {
-      newItem.status = newItem.status || OrderItemStatus.ADDED;
-
-      const matchedItem = order.items.find(
-        (i) => isSameItem(i as IOrderItem, newItem)
-          && i.status !== OrderItemStatus.CANCELLED
+      await OrderModel.updateOne(
+        { _id: existing._id },
+        {
+          $push: { items: { $each: itemsWithStatus } },
+          $inc: { totalAmount: Number(totalAmount) || 0 },
+          $set: {
+            status: "processing",
+            updatedAt: now,
+            sessionId: sessionToUse,
+            "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
+            "meta.observations":
+              meta?.observations ?? existing.meta?.observations ?? "",
+            "meta.splitCount":
+              Number(meta?.splitCount) || existing.meta?.splitCount || 1,
+          },
+        }
       );
 
-      if (matchedItem) {
-        matchedItem.quantity += newItem.quantity;
-        matchedItem.status = newItem.status;
-      } else {
-        order.items.push(newItem);
-      }
+      const updated = await OrderModel.findById(existing._id);
+      res.setHeader("x-session-id", sessionToUse);
+      return res.status(200).json(updated);
     }
 
-    // totalAmount e financialMetrics serão recalculados pelo middleware `pre('save')`
-    await order.save();
+    // ---------- cria novo pedido com sessionId novo ou herdado do header ----------
+    const sessionToUse = sessionIdHeader || uuid();
 
-    res.setHeader("x-session-id", order.sessionId);
-    return res.status(200).json(order);
-  } catch (error) {
-    console.error("Erro ao iniciar ou atualizar pedido:", error);
-    return res.status(500).json({ message: "Erro interno ao processar pedido." });
+    const doc = new OrderModel({
+      restaurantUnit,
+      guestInfo: {
+        id: guestInfo.id,
+        name: guestInfo.name ?? "",
+        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+      },
+      items: itemsWithStatus,
+      status: "processing",
+      isPaid: false,
+      sessionId: sessionToUse,
+      meta: {
+        tableId: Number(meta.tableId),
+        orderType: meta?.orderType ?? "local",
+        observations: meta?.observations ?? "",
+        splitCount: Number(meta?.splitCount) || 1,
+        orderCreatedAt: now,
+      },
+      totalAmount: Number(totalAmount) || 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await doc.save();
+    res.setHeader("x-session-id", sessionToUse);
+    return res.status(201).json(doc);
+  } catch (e) {
+    console.error("Erro ao iniciar pedido:", e);
+    return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
 
