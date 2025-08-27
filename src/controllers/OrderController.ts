@@ -30,10 +30,10 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-    const sessionIdHeader =
-      typeof req.headers["x-session-id"] === "string"
-        ? String(req.headers["x-session-id"])
-        : "";
+const sessionId =
+  typeof req.headers["x-session-id"] === "string" && req.headers["x-session-id"].trim()
+    ? String(req.headers["x-session-id"]).trim()
+    : crypto.randomUUID();
 
     const now = new Date();
 
@@ -52,13 +52,13 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
     // ---------- verificar se já existe pedido com mesmo _id e sessionId ----------
     const queryByIdAndSession: any = {};
-    if (_id && sessionIdHeader) {
+    if (_id && sessionId) {
       queryByIdAndSession._id = _id;
-      queryByIdAndSession.sessionId = sessionIdHeader;
+      queryByIdAndSession.sessionId = sessionId;
     }
 
     let existing = null;
-    if (_id && sessionIdHeader) {
+    if (_id && sessionId) {
       existing = await OrderModel.findOne(queryByIdAndSession);
     }
 
@@ -81,12 +81,12 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       );
 
       const updated = await OrderModel.findById(existing._id);
-      res.setHeader("x-session-id", sessionIdHeader);
+      res.setHeader("x-session-id", sessionId);
       return res.status(200).json(updated);
     }
 
     // ---------- criar novo pedido ----------
-    const sessionToUse = sessionIdHeader || uuid();
+    const sessionToUse = sessionId || uuid();
 
     const doc = new OrderModel({
       restaurantUnit,
