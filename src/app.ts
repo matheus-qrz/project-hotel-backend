@@ -14,7 +14,7 @@ const app = express();
 // Pré-flight
 app.options('/login', (req, res) => {
     res.set({
-        "Access-Control-Allow-Origin": "http://localhost:3000",
+        "Access-Control-Allow-Origin": "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Credentials": "false"
