@@ -30,10 +30,11 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-const sessionId =
-  typeof req.headers["x-session-id"] === "string" && req.headers["x-session-id"].trim()
-    ? String(req.headers["x-session-id"]).trim()
-    : crypto.randomUUID();
+    const sessionId =
+      typeof req.headers["x-session-id"] === "string" &&
+      req.headers["x-session-id"].trim()
+        ? String(req.headers["x-session-id"]).trim()
+        : crypto.randomUUID();
 
     const now = new Date();
 
@@ -50,16 +51,14 @@ const sessionId =
         : [],
     }));
 
-    // ---------- verificar se já existe pedido com mesmo _id e sessionId ----------
-    const queryByIdAndSession: any = {};
-    if (_id && sessionId) {
-      queryByIdAndSession._id = _id;
-      queryByIdAndSession.sessionId = sessionId;
-    }
-
+    // ---------- verificação baseada em _id e sessionId ----------
     let existing = null;
+
     if (_id && sessionId) {
-      existing = await OrderModel.findOne(queryByIdAndSession);
+      existing = await OrderModel.findOne({
+        _id,
+        sessionId,
+      });
     }
 
     if (existing) {
@@ -119,6 +118,7 @@ const sessionId =
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
+
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
