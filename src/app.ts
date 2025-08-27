@@ -13,7 +13,7 @@ const app = express();
 
 app.options('/login', (req, res) => {
     res.set({
-        "Access-Control-Allow-Origin": "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
+        "Access-Control-Allow-Origin": "https://frontend-git-develop-seugarcomprods-projects.vercel.app",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Credentials": "false"
@@ -22,23 +22,15 @@ app.options('/login', (req, res) => {
 });
 
 app.use(
-    cors({
-        origin: function (origin, callback) {
-            const allowedOrigins = [
-                "http://localhost:3000",
-                "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
-            ];
-            if (!origin || allowedOrigins.includes(origin)) {
-                callback(null, true);
-            } else {
-                console.error("❌ CORS bloqueado para origem:", origin);
-                callback(new Error("Not allowed by CORS"));
-            }
-        },
-        credentials: false,
-        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization", "x-session-id"],
-    })
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "https://frontend-git-develop-seugarcomprods-projects.vercel.app",
+    ],
+    credentials: true, // ← Alterado de false para true
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-session-id"],
+  })
 );
 
 app.use(cookieParser());
