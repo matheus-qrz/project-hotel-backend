@@ -11,7 +11,6 @@ dotenv.config();
 
 const app = express();
 
-// Pré-flight
 app.options('/login', (req, res) => {
     res.set({
         "Access-Control-Allow-Origin": "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
@@ -25,7 +24,7 @@ app.options('/login', (req, res) => {
 app.use(
     cors({
         origin: function (origin, callback) {
-            const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || [
+            const allowedOrigins = [
                 "http://localhost:3000",
                 "https://frontend-git-develop-seugarcomprods-projects.vercel.app/",
             ];
