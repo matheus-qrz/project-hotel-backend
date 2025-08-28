@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { v4 as uuid } from "uuid";
+import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
@@ -13,10 +13,11 @@ export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
 
+    // o body manda restaurantUnitId; no banco usamos restaurantUnit
     const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
     const restaurantUnit = unitIdFromBody || restaurantId;
 
-    const { guestInfo, meta, items, totalAmount, _id } = req.body as any;
+    const { guestInfo, meta, items, totalAmount } = req.body as any;
 
     if (
       !restaurantUnit ||
@@ -30,14 +31,16 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
+    // sessionId: usa o header se vier, senão gera um novo
     const sessionId =
       typeof req.headers["x-session-id"] === "string" &&
       req.headers["x-session-id"].trim()
         ? String(req.headers["x-session-id"]).trim()
-        : crypto.randomUUID();
+        : randomUUID();
 
     const now = new Date();
 
+    // normalização de itens
     const itemsWithStatus = items.map((it: any) => ({
       ...it,
       status: it.status ?? "added",
@@ -51,17 +54,24 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // ---------- verificação baseada em _id e sessionId ----------
-    let existing = null;
+    // ---------- PROCURAR PEDIDO ATIVO DESSA SESSÃO ----------
+    // 1) busca ampla por sessionId + unidade + guest + ativo
+    const candidates = await OrderModel.find({
+      sessionId,
+      restaurantUnit,
+      "guestInfo.id": guestInfo.id,
+      isPaid: false,
+      status: { $in: ["processing", "payment_requested"] },
+    }).lean();
 
-    if (_id && sessionId) {
-      existing = await OrderModel.findOne({
-        _id,
-        sessionId,
-      });
-    }
+    // 2) escolhe o da mesma mesa (tolerando number/string)
+    const existing =
+      candidates.find(
+        (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
+      ) || null;
 
     if (existing) {
+      // ---------- acumula no mesmo pedido ----------
       await OrderModel.updateOne(
         { _id: existing._id },
         {
@@ -84,9 +94,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       return res.status(200).json(updated);
     }
 
-    // ---------- criar novo pedido ----------
-    const sessionToUse = sessionId || uuid();
-
+    // ---------- CRIAR NOVO PEDIDO ----------
     const doc = new OrderModel({
       restaurantUnit,
       guestInfo: {
@@ -97,7 +105,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       items: itemsWithStatus,
       status: "processing",
       isPaid: false,
-      sessionId: sessionToUse,
+      sessionId, // sempre grava o sessionId
       meta: {
         tableId: Number(meta.tableId),
         orderType: meta?.orderType ?? "local",
@@ -111,14 +119,13 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     });
 
     await doc.save();
-    res.setHeader("x-session-id", sessionToUse);
+    res.setHeader("x-session-id", sessionId);
     return res.status(201).json(doc);
   } catch (e) {
     console.error("Erro ao iniciar pedido:", e);
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
-
 
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
