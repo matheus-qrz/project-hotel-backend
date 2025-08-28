@@ -163,20 +163,23 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     // 2. Clientes por mês (últimos 12 meses)
     // ============================
     const monthlyAgg = await Order.aggregate([
-      { $match: matchFilter },
+      { $match: { ...matchFilter, 'guestInfo.id': { $ne: null } } },
       {
         $group: {
           _id: {
             y: { $year: '$createdAt' },
             m: { $month: '$createdAt' },
-            guestId: '$guestInfo.id'
+            guestId: '$guestInfo.id',
           },
         }
       },
       {
         $group: {
-          _id: { y: '$_id.y', m: '$_id.m' },
-          count: { $sum: 1 }
+          _id: {
+            y: '$_id.y',
+            m: '$_id.m',
+          },
+          uniqueCustomers: { $sum: 1 } // cada guestId único já é 1
         }
       },
       { $sort: { '_id.y': 1, '_id.m': 1 } }
@@ -186,7 +189,7 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     const customerReport = {
       monthly: monthlyAgg.slice(-12).map((d: any) => ({
         month: monthNames[d._id.m - 1],
-        count: d.count
+        count: d.uniqueCustomers,
       }))
     };
 
@@ -209,9 +212,44 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     const newCustomers = Math.floor(total * 0.3); // ajuste se quiser lógica real
     const returningCustomers = total - newCustomers;
 
+    const now = new Date();
+    const currentMonth = now.getMonth() + 1;
+    const currentYear = now.getFullYear();
+
+    const lastMonth = new Date(currentYear, currentMonth - 2); // -1 pois Date usa 0-index
+    const lastMonthValue = lastMonth.getMonth() + 1;
+    const lastMonthYear = lastMonth.getFullYear();
+    const monthlyByGuest = await Order.aggregate([
+      { $match: matchFilter },
+      {
+        $group: {
+          _id: {
+            y: { $year: '$createdAt' },
+            m: { $month: '$createdAt' },
+            guestId: '$guestInfo.id'
+          }
+        }
+      }
+    ]);
+
+    const grouped = monthlyByGuest.reduce((acc, doc) => {
+      const { y, m } = doc._id;
+      const key = `${y}-${m}`;
+      if (!acc[key]) acc[key] = new Set();
+      acc[key].add(doc._id.guestId);
+      return acc;
+    }, {} as Record<string, Set<string>>);
+
+
+    const totalThisMonth = grouped[`${currentYear}-${currentMonth}`]?.size || 0;
+    const totalLastMonth = grouped[`${lastMonthYear}-${lastMonthValue}`]?.size || 0;
+    const totalChange = totalLastMonth
+      ? ((totalThisMonth - totalLastMonth) / totalLastMonth) * 100
+      : 0;
+
     const summary: CustomersSummary = {
       total,
-      totalChange: 5,            // ou cálculo baseado em período
+      totalChange: Number(totalChange.toFixed(1)),           
       new: newCustomers,
       newChange: 2,
       retention: returningCustomers > 0 ? Math.round((returningCustomers / total) * 100) : 0,
@@ -221,12 +259,13 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
         : 0,
       avgTicketChange: 1.2,
       frequency: totalAgg.length
-        ? totalAgg.reduce((acc, c) => acc + c.visits, 0) / totalAgg.length
+        ? Number((totalAgg.reduce((acc, c) => acc + c.visits, 0) / totalAgg.length).toFixed(2))
         : 1,
       frequencyChange: 0.5,
-      nps: 75, // mockado por enquanto
+      nps: 0, // mockado por enquanto
       npsChange: 2
     };
+
 
     return res.status(200).json({
       summary,
