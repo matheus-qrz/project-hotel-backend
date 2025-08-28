@@ -31,7 +31,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         .json({ message: "Dados insuficientes para iniciar pedido." });
     }
 
-    // sessionId: usa o header se vier, senão gera um novo
+    // sessionId: usa o header se vier; senão gera um novo
     const sessionId =
       typeof req.headers["x-session-id"] === "string" &&
       req.headers["x-session-id"].trim()
@@ -54,24 +54,24 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : [],
     }));
 
-    // ---------- PROCURAR PEDIDO ATIVO DESSA SESSÃO ----------
-    // 1) busca ampla por sessionId + unidade + guest + ativo
+    // ---------- PROCURAR PEDIDO EXISTENTE DESSA SESSÃO ----------
+    // importante: incluir 'completed' como elegível para receber novos itens
     const candidates = await OrderModel.find({
       sessionId,
       restaurantUnit,
       "guestInfo.id": guestInfo.id,
       isPaid: false,
-      status: { $in: ["processing", "payment_requested"] },
+      status: { $nin: ["paid", "cancelled"] }, // <- aceita processing, payment_requested e completed
     }).lean();
 
-    // 2) escolhe o da mesma mesa (tolerando number/string)
+    // escolhe o da mesma mesa (tolerando string/number)
     const existing =
       candidates.find(
         (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
       ) || null;
 
     if (existing) {
-      // ---------- acumula no mesmo pedido ----------
+      // ---------- acumula no MESMO documento e traz o pedido de volta para "processing" ----------
       await OrderModel.updateOne(
         { _id: existing._id },
         {
@@ -79,8 +79,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
           $inc: { totalAmount: Number(totalAmount) || 0 },
           $set: {
             updatedAt: now,
-            status: "processing",
-            "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
+            status: "processing", // volta o card para "Em preparo"
+            "meta.orderType":
+              meta?.orderType ?? existing.meta?.orderType ?? "local",
             "meta.observations":
               meta?.observations ?? existing.meta?.observations ?? "",
             "meta.splitCount":
