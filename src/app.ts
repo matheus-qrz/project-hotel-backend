@@ -13,7 +13,7 @@ const app = express();
 
 app.options('/login', (req, res) => {
     res.set({
-        "Access-Control-Allow-Origin": "https://frontend-git-develop-seugarcomprods-projects.vercel.app",
+        "Access-Control-Allow-Origin": ["https://seugarcom-frontend.vercel.app/", "https://frontend-git-develop-seugarcomprods-projects.vercel.app"],
         "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
         "Access-Control-Allow-Credentials": "false"
@@ -26,6 +26,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://frontend-git-develop-seugarcomprods-projects.vercel.app",
+      "https://seugarcom-frontend.vercel.app/"
     ],
     credentials: true, // ← Alterado de false para true
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
