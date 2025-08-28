@@ -117,62 +117,123 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
 // ------------------ CUSTOMERS DASHBOARD ------------------
 export const getCustomersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const filter = buildDashboardFilterFromRequest(req);
+    const scope = (req.params as any)?.scope ?? (req.query as any)?.scope;
+    const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
 
-    const summary: CustomersSummary = {
-      total: 254,
-      totalChange: 12,
-      new: 38,
-      newChange: 5,
-      retention: 82,
-      retentionChange: 3,
-      avgTicket: 49.95,
-      avgTicketChange: 1.5,
-      frequency: 2,
-      frequencyChange: 1,
-      nps: 80,
-      npsChange: 2
+    if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
+      return res.status(400).json({ message: 'Parâmetros inválidos' });
+    }
+
+    const targetId = new mongoose.Types.ObjectId(id);
+    let matchFilter: any = {
+      status: 'paid',
+      'guestInfo.id': { $ne: null }
     };
 
-    const customerReport: { monthly: MonthlyCustomerReport[] } = {
-      monthly: [
-        { month: 'Jan', count: 35 },
-        { month: 'Feb', count: 42 },
-        { month: 'Mar', count: 38 },
-        { month: 'Apr', count: 49 },
-        { month: 'May', count: 57 },
-        { month: 'Jun', count: 33 }
-      ]
-    };
+    if (scope === 'unit') {
+      matchFilter.restaurantUnit = targetId;
+    } else if (scope === 'restaurant') {
+      const units = await RestaurantUnit.find({ restaurant: targetId }).select('_id').lean();
+      const unitIds = [
+        ...units.map(u => u._id as mongoose.Types.ObjectId),
+        targetId
+      ];
+      matchFilter.restaurantUnit = { $in: unitIds };
+    } else {
+      return res.status(400).json({ message: 'Escopo inválido' });
+    }
 
+    // ============================
+    // 1. Top Clientes
+    // ============================
     const topCustomers: TopCustomer[] = await Order.aggregate([
-      {
-        $match: {
-          ...filter,
-          status: 'paid',
-          'guestInfo.id': { $ne: null }
-        }
-      },
+      { $match: matchFilter },
       {
         $group: {
           _id: '$guestInfo.id',
           name: { $first: '$guestInfo.name' },
-          value: { $sum: '$totalAmount' }
+          value: { $sum: { $ifNull: ['$totalAmount', 0] } }
+        }
+      },
+      { $sort: { value: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // ============================
+    // 2. Clientes por mês (últimos 12 meses)
+    // ============================
+    const monthlyAgg = await Order.aggregate([
+      { $match: matchFilter },
+      {
+        $group: {
+          _id: {
+            y: { $year: '$createdAt' },
+            m: { $month: '$createdAt' },
+            guestId: '$guestInfo.id'
+          },
         }
       },
       {
-        $sort: { value: -1 }
+        $group: {
+          _id: { y: '$_id.y', m: '$_id.m' },
+          count: { $sum: 1 }
+        }
       },
+      { $sort: { '_id.y': 1, '_id.m': 1 } }
+    ]);
+
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const customerReport = {
+      monthly: monthlyAgg.slice(-12).map((d: any) => ({
+        month: monthNames[d._id.m - 1],
+        count: d.count
+      }))
+    };
+
+    // ============================
+    // 3. Resumo (mockado ou baseado em dados reais, ex. para retention ou média de ticket)
+    // ============================
+    const totalAgg = await Order.aggregate([
+      { $match: matchFilter },
       {
-        $limit: 5
+        $group: {
+          _id: '$guestInfo.id',
+          name: { $first: '$guestInfo.name' },
+          totalSpent: { $sum: { $ifNull: ['$totalAmount', 0] } },
+          visits: { $sum: 1 }
+        }
       }
     ]);
+
+    const total = totalAgg.length;
+    const newCustomers = Math.floor(total * 0.3); // ajuste se quiser lógica real
+    const returningCustomers = total - newCustomers;
+
+    const summary: CustomersSummary = {
+      total,
+      totalChange: 5,            // ou cálculo baseado em período
+      new: newCustomers,
+      newChange: 2,
+      retention: returningCustomers > 0 ? Math.round((returningCustomers / total) * 100) : 0,
+      retentionChange: 1,
+      avgTicket: totalAgg.length
+        ? totalAgg.reduce((acc, c) => acc + c.totalSpent, 0) / totalAgg.length
+        : 0,
+      avgTicketChange: 1.2,
+      frequency: totalAgg.length
+        ? totalAgg.reduce((acc, c) => acc + c.visits, 0) / totalAgg.length
+        : 1,
+      frequencyChange: 0.5,
+      nps: 75, // mockado por enquanto
+      npsChange: 2
+    };
 
     return res.status(200).json({
       summary,
       customerReport,
       topCustomers
     });
+
   } catch (error) {
     console.error('Erro ao gerar dashboard de clientes:', error);
     return res.status(500).json({ message: 'Erro ao gerar dashboard de clientes' });
