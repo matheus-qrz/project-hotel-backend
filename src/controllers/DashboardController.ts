@@ -70,11 +70,14 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
       }
     ]);
 
+    const totalOrders = await Order.countDocuments(matchFilter);
+
     const summary = {
       revenue:   summaryAgg?.revenue   ?? 0,
       cost:      summaryAgg?.cost      ?? 0,
       profit:    summaryAgg?.profit    ?? 0,
-      discounts: summaryAgg?.discounts ?? 0
+      avgTicket: totalOrders > 0 ? (summaryAgg?.revenue ?? 0) / totalOrders : 0,
+      margin:    summaryAgg?.revenue > 0 ? (summaryAgg?.profit ?? 0) / summaryAgg.revenue * 100 : 0
     };
 
     // ----- mensal (últimos 6)
