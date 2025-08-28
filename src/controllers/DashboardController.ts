@@ -163,26 +163,26 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     // 2. Clientes por mês (últimos 12 meses)
     // ============================
     const monthlyAgg = await Order.aggregate([
-      { $match: { ...matchFilter, 'guestInfo.id': { $ne: null } } },
+      { $match: matchFilter },
       {
-        $group: {
-          _id: {
-            y: { $year: '$createdAt' },
-            m: { $month: '$createdAt' },
-            guestId: '$guestInfo.id',
-          },
+        $project: {
+          year: { $year: '$createdAt' },
+          month: { $month: '$createdAt' },
+          guestId: '$guestInfo.id'
         }
       },
       {
         $group: {
-          _id: {
-            y: '$_id.y',
-            m: '$_id.m',
-          },
-          uniqueCustomers: { $sum: 1 } // cada guestId único já é 1
+          _id: { year: '$year', month: '$month', guestId: '$guestId' }
         }
       },
-      { $sort: { '_id.y': 1, '_id.m': 1 } }
+      {
+        $group: {
+          _id: { year: '$_id.year', month: '$_id.month' },
+          count: { $sum: 1 } // número de guestId únicos naquele mês
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
     ]);
 
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
