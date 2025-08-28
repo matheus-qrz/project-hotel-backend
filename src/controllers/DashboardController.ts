@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
-import { OrderModel as Order } from "../models/Order";
+import { OrderModel as Order, OrderModel } from "../models/Order";
 import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
@@ -162,36 +162,60 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     // ============================
     // 2. Clientes por mês (últimos 12 meses)
     // ============================
-    const monthlyAgg = await Order.aggregate([
-      { $match: matchFilter },
+    // Calcula o intervalo dos últimos 12 meses
+    const nowDate = new Date();
+    const endYear = nowDate.getFullYear();
+    const endMonth = nowDate.getMonth();
+    const startDate = new Date(endYear, endMonth - 11, 1);
+    const startYear = startDate.getFullYear();
+    const startMonth = startDate.getMonth();
+
+    const monthlyCustomerReport = await OrderModel.aggregate([
       {
-        $project: {
-          year: { $year: '$createdAt' },
-          month: { $month: '$createdAt' },
-          guestId: '$guestInfo.id'
-        }
+        $match: {
+          isPaid: true,
+          createdAt: {
+            $gte: new Date(startYear, startMonth, 1),
+            $lte: new Date(endYear, endMonth + 1, 0),
+          },
+          "guestInfo.id": { $ne: null },
+        },
       },
       {
         $group: {
-          _id: { year: '$year', month: '$month', guestId: '$guestId' }
-        }
+          _id: {
+            year: { $year: "$createdAt" },
+            month: { $month: "$createdAt" },
+            guestId: "$guestInfo.id",
+          },
+        },
       },
       {
         $group: {
-          _id: { year: '$_id.year', month: '$_id.month' },
-          count: { $sum: 1 } // número de guestId únicos naquele mês
-        }
+          _id: {
+            year: "$_id.year",
+            month: "$_id.month",
+          },
+          count: { $sum: 1 }, // número de clientes únicos por mês
+        },
       },
-      { $sort: { '_id.year': 1, '_id.month': 1 } }
+      {
+        $sort: {
+          "_id.year": 1,
+          "_id.month": 1,
+        },
+      },
     ]);
 
-    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const customerReport = {
-      monthly: monthlyAgg.slice(-12).map((d: any) => ({
-        month: monthNames[d._id.m - 1],
-        count: d.uniqueCustomers,
-      }))
-    };
+    // Transforma em formato esperado pelo frontend
+    const monthlyFormatted: MonthlyCustomerReport[] = Array.from({ length: 12 }).map((_, i) => {
+      const item = monthlyCustomerReport.find((r) => r._id.month === i + 1);
+      const month = new Date(2025, i).toLocaleString("pt-BR", { month: "short" });
+      return {
+        month: month.toLowerCase(),
+        count: item?.count || 0,
+      };
+    });
 
     // ============================
     // 3. Resumo (mockado ou baseado em dados reais, ex. para retention ou média de ticket)
@@ -269,7 +293,9 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
 
     return res.status(200).json({
       summary,
-      customerReport,
+      customerReport: {
+      monthly: monthlyFormatted,
+      },
       topCustomers
     });
 
