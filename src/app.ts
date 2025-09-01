@@ -11,7 +11,6 @@ dotenv.config();
 
 const app = express();
 
-/** ---- CORS (coloque antes de tudo) ---- */
 const allowedOrigins = [
   "http://localhost:3000",
   "https://seugarcom-frontend.vercel.app",
@@ -20,7 +19,6 @@ const allowedOrigins = [
 
 const corsOptions: cors.CorsOptions = {
   origin(origin, callback) {
-    // Permite ferramentas sem Origin (curl, healthcheck)
     if (!origin) return callback(null, true);
 
     const vercelPreviewOk = /^https:\/\/frontend-git-[a-z0-9-]+-seugarcomprods-projects\.vercel\.app$/.test(

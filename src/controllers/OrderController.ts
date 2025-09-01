@@ -524,15 +524,19 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
     const hdr = req.headers['x-session-id'];
     if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
-  const updated = await OrderModel.findOneAndUpdate(
-    filter,
-    { $set: { 'items.$.status': 'cancelled' } },
-    { new: true }
-  );
-  if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
+    const updated = await OrderModel.findOneAndUpdate(filter,
+      { $set: { 'items.$.status': 'cancelled' } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
 
-  const recomputed = await recomputeAndReturn(orderId);
-  return res.json(recomputed ?? updated);
+    let recomputed = null;
+    try {
+      recomputed = await recomputeAndReturn(orderId);
+    } catch (err) {
+      console.warn('recomputeAndReturn falhou (cancel item):', err);
+    }
+    return res.json(recomputed ?? updated);
   } catch (e) {
     console.error('Erro ao cancelar item:', e);
     return res.status(500).json({ message: 'Erro ao cancelar item.' });
@@ -572,8 +576,12 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     const updated = await OrderModel.findOneAndUpdate(filter, { $set }, { new: true });
     if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou bloqueado para edição.' });
 
-    // 👇 força recálculo de total/financeiro
-    const recomputed = await recomputeAndReturn(orderId);
+    let recomputed = null;
+    try {
+      recomputed = await recomputeAndReturn(orderId);
+    } catch (err) {
+      console.warn('recomputeAndReturn falhou (update item):', err);
+    }
     return res.json(recomputed ?? updated);
   } catch (e) {
     console.error('Erro ao atualizar item:', e);
