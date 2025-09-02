@@ -29,41 +29,30 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
     const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
 
     if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
-      return res.status(400).json({ message: 'Parâmetros inválidos' });
+      return res.status(400).json({ message: "Parâmetros inválidos" });
     }
+
     const restaurantOrUnitId = new mongoose.Types.ObjectId(String(id));
 
-    // ----- monta o filtro base
-    let matchFilter: any = { status: 'paid' };
+    // Filtro base (apenas pagos)
+    let matchFilter: any = { status: "paid" };
 
-    if (scope === 'unit') {
+    if (scope === "unit") {
       matchFilter.restaurantUnit = restaurantOrUnitId;
-    } else if (scope === 'restaurant') {
-      // 1) busca unidades filhas (se existirem)
-      const units = await RestaurantUnit
-        .find({ restaurant: restaurantOrUnitId })
-        .select('_id')
+    } else if (scope === "restaurant") {
+      const units = await RestaurantUnit.find({ restaurant: restaurantOrUnitId })
+        .select("_id")
         .lean();
 
-      // 2) SEMPRE inclui a matriz (restaurantId também vale como restaurantUnit)
-      const unitIds = [
-        ...units.map(u => u._id as mongoose.Types.ObjectId),
-        restaurantOrUnitId
-      ];
-
-      matchFilter.restaurantUnit = { $in: unitIds };
+      const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
+      matchFilter.restaurantUnit = { $in: unitIds.length ? unitIds : [restaurantOrUnitId] };
     } else {
-      return res.status(400).json({ message: 'Escopo inválido' });
+      return res.status(400).json({ message: "Escopo inválido" });
     }
 
-    const period = (req.query.period as any) || "6m";         // "today" | "week" | "6m" | "12m"
-    const { start, end, bucket, points, tz } = resolveTimeWindow(period);
-    const dateFilter = { createdAt: { $gte: start, $lt: end } };
-
-
-    // ----- resumo
+    // ---------- Summary financeiro ----------
     const [summaryAgg] = await Order.aggregate([
-      { $match: { ...matchFilter, ...dateFilter } },
+      { $match: matchFilter },
       {
         $group: {
           _id: null,
@@ -71,42 +60,56 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
           cost:      { $sum: { $ifNull: ["$financialMetrics.costPrice", 0] } },
           profit:    { $sum: { $ifNull: ["$financialMetrics.profit", 0] } },
           discounts: { $sum: { $ifNull: ["$financialMetrics.promotionalDiscount", 0] } },
+          totalOrders: { $sum: 1 },
         },
       },
     ]);
 
-    const totalOrders = await Order.countDocuments({ ...matchFilter, ...dateFilter });
-    const summary = {
-      revenue: summaryAgg?.revenue ?? 0,
-      cost: summaryAgg?.cost ?? 0,
-      profit: summaryAgg?.profit ?? 0,
-      avgTicket: totalOrders > 0 ? (summaryAgg?.revenue ?? 0) / totalOrders : 0,
-      margin: (summaryAgg?.revenue ?? 0) > 0 ? ((summaryAgg?.profit ?? 0) / summaryAgg!.revenue) * 100 : 0,
+    const revenue = summaryAgg?.revenue ?? 0;
+    const profit  = summaryAgg?.profit ?? 0;
+    const totalOrders = summaryAgg?.totalOrders ?? 0;
+
+    const summary: FinancialSummary = {
+      revenue,
+      profit,
+      avgTicket: totalOrders > 0 ? revenue / totalOrders : 0,
+      margin: revenue > 0 ? (profit / revenue) * 100 : 0,
     };
 
-    // 3) série temporal (respeita timezone e bucket)
-    const rawSeries = await Order.aggregate([
-      { $match: { ...matchFilter, ...dateFilter } },
+    // ---------- Monthly revenue (últimos 6 meses) ----------
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+    const end   = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+    const monthlyRaw = await Order.aggregate([
+      {
+        $match: {
+          ...matchFilter,
+          createdAt: { $gte: start, $lt: end },
+        },
+      },
       {
         $group: {
-          _id: {
-            $dateTrunc: { date: "$createdAt", unit: bucket, timezone: tz },
-          },
+          _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
           value: { $sum: { $ifNull: ["$totalAmount", 0] } },
         },
       },
-      { $sort: { _id: 1 } },
-      { $project: { _id: 0, bucket: "$_id", value: 1 } },
+      { $sort: { "_id.y": 1, "_id.m": 1 } },
     ]);
 
-    // preencher buckets vazios e montar rótulo
-    const series = fillBuckets(rawSeries, { start, points, bucket });
+    // Preencher meses faltantes
+    const monthlyRevenue: { month: string; value: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const hit = monthlyRaw.find(r => r._id.y === y && r._id.m === m);
+      const label = d.toLocaleString("pt-BR", { month: "short" }).toLowerCase();
+      monthlyRevenue.push({ month: label, value: hit?.value ?? 0 });
+    }
 
-    // compat: manter "monthlyRevenue" usando a mesma estrutura { month, value }
-    const monthlyRevenue = series.map(({ label, value }) => ({ month: label, value }));
-
-    // 4) vendas recentes (restritas à janela)
-    const recentSalesDb = await Order.find({ ...matchFilter, ...dateFilter })
+    // ---------- Vendas recentes ----------
+    const recentSalesDb = await Order.find(matchFilter)
       .sort({ createdAt: -1 })
       .limit(5)
       .select("guestInfo.name totalAmount")
@@ -117,16 +120,12 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
       value: s.totalAmount ?? 0,
     }));
 
-    return res.status(200).json({
-      summary,
-      monthlyRevenue,         // mantém chave compatível
-      recentSales,
-      // novo payload geral de série (se quiser usar no front depois)
-      series: { period, bucket, timezone: tz, points, data: series },
-    });
+    return res.status(200).json({ summary, monthlyRevenue, recentSales });
   } catch (error) {
     console.error("Erro ao gerar dashboard financeiro:", error);
-    return res.status(500).json({ message: "Erro ao gerar dashboard financeiro" });
+    return res
+      .status(500)
+      .json({ message: "Erro ao gerar dashboard financeiro" });
   }
 };
 
@@ -314,27 +313,23 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
 // ------------------ PROMOTIONS DASHBOARD ------------------
 export const getPromotionsDashboardController = async (req: Request, res: Response) => {
   try {
-    // Filtro base (escopo: restaurant/unit) que você já possui
     const filter = buildDashboardFilterFromRequest(req);
 
-    // Janela temporal (today | week | 6m | 12m)
-    const period = (req.query.period as any) || "6m";
-    const { start, end, bucket, points, tz } = resolveTimeWindow(period);
-
-    // Match completo: escopo + status pago + janela + existência de promotionId
-    const match = {
-      ...filter,
-      status: "paid",
-      createdAt: { $gte: start, $lt: end },
-      "items.addons.promotionId": { $exists: true, $ne: null },
-    };
-
-    // Top promoções na janela (total de usos por promotionId)
     const promotions = await Order.aggregate([
-      { $match: match },
+      {
+        $match: {
+          ...filter,
+          status: "paid",
+          "items.addons.promotionId": { $exists: true, $ne: null },
+        },
+      },
       { $unwind: "$items" },
       { $unwind: "$items.addons" },
-      { $match: { "items.addons.promotionId": { $exists: true, $ne: null } } },
+      {
+        $match: {
+          "items.addons.promotionId": { $exists: true, $ne: null },
+        },
+      },
       {
         $group: {
           _id: "$items.addons.promotionId",
@@ -345,95 +340,36 @@ export const getPromotionsDashboardController = async (req: Request, res: Respon
       { $sort: { totalUsed: -1 } },
     ]);
 
-    // Série temporal (total de usos de promoções por bucket, respeitando timezone)
-    const rawSeries = await Order.aggregate([
-      { $match: match },
-      { $unwind: "$items" },
-      { $unwind: "$items.addons" },
-      { $match: { "items.addons.promotionId": { $exists: true, $ne: null } } },
-      {
-        $group: {
-          _id: { $dateTrunc: { date: "$createdAt", unit: bucket, timezone: tz } },
-          value: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-      { $project: { _id: 0, bucket: "$_id", value: 1 } },
-    ]);
-
-    const series = fillBuckets(rawSeries, { start, points, bucket });
-
-    return res.status(200).json({
-      promotions,
-      series: { period, bucket, timezone: tz, points, data: series },
-    });
+    return res.status(200).json({ promotions });
   } catch (error) {
     console.error("Erro ao gerar dashboard de promoções:", error);
-    return res.status(500).json({ message: "Erro ao gerar dashboard de promoções" });
+    return res
+      .status(500)
+      .json({ message: "Erro ao gerar dashboard de promoções" });
   }
 };
 
+
 export const getOrdersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    // --- Descobrir escopo + id tanto por params quanto por query (fallback) ---
-    const scopeParam = (req.params as any)?.scope ?? (req.query as any)?.scope;
-    const idParamRaw =
-      (req.params as any)?.id ??
-      (req.query as any)?.id ??
-      ((req.query as any)?.unitId || (req.query as any)?.restaurantId);
+    const filter = req.dashboardFilter || {};
 
-    // Se escopo não vier explícito, inferir por presence de unitId/restaurantId na query
-    const scope =
-      scopeParam ??
-      (((req.query as any)?.unitId && "unit") ||
-        ((req.query as any)?.restaurantId && "restaurant") ||
-        undefined);
-
-    if (!scope || !idParamRaw || !mongoose.isValidObjectId(String(idParamRaw))) {
-      return res.status(400).json({ message: "Parâmetros inválidos" });
-    }
-
-    const targetId = new mongoose.Types.ObjectId(String(idParamRaw));
-
-    // --- Filtro base por restaurante/unidade (NÃO depender de req.dashboardFilter) ---
-    // Ajuste o campo conforme seu schema; aqui usamos "restaurantUnit" como nos outros controllers.
-    let matchFilter: any = {};
-    if (scope === "unit") {
-      matchFilter.restaurantUnit = targetId;
-    } else if (scope === "restaurant") {
-      // pegar as unidades da matriz e filtrar pelos IDs das unidades
-      const units = await RestaurantUnit.find({ restaurant: targetId })
-        .select("_id")
-        .lean();
-      const unitIds = units.map((u) => u._id as mongoose.Types.ObjectId);
-      matchFilter.restaurantUnit = { $in: unitIds };
-    } else {
-      return res.status(400).json({ message: "Escopo inválido" });
-    }
-
-    // --- Janela temporal: today | week | 6m | 12m (default 6m) ---
-    const period = ((req.query.period as any) || "6m") as "today" | "week" | "6m" | "12m";
-    const { start, end, bucket, points, tz } = resolveTimeWindow(period);
-
-    const dateFilter = { createdAt: { $gte: start, $lt: end } };
-    const match = { ...matchFilter, ...dateFilter };
-
-    // --- SUMÁRIOS (restritos à janela) ---
+    // Totais simples
     const [total, completed, paid, cancelled] = await Promise.all([
-      Order.countDocuments(match),
-      Order.countDocuments({ ...match, status: "completed" }),
-      Order.countDocuments({ ...match, status: "paid" }),
-      Order.countDocuments({ ...match, status: "cancelled" }),
+      Order.countDocuments(filter),
+      Order.countDocuments({ ...filter, status: "completed" }),
+      Order.countDocuments({ ...filter, status: "paid" }),
+      Order.countDocuments({ ...filter, status: "cancelled" }),
     ]);
 
-    // --- TOP itens na janela ---
+    // Top 5 itens mais pedidos
     const topOrdersAgg = await Order.aggregate([
-      { $match: match },
+      { $match: filter },
       { $unwind: "$items" },
       {
         $group: {
           _id: "$items.name",
-          value: { $sum: { $ifNull: ["$items.quantity", 0] } },
+          value: { $sum: "$items.quantity" },
         },
       },
       { $sort: { value: -1 } },
@@ -441,73 +377,20 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       { $project: { _id: 0, name: "$_id", value: 1 } },
     ]);
 
-    // --- Série temporal com $dateTrunc respeitando timezone ---
-    const seriesAgg = await Order.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: {
-            $dateTrunc: {
-              date: "$createdAt",
-              unit: bucket, // "hour" | "day" | "month"
-              timezone: tz,
-            },
-          },
-          value: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-      { $project: { _id: 0, bucket: "$_id", value: 1 } },
-    ]);
-
-    // --- Preencher buckets vazios (para o gráfico não "pular") ---
-    const filled = (() => {
-      const out: { label: string; value: number; bucket: Date }[] = [];
-      const cur = new Date(start);
-      const step =
-        bucket === "hour"
-          ? (d: Date) => d.setUTCHours(d.getUTCHours() + 1)
-          : bucket === "day"
-          ? (d: Date) => d.setUTCDate(d.getUTCDate() + 1)
-          : (d: Date) => d.setUTCMonth(d.getUTCMonth() + 1);
-
-      const map = new Map<string, number>();
-      for (const r of seriesAgg) map.set(new Date(r.bucket).toISOString(), r.value);
-
-      for (let i = 0; i < points; i++) {
-        const key = cur.toISOString();
-        const v = map.get(key) ?? 0;
-
-        let label: string;
-        if (bucket === "hour") label = cur.toISOString().slice(11, 13) + "h";
-        else if (bucket === "day") {
-          const mm = String(cur.getUTCMonth() + 1).padStart(2, "0");
-          const dd = String(cur.getUTCDate()).padStart(2, "0");
-          label = `${dd}/${mm}`; // DD/MM
-        } else {
-          // YYYY-MM ou mmm — escolha um; aqui manteremos YYYY-MM para estabilidade
-          label = cur.toISOString().slice(0, 7);
-        }
-
-        out.push({ label, value: v, bucket: new Date(cur) });
-        step(cur);
-      }
-      return out;
-    })();
+    // Pedidos por mês (últimos meses) – usando util existente
+    const orders = await Order.find(filter);
+    const ordersByMonth = groupOrdersByMonth(orders);
 
     return res.json({
       summary: { total, completed, paid, cancelled },
       topOrders: topOrdersAgg,
-      series: {
-        period, // "today" | "week" | "6m" | "12m"
-        bucket, // "hour" | "day" | "month"
-        timezone: tz,
-        points,
-        data: filled, // [{ label, value, bucket }, ...]
-      },
+      ordersByMonth,
     });
-  } catch (e) {
-    console.error("[DASHBOARD ORDERS]", e);
-    return res.status(500).json({ message: "Erro ao carregar dashboard de pedidos." });
+  } catch (error) {
+    console.error("[DASHBOARD ORDERS]", error);
+    return res
+      .status(500)
+      .json({ message: "Erro ao carregar dados do dashboard de pedidos." });
   }
 };
+
