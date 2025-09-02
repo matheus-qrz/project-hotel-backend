@@ -3,7 +3,7 @@ export interface OrderSummary {
     total: number;
     completed: number;
     paid: number;
-    inProgress: number;
+    processing: number;
     cancelled: number;
 }
 
