@@ -21,15 +21,14 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
     const id    = (req.params as any)?.id    ?? (req.query as any)?.id;
 
     if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
-      return res.status(400).json({ message: "Parâmetros inválidos" });
+      return res.status(400).json({ message: 'Parâmetros inválidos' });
     }
-
     const restaurantOrUnitId = new mongoose.Types.ObjectId(String(id));
 
-    // Filtro base (apenas pagos)
-    let matchFilter: any = { status: "paid" };
+    // ----- monta o filtro base
+    let matchFilter: any = { status: 'paid' };
 
-    if (scope === "unit") {
+    if (scope === 'unit') {
       matchFilter.restaurantUnit = restaurantOrUnitId;
     } else if (scope === "restaurant") {
       const units = await RestaurantUnit.find({ restaurant: restaurantOrUnitId })
@@ -37,14 +36,20 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
         .lean();
 
       const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
-      matchFilter.restaurantUnit = { $in: unitIds.length ? unitIds : [restaurantOrUnitId] };
+
+      // inclui SEMPRE a matriz (há bases onde pedidos da matriz usam o próprio restaurantId em restaurantUnit)
+      const ids = [...unitIds, restaurantOrUnitId];
+
+      matchFilter.restaurantUnit = { $in: ids };
     } else {
-      return res.status(400).json({ message: "Escopo inválido" });
+      return res.status(400).json({ message: 'Escopo inválido' });
     }
 
-    // ---------- Summary financeiro ----------
+    // ----- resumo
     const [summaryAgg] = await Order.aggregate([
       { $match: matchFilter },
+      // descomente se houver legado com totalAmount string:
+      // { $addFields: { totalAmount: { $toDouble: '$totalAmount' } } },
       {
         $group: {
           _id: null,
@@ -53,19 +58,20 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
           profit:    { $sum: { $ifNull: ['$financialMetrics.profit', 0] } },
           discounts: { $sum: { $ifNull: ['$financialMetrics.promotionalDiscount', 0] } }
         }
-      },
+      }
     ]);
 
     const totalOrders = await Order.countDocuments(matchFilter);
 
-    const summary: FinancialSummary = {
-      revenue: summaryAgg?.revenue ?? 0,
-      cost: summaryAgg?.cost ?? 0,
-      profit: summaryAgg?.profit ?? 0,
+    const summary = {
+      revenue:   summaryAgg?.revenue   ?? 0,
+      cost:      summaryAgg?.cost      ?? 0,
+      profit:    summaryAgg?.profit    ?? 0,
+      avgTicket: totalOrders > 0 ? (summaryAgg?.revenue ?? 0) / totalOrders : 0,
       margin:    summaryAgg?.revenue > 0 ? (summaryAgg?.profit ?? 0) / summaryAgg.revenue * 100 : 0
     };
-    
-    // ---------- Monthly revenue (últimos 6 meses) ----------
+
+    // ----- mensal (últimos 6)
     const monthlyAgg = await Order.aggregate([
       { $match: matchFilter },
       {
@@ -83,12 +89,12 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
       value: d.value
     }));
 
-    // ---------- Vendas recentes ----------
+    // ----- vendas recentes
     const recentSalesDb = await Order.find(matchFilter)
-          .sort({ createdAt: -1 })
-          .limit(5)
-          .select('guestInfo.name totalAmount')
-          .lean();
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('guestInfo.name totalAmount')
+      .lean();
 
     const recentSales = (recentSalesDb ?? []).map((s) => ({
       name: s.guestInfo?.name ?? 'Cliente',
