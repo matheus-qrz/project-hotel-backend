@@ -337,6 +337,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     const [total, completed, paid, cancelled] = await Promise.all([
       Order.countDocuments(filter),
       Order.countDocuments({ ...filter, status: "completed" }),
+      Order.countDocuments({ ...filter, status: "inProgress" }),
       Order.countDocuments({ ...filter, status: "paid" }),
       Order.countDocuments({ ...filter, status: "cancelled" }),
     ]);
