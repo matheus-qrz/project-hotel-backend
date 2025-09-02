@@ -1,22 +1,14 @@
 import mongoose from 'mongoose';
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
-import { OrderModel as Order, OrderModel } from "../models/Order";
+import { OrderModel as Order } from "../models/Order";
 import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
-  CustomersDashboardData,
   CustomersSummary,
-  FinancialDashboardData,
   FinancialSummary,
   MonthlyCustomerReport,
-  OrderSummary,
-  OrdersDashboardData,
-  PromotionUsage,
-  PromotionsDashboardData,
-  RecentSale,
   TopCustomer,
-  TopOrder
 } from '../types/dashboard';
 import { groupOrdersByMonth } from '../utils/aggregation';
 import { resolveTimeWindow } from '../helpers/timeWindow';
@@ -56,76 +48,57 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
       {
         $group: {
           _id: null,
-          revenue:   { $sum: { $ifNull: ["$totalAmount", 0] } },
-          cost:      { $sum: { $ifNull: ["$financialMetrics.costPrice", 0] } },
-          profit:    { $sum: { $ifNull: ["$financialMetrics.profit", 0] } },
-          discounts: { $sum: { $ifNull: ["$financialMetrics.promotionalDiscount", 0] } },
-          totalOrders: { $sum: 1 },
-        },
+          revenue:   { $sum: { $ifNull: ['$totalAmount', 0] } },
+          cost:      { $sum: { $ifNull: ['$financialMetrics.costPrice', 0] } },
+          profit:    { $sum: { $ifNull: ['$financialMetrics.profit', 0] } },
+          discounts: { $sum: { $ifNull: ['$financialMetrics.promotionalDiscount', 0] } }
+        }
       },
     ]);
 
-    const revenue = summaryAgg?.revenue ?? 0;
-    const profit  = summaryAgg?.profit ?? 0;
-    const totalOrders = summaryAgg?.totalOrders ?? 0;
+    const totalOrders = await Order.countDocuments(matchFilter);
 
     const summary: FinancialSummary = {
-      revenue,
-      profit,
-      avgTicket: totalOrders > 0 ? revenue / totalOrders : 0,
-      margin: revenue > 0 ? (profit / revenue) * 100 : 0,
+      revenue: summaryAgg?.revenue ?? 0,
+      cost: summaryAgg?.cost ?? 0,
+      profit: summaryAgg?.profit ?? 0,
+      margin:    summaryAgg?.revenue > 0 ? (summaryAgg?.profit ?? 0) / summaryAgg.revenue * 100 : 0
     };
-
+    
     // ---------- Monthly revenue (últimos 6 meses) ----------
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
-    const end   = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
-    const monthlyRaw = await Order.aggregate([
-      {
-        $match: {
-          ...matchFilter,
-          createdAt: { $gte: start, $lt: end },
-        },
-      },
+    const monthlyAgg = await Order.aggregate([
+      { $match: matchFilter },
       {
         $group: {
-          _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
-          value: { $sum: { $ifNull: ["$totalAmount", 0] } },
-        },
+          _id: { y: { $year: '$createdAt' }, m: { $month: '$createdAt' } },
+          value: { $sum: { $ifNull: ['$totalAmount', 0] } }
+        }
       },
-      { $sort: { "_id.y": 1, "_id.m": 1 } },
+      { $sort: { '_id.y': 1, '_id.m': 1 } }
     ]);
 
-    // Preencher meses faltantes
-    const monthlyRevenue: { month: string; value: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const y = d.getFullYear();
-      const m = d.getMonth() + 1;
-      const hit = monthlyRaw.find(r => r._id.y === y && r._id.m === m);
-      const label = d.toLocaleString("pt-BR", { month: "short" }).toLowerCase();
-      monthlyRevenue.push({ month: label, value: hit?.value ?? 0 });
-    }
+    const monthNames = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+    const monthlyRevenue = monthlyAgg.slice(-6).map((d: any) => ({
+      month: monthNames[d._id.m - 1],
+      value: d.value
+    }));
 
     // ---------- Vendas recentes ----------
     const recentSalesDb = await Order.find(matchFilter)
-      .sort({ createdAt: -1 })
-      .limit(5)
-      .select("guestInfo.name totalAmount")
-      .lean();
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .select('guestInfo.name totalAmount')
+          .lean();
 
     const recentSales = (recentSalesDb ?? []).map((s) => ({
-      name: s.guestInfo?.name ?? "Cliente",
-      value: s.totalAmount ?? 0,
+      name: s.guestInfo?.name ?? 'Cliente',
+      value: s.totalAmount ?? 0
     }));
 
     return res.status(200).json({ summary, monthlyRevenue, recentSales });
   } catch (error) {
-    console.error("Erro ao gerar dashboard financeiro:", error);
-    return res
-      .status(500)
-      .json({ message: "Erro ao gerar dashboard financeiro" });
+    console.error('Erro ao gerar dashboard financeiro:', error);
+    return res.status(500).json({ message: 'Erro ao gerar dashboard financeiro' });
   }
 };
 

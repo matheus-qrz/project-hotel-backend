@@ -19,7 +19,7 @@ export interface OrdersDashboardData {
 // --- Financeiro ---
 export interface FinancialSummary {
     revenue: number;
-    avgTicket: number;
+    cost: number;
     profit: number;
     margin: number;
 }
