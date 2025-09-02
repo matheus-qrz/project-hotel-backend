@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
-import { OrderModel as Order } from "../models/Order";
+import { OrderModel as Order, OrderModel } from "../models/Order";
 import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
@@ -328,49 +328,99 @@ export const getPromotionsDashboardController = async (req: Request, res: Respon
   }
 };
 
-
+// ------------------ ORDERS DASHBOARD ------------------
 export const getOrdersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const filter = req.dashboardFilter || {};
+    const { scope, restaurantId, unitId } = req.query as {
+      scope: "restaurant" | "unit";
+      restaurantId?: string;
+      unitId?: string;
+    };
 
-    // Totais simples
-    const [total, completed, paid, cancelled] = await Promise.all([
-      Order.countDocuments(filter),
-      Order.countDocuments({ ...filter, status: "completed" }),
-      Order.countDocuments({ ...filter, status: "processing" }),
-      Order.countDocuments({ ...filter, status: "paid" }),
-      Order.countDocuments({ ...filter, status: "cancelled" }),
-    ]);
+    const matchBase: any = {};
+    if (scope === "restaurant" && restaurantId) matchBase.restaurantId = restaurantId;
+    if (scope === "unit" && unitId) matchBase.unitId = unitId;
 
-    // Top 5 itens mais pedidos
-    const topOrdersAgg = await Order.aggregate([
-      { $match: filter },
-      { $unwind: "$items" },
+    // Hoje (timezone do servidor). Se quiser, troque para fuso fixo de Brasília.
+    const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
+    const endOfToday = new Date(); endOfToday.setHours(23,59,59,999);
+
+    // Últimos 6 meses para o gráfico
+    const from6m = new Date();
+    from6m.setMonth(from6m.getMonth() - 5);
+    from6m.setDate(1); from6m.setHours(0,0,0,0);
+
+    const [agg] = await OrderModel.aggregate([
+      { $match: matchBase },
       {
-        $group: {
-          _id: "$items.name",
-          value: { $sum: "$items.quantity" },
-        },
-      },
-      { $sort: { value: -1 } },
-      { $limit: 5 },
-      { $project: { _id: 0, name: "$_id", value: 1 } },
+        $facet: {
+          summary: [
+            {
+              $group: {
+                _id: null,
+                total:       { $sum: 1 },
+                completed:   { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+                paid:        { $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] } },
+                cancelled:   { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
+                processing:  { $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] } },
+                // pedidos criados hoje e NÃO cancelados
+                todayTotal:  { $sum: { 
+                  $cond: [
+                    { $and: [
+                      { $gte: ["$createdAt", startOfToday] },
+                      { $lte: ["$createdAt", endOfToday]   },
+                      { $ne:  ["$status", "cancelled"]     }
+                    ]},
+                    1, 0
+                  ] 
+                } },
+              }
+            },
+            { $project: { _id: 0 } }
+          ],
+          ordersByMonth: [
+            { $match: { createdAt: { $gte: from6m } } },
+            {
+              $group: {
+                _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
+                value: { $sum: 1 }
+              }
+            },
+            { $sort: { "_id.y": 1, "_id.m": 1 } },
+            {
+              $project: {
+                _id: 0,
+                month: {
+                  $let: {
+                    vars: { m: "$_id.m" },
+                    in: {
+                      $arrayElemAt: [
+                        ["", "jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."],
+                        "$$m"
+                      ]
+                    }
+                  }
+                },
+                value: 1
+              }
+            }
+          ],
+          topOrders: [
+            // mantenha seu pipeline atual
+          ]
+        }
+      }
     ]);
 
-    // Pedidos por mês (últimos meses) – usando util existente
-    const orders = await Order.find(filter);
-    const ordersByMonth = groupOrdersByMonth(orders);
+    const summary = (agg?.summary?.[0]) ?? { total:0, completed:0, paid:0, cancelled:0, processing:0, todayTotal:0 };
 
     return res.json({
-      summary: { total, completed, paid, cancelled },
-      topOrders: topOrdersAgg,
-      ordersByMonth,
+      summary,
+      ordersByMonth: agg?.ordersByMonth ?? [],
+      topOrders: agg?.topOrders ?? []
     });
-  } catch (error) {
-    console.error("[DASHBOARD ORDERS]", error);
-    return res
-      .status(500)
-      .json({ message: "Erro ao carregar dados do dashboard de pedidos." });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ message: "Erro ao carregar dashboard de pedidos" });
   }
 };
-
