@@ -43,7 +43,14 @@ export interface IOrder extends mongoose.Document {
   isCancelled?: boolean;
   status: OrderStatusType;
   isPaid: boolean;
+  processingAt?: Date;
+  completedAt?: Date;
   paidAt?: Date;
+  statusHistory: {
+    status: string;
+    at: Date;
+    by?: mongoose.Schema.Types.ObjectId;
+  }[];
   meta?: IOrdermeta;
   createdAt: Date;
   updatedAt: Date;
@@ -136,9 +143,20 @@ const orderSchema = new Schema(
       type: Boolean,
       default: false
     },
-    paidAt: {
-      type: Date
-    },
+    processingAt: { type: Date, default: null },
+    completedAt:  { type: Date, default: null },
+    paidAt:       { type: Date, default: null },
+    statusHistory: [
+      {
+        status: {
+          type: String,
+          enum: ["processing", "completed", "payment_requested", "paid", "cancelled"],
+          required: true,
+        },
+        at: { type: Date, required: true, default: Date.now },
+        by: { type: Schema.Types.ObjectId, ref: "User", required: false },
+      },
+    ],
     meta: {
       tableId: Number,
       orderType: {
@@ -219,6 +237,19 @@ orderSchema.pre('save', function (next) {
   }
   next();
 });
+
+orderSchema.pre("save", function (next) {
+  if (this.isNew) {
+    if (this.status === "processing" && !this.processingAt) {
+      this.processingAt = new Date();
+    }
+    if (!Array.isArray(this.statusHistory)) this.statusHistory = [];
+    // registra o status inicial
+    this.statusHistory.push({ status: this.status, at: this.processingAt ?? new Date() } as any);
+  }
+  next();
+});
+
 
 orderSchema.methods.canTransitionTo = function (newStatus: OrderStatusType): boolean {
   const validTransitions: Record<OrderStatusType, OrderStatusType[]> = {

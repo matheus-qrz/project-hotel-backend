@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import '../types/express/dashboard.types';
 import { Request, Response } from "express";
-import { OrderModel as Order, OrderModel } from "../models/Order";
+import { OrderModel as Order } from "../models/Order";
 import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
@@ -365,7 +365,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     // filtro para "não cancelados"
     const notCancelled = { ...matchBase, status: { $ne: "cancelled" } };
 
-    const [agg] = await OrderModel.aggregate([
+    const [agg] = await Order.aggregate([
       { $match: matchBase },
       {
         $facet: {
@@ -419,15 +419,31 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
 
           // ===== Tempo médio: processing -> (completed|paid) =====
           avgDelivery: [
-            { $match: { ...matchBase, status: { $in: ["completed", "paid"] } } },
+            { $match: { ...matchBase, status: "completed" } },
             {
               $project: {
-                startedAt: "$createdAt",
+                startedAt: {
+                  $ifNull: [
+                    "$processingAt",
+                    { $ifNull: [
+                      { $let: { 
+                        vars: { hit: { $first: { $filter: { input: "$statusHistory", as: "s", cond: { $eq: ["$$s.status", "processing"] } } } } },
+                        in: "$$hit.at"
+                      }},
+                      "$createdAt"
+                    ] }
+                  ],
+                },
                 finishedAt: {
-                  $cond: [
-                    { $eq: ["$status", "completed"] },
-                    "$updatedAt",                     // quando ficou "completed"
-                    { $ifNull: ["$paidAt", "$updatedAt"] }, // quando ficou "paid"
+                  $ifNull: [
+                    "$completedAt",
+                    { $ifNull: [
+                      { $let: {
+                        vars: { hit: { $first: { $filter: { input: "$statusHistory", as: "s", cond: { $eq: ["$$s.status", "completed"] } } } } },
+                        in: "$$hit.at"
+                      }},
+                      "$updatedAt"
+                    ] }
                   ],
                 },
               },
@@ -458,13 +474,17 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
 
     const averageDeliveryMinutes = agg?.avgDelivery?.[0]?.avgMinutes ?? null;
 
+    // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
     const topOrders = (agg?.topOrders ?? []).map((x: any) => ({
       name: x.name,
       value: x.value,
     }));
 
     return res.json({
-      summary: { ...summaryBase, averageDeliveryMinutes, avgTime: averageDeliveryMinutes },
+      summary: { 
+        ...summaryBase, 
+        averageDeliveryMinutes,
+        avgTime: averageDeliveryMinutes },
       ordersByMonth,
       topOrders,
       meta: {

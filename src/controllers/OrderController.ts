@@ -39,6 +39,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         : randomUUID();
 
     const now = new Date();
+    const status = req.body.status ?? "processing";
 
     // normalização de itens
     const itemsWithStatus = items.map((it: any) => ({
@@ -104,7 +105,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
       },
       items: itemsWithStatus,
-      status: "processing",
+      status,
+      processingAt: status === 'processing' ? now : null,
+      statusHistory: [{ status, at: status === "processing" ? now : now }],
       isPaid: false,
       sessionId, // sempre grava o sessionId
       meta: {
@@ -303,54 +306,69 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
     const { orderId } = req.params as { orderId: string };
     const { status } = req.body as { status: OrderStatusType };
 
-    if (!status) return res.status(400).json({ message: 'Status não fornecido.' });
+    if (!status) {
+      return res.status(400).json({ message: "Status não fornecido." });
+    }
 
-    // Fluxo especial para PAID (idempotente e consistente)
-    if (status === OrderStatus.PAID) {
-      const order = await OrderModel.findById(orderId);
-      if (!order) return res.status(404).json({ message: 'Pedido não encontrado.' });
+    const order = await OrderModel.findById(orderId);
+    if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
 
+    const prevStatus = order.status;
+    const nextStatus = status as
+      | "processing"
+      | "completed"
+      | "payment_requested"
+      | "paid"
+      | "cancelled";
+
+    // === Fluxo especial: PAID ===
+    if (nextStatus === OrderStatus.PAID) {
       // idempotência
       if (order.isPaid === true || order.status === OrderStatus.PAID) {
         return res.status(200).json(order);
       }
 
       // só deixa pagar se já estiver concluído ou com pagamento solicitado
-      if (order.status !== OrderStatus.COMPLETED &&
-          order.status !== OrderStatus.PAYMENT_REQUESTED) {
+      if (
+        order.status !== OrderStatus.COMPLETED &&
+        order.status !== OrderStatus.PAYMENT_REQUESTED
+      ) {
         return res.status(409).json({
-          message: 'Só é possível marcar como pago um pedido concluído ou com pagamento solicitado.'
+          message:
+            "Só é possível marcar como pago um pedido concluído ou com pagamento solicitado.",
         });
       }
 
+      const now = new Date();
       const newTotal = computeTotal(order.items);
 
-      // Atualiza pedido e marca itens pendentes como completed em uma única operação
+      // Atualiza pedido para PAID + registra histórico "paid"
       await OrderModel.updateOne(
         { _id: orderId },
         {
           $set: {
             status: OrderStatus.PAID,
             isPaid: true,
-            paidAt: new Date(),
+            paidAt: now,
             totalAmount: newTotal,
-            updatedAt: new Date(),
+            updatedAt: now,
           },
-          // itens "ativos" viram completed ao fechar a conta
-          $setOnInsert: {}
+          $push: {
+            statusHistory: { status: OrderStatus.PAID, at: now } as any,
+          },
         },
         { runValidators: false }
       );
 
-      // aplica status completed nos itens ativos usando arrayFilters
+      // Marca itens ativos como completed ao fechar a conta
       await OrderModel.updateOne(
         { _id: orderId },
-        { $set: { 'items.$[i].status': OrderItemStatus.COMPLETED } },
+        { $set: { "items.$[i].status": OrderItemStatus.COMPLETED } },
         {
           arrayFilters: [
-            { 'i.status': { $in: ['added', 'processing', 'reduced'] }, 'i.quantity': { $gt: 0 } }
+            { "i.status": { $in: ["added", "processing", "reduced"] }, "i.quantity": { $gt: 0 } },
           ],
-          runValidators: false
+          runValidators: false,
         }
       );
 
@@ -358,20 +376,38 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
       return res.status(200).json(updated);
     }
 
-    // Demais status: atualização simples + updatedAt
-    const updatedOrder = await OrderModel.findByIdAndUpdate(
-      orderId,
-      { $set: { status, updatedAt: new Date() } },
-      { new: true }
-    );
+    // === Demais status (processing, completed, payment_requested, cancelled) ===
 
-    if (!updatedOrder) return res.status(404).json({ message: 'Pedido não encontrado.' });
-    return res.status(200).json(updatedOrder);
+    // idempotência
+    if (nextStatus === prevStatus) {
+      return res.status(200).json(order);
+    }
+
+    const now = new Date();
+    order.status = nextStatus;
+
+    // carimbos por status (preserva o primeiro momento que atingiu o status)
+    if (nextStatus === "processing" && !order.processingAt) {
+      order.processingAt = now;
+    }
+    if (nextStatus === "completed" && !order.completedAt) {
+      order.completedAt = now;
+    }
+
+    // registra histórico
+    if (!Array.isArray(order.statusHistory)) order.statusHistory = [];
+    order.statusHistory.push({ status: nextStatus, at: now } as any);
+
+    // salva (timestamps do mongoose atualizam updatedAt)
+    await order.save();
+
+    return res.status(200).json(order);
   } catch (error: any) {
-    console.error('Erro ao atualizar status do pedido:', error);
-    return res.status(500).json({ message: error?.message || 'Erro interno.' });
+    console.error("Erro ao atualizar status do pedido:", error);
+    return res.status(500).json({ message: error?.message || "Erro interno." });
   }
 };
+
 
 // Controlador para excluir um pedido
 export const deleteOrderController = async (req: Request, res: Response) => {
