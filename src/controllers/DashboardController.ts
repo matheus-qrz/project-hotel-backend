@@ -341,35 +341,35 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     if (scope === "restaurant" && restaurantId) matchBase.restaurantId = restaurantId;
     if (scope === "unit" && unitId) matchBase.unitId = unitId;
 
-    // === Parâmetros de "hoje" vindos do front com fuso ===
-    // InformativeCard envia tz + startOfTodayISO + endOfTodayISO
+    // --- parâmetros de "hoje" (já usados no summary.todayTotal) ---
     const tz = (req.query?.tz as string) || "America/Sao_Paulo";
     const startOfTodayISO = req.query?.startOfTodayISO as string | undefined;
     const endOfTodayISO   = req.query?.endOfTodayISO   as string | undefined;
 
     let startOfToday: Date;
     let endOfToday: Date;
-
     if (startOfTodayISO && endOfTodayISO) {
       startOfToday = new Date(startOfTodayISO);
       endOfToday   = new Date(endOfTodayISO);
     } else {
-      // Fallback no servidor (caso o front não envie os limites)
       const now = new Date();
       startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
-      endOfToday = new Date(now);   endOfToday.setHours(23, 59, 59, 999);
+      endOfToday   = new Date(now); endOfToday.setHours(23, 59, 59, 999);
     }
 
-    // Últimos 6 meses para o gráfico
+    // últimos 6 meses para o gráfico
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5, 1);
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
-    // === Agregado único com $facet: summary, ordersByMonth, topOrders ===
+    // filtro para "não cancelados"
+    const notCancelled = { ...matchBase, status: { $ne: "cancelled" } };
+
     const [agg] = await OrderModel.aggregate([
       { $match: matchBase },
       {
         $facet: {
+          // ====== RESUMO ======
           summary: [
             {
               $group: {
@@ -386,7 +386,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
                         $and: [
                           { $gte: ["$createdAt", startOfToday] },
                           { $lte: ["$createdAt", endOfToday] },
-                          { $ne: ["$status", "cancelled"] }, // ajuste se quiser incluir cancelados
+                          { $ne: ["$status", "cancelled"] },
                         ],
                       },
                       1,
@@ -399,6 +399,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
             { $project: { _id: 0 } },
           ],
 
+          // ====== SÉRIE (6 MESES) ======
           ordersByMonth: [
             { $match: { createdAt: { $gte: sixMonthsAgo } } },
             {
@@ -408,33 +409,125 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
               },
             },
             { $sort: { "_id.y": 1, "_id.m": 1 } },
-            {
-              $project: {
-                _id: 0,
-                monthIndex: { $subtract: ["$_id.m", 1] }, // 0..11
-                value: 1,
-              },
-            },
+            { $project: { _id: 0, monthIndex: { $subtract: ["$_id.m", 1] }, value: 1 } },
           ],
 
-          // Pipeline genérico; se você já tinha um, pode manter sua versão
+          // ====== ITENS MAIS PEDIDOS ======
+          // Soma quantidades por produto; ignora pedidos e itens cancelados
           topOrders: [
+            { $match: notCancelled },
             { $unwind: "$items" },
+            // se seu OrderItem tem status, evita contar itens cancelados
+            { $match: { $or: [ { "items.status": { $exists: false } }, { "items.status": { $ne: "cancelled" } } ] } },
             {
               $group: {
-                _id: "$items.product.name",
-                value: { $sum: "$items.quantity" },
+                _id: {
+                  pid: { $ifNull: ["$items.productId", "$items.product._id"] },
+                  name: "$items.product.name",
+                },
+                value: { $sum: { $ifNull: ["$items.quantity", 1] } },
               },
             },
             { $sort: { value: -1 } },
-            { $limit: 5 },
-            { $project: { _id: 0, name: "$_id", value: 1 } },
+            { $limit: 10 },
+            { $project: { _id: 0, productId: "$_id.pid", name: "$_id.name", value: 1 } },
+          ],
+
+          // ====== TEMPO MÉDIO (processing -> completed) ======
+          avgDelivery: [
+            { $match: { ...matchBase, status: "completed" } },
+            {
+              $project: {
+                _processingAt: { $ifNull: ["$processingAt", null] },
+                _completedAt:  { $ifNull: ["$completedAt", null] },
+                processingFromHistory: {
+                  $cond: [
+                    { $isArray: "$statusHistory" },
+                    {
+                      $let: {
+                        vars: {
+                          hit: {
+                            $first: {
+                              $filter: {
+                                input: "$statusHistory",
+                                as: "s",
+                                cond: { $eq: ["$$s.status", "processing"] },
+                              },
+                            },
+                          },
+                        },
+                        in: "$$hit.at",
+                      },
+                    },
+                    null,
+                  ],
+                },
+                completedFromHistory: {
+                  $cond: [
+                    { $isArray: "$statusHistory" },
+                    {
+                      $let: {
+                        vars: {
+                          hit: {
+                            $first: {
+                              $filter: {
+                                input: "$statusHistory",
+                                as: "s",
+                                cond: { $eq: ["$$s.status", "completed"] },
+                              },
+                            },
+                          },
+                        },
+                        in: "$$hit.at",
+                      },
+                    },
+                    null,
+                  ],
+                },
+                createdAt: 1,
+                updatedAt: 1,
+              },
+            },
+            {
+              $project: {
+                computedProcessingAt: {
+                  $ifNull: ["$_processingAt", { $ifNull: ["$processingFromHistory", "$createdAt"] }],
+                },
+                computedCompletedAt: {
+                  $ifNull: ["$_completedAt", { $ifNull: ["$completedFromHistory", "$updatedAt"] }],
+                },
+              },
+            },
+            {
+              $project: {
+                diffMs: {
+                  $cond: [
+                    {
+                      $and: [
+                        { $ne: ["$computedProcessingAt", null] },
+                        { $ne: ["$computedCompletedAt", null] },
+                      ],
+                    },
+                    { $subtract: ["$computedCompletedAt", "$computedProcessingAt"] },
+                    null,
+                  ],
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                avgMs: { $avg: "$diffMs" },
+                n: { $sum: { $cond: [{ $ne: ["$diffMs", null] }, 1, 0] } },
+              },
+            },
+            { $project: { _id: 0, avgMinutes: { $cond: [{ $gt: ["$n", 0] }, { $divide: ["$avgMs", 60000] }, null] } } },
           ],
         },
       },
     ]);
 
-    // === Normalização: sempre 6 meses (mês atual + 5 anteriores) ===
+    // normalização: sempre 6 meses
     const MONTHS_PT = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."];
     const now = new Date();
     const last6Idx = Array.from({ length: 6 }, (_, i) => (now.getMonth() - (5 - i) + 12) % 12);
@@ -443,24 +536,35 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     for (const row of agg?.ordersByMonth ?? []) {
       monthMap.set(row.monthIndex, (monthMap.get(row.monthIndex) ?? 0) + (Number(row.value) || 0));
     }
-    const ordersByMonth = last6Idx.map((mi) => ({
-      month: MONTHS_PT[mi],
-      value: monthMap.get(mi) ?? 0,
-    }));
+    const ordersByMonth = last6Idx.map((mi) => ({ month: MONTHS_PT[mi], value: monthMap.get(mi) ?? 0 }));
 
-    const summary =
+    const summaryBase =
       (agg?.summary?.[0]) ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
+    const averageDeliveryMinutes = agg?.avgDelivery?.[0]?.avgMinutes ?? null;
+
+    // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
+    const topOrders = (agg?.topOrders ?? []).map((x: any) => ({
+      name: x.name,
+      value: x.value,
+      // se quiser usar no futuro:
+      // productId: x.productId,
+    }));
+
     return res.json({
-      summary,
+      summary: { ...summaryBase, averageDeliveryMinutes },
       ordersByMonth,
-      topOrders: agg?.topOrders ?? [],
-      // útil para debug:
-      meta: { tz, startOfTodayISO: startOfToday.toISOString(), endOfTodayISO: endOfToday.toISOString() },
+      topOrders,
+      meta: {
+        tz,
+        startOfTodayISO: startOfToday.toISOString(),
+        endOfTodayISO: endOfToday.toISOString(),
+      },
     });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: "Erro ao carregar dashboard de pedidos" });
   }
 };
+
 
