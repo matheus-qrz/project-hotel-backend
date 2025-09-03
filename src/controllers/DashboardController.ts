@@ -369,7 +369,6 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       { $match: matchBase },
       {
         $facet: {
-          // ====== RESUMO ======
           summary: [
             {
               $group: {
@@ -399,133 +398,49 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
             { $project: { _id: 0 } },
           ],
 
-          // ====== SÉRIE (6 MESES) ======
+          // últimos 6 meses (mantém seu trecho atual se preferir)
           ordersByMonth: [
             { $match: { createdAt: { $gte: sixMonthsAgo } } },
-            {
-              $group: {
-                _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
-                value: { $sum: 1 },
-              },
-            },
+            { $group: { _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } }, value: { $sum: 1 } } },
             { $sort: { "_id.y": 1, "_id.m": 1 } },
             { $project: { _id: 0, monthIndex: { $subtract: ["$_id.m", 1] }, value: 1 } },
           ],
 
-          // ====== ITENS MAIS PEDIDOS ======
-          // Soma quantidades por produto; ignora pedidos e itens cancelados
+          // ===== Itens mais pedidos (compatível com seu schema) =====
           topOrders: [
-            { $match: notCancelled },
+            { $match: { ...matchBase, status: { $ne: "cancelled" } } },
             { $unwind: "$items" },
-            // se seu OrderItem tem status, evita contar itens cancelados
             { $match: { $or: [ { "items.status": { $exists: false } }, { "items.status": { $ne: "cancelled" } } ] } },
-            {
-              $group: {
-                _id: {
-                  pid: { $ifNull: ["$items.productId", "$items.product._id"] },
-                  name: "$items.product.name",
-                },
-                value: { $sum: { $ifNull: ["$items.quantity", 1] } },
-              },
-            },
+            { $group: { _id: "$items.name", value: { $sum: { $ifNull: ["$items.quantity", 1] } } } },
             { $sort: { value: -1 } },
             { $limit: 10 },
-            { $project: { _id: 0, productId: "$_id.pid", name: "$_id.name", value: 1 } },
+            { $project: { _id: 0, name: "$_id", value: 1 } },
           ],
 
-          // ====== TEMPO MÉDIO (processing -> completed) ======
+          // ===== Tempo médio: processing -> (completed|paid) =====
           avgDelivery: [
-            { $match: { ...matchBase, status: "completed" } },
+            { $match: { ...matchBase, status: { $in: ["completed", "paid"] } } },
             {
               $project: {
-                _processingAt: { $ifNull: ["$processingAt", null] },
-                _completedAt:  { $ifNull: ["$completedAt", null] },
-                processingFromHistory: {
+                startedAt: "$createdAt",
+                finishedAt: {
                   $cond: [
-                    { $isArray: "$statusHistory" },
-                    {
-                      $let: {
-                        vars: {
-                          hit: {
-                            $first: {
-                              $filter: {
-                                input: "$statusHistory",
-                                as: "s",
-                                cond: { $eq: ["$$s.status", "processing"] },
-                              },
-                            },
-                          },
-                        },
-                        in: "$$hit.at",
-                      },
-                    },
-                    null,
-                  ],
-                },
-                completedFromHistory: {
-                  $cond: [
-                    { $isArray: "$statusHistory" },
-                    {
-                      $let: {
-                        vars: {
-                          hit: {
-                            $first: {
-                              $filter: {
-                                input: "$statusHistory",
-                                as: "s",
-                                cond: { $eq: ["$$s.status", "completed"] },
-                              },
-                            },
-                          },
-                        },
-                        in: "$$hit.at",
-                      },
-                    },
-                    null,
-                  ],
-                },
-                createdAt: 1,
-                updatedAt: 1,
-              },
-            },
-            {
-              $project: {
-                computedProcessingAt: {
-                  $ifNull: ["$_processingAt", { $ifNull: ["$processingFromHistory", "$createdAt"] }],
-                },
-                computedCompletedAt: {
-                  $ifNull: ["$_completedAt", { $ifNull: ["$completedFromHistory", "$updatedAt"] }],
-                },
-              },
-            },
-            {
-              $project: {
-                diffMs: {
-                  $cond: [
-                    {
-                      $and: [
-                        { $ne: ["$computedProcessingAt", null] },
-                        { $ne: ["$computedCompletedAt", null] },
-                      ],
-                    },
-                    { $subtract: ["$computedCompletedAt", "$computedProcessingAt"] },
-                    null,
+                    { $eq: ["$status", "completed"] },
+                    "$updatedAt",                     // quando ficou "completed"
+                    { $ifNull: ["$paidAt", "$updatedAt"] }, // quando ficou "paid"
                   ],
                 },
               },
             },
-            {
-              $group: {
-                _id: null,
-                avgMs: { $avg: "$diffMs" },
-                n: { $sum: { $cond: [{ $ne: ["$diffMs", null] }, 1, 0] } },
-              },
-            },
-            { $project: { _id: 0, avgMinutes: { $cond: [{ $gt: ["$n", 0] }, { $divide: ["$avgMs", 60000] }, null] } } },
+            { $project: { diffMs: { $subtract: ["$finishedAt", "$startedAt"] } } },
+            { $match: { diffMs: { $gt: 0 } } },
+            { $group: { _id: null, avgMs: { $avg: "$diffMs" } } },
+            { $project: { _id: 0, avgMinutes: { $divide: ["$avgMs", 60000] } } },
           ],
         },
       },
     ]);
+
 
     // normalização: sempre 6 meses
     const MONTHS_PT = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."];
@@ -539,20 +454,17 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     const ordersByMonth = last6Idx.map((mi) => ({ month: MONTHS_PT[mi], value: monthMap.get(mi) ?? 0 }));
 
     const summaryBase =
-      (agg?.summary?.[0]) ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
+      agg?.summary?.[0] ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
     const averageDeliveryMinutes = agg?.avgDelivery?.[0]?.avgMinutes ?? null;
 
-    // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
     const topOrders = (agg?.topOrders ?? []).map((x: any) => ({
       name: x.name,
       value: x.value,
-      // se quiser usar no futuro:
-      // productId: x.productId,
     }));
 
     return res.json({
-      summary: { ...summaryBase, averageDeliveryMinutes },
+      summary: { ...summaryBase, averageDeliveryMinutes, avgTime: averageDeliveryMinutes },
       ordersByMonth,
       topOrders,
       meta: {
