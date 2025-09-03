@@ -341,15 +341,31 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     if (scope === "restaurant" && restaurantId) matchBase.restaurantId = restaurantId;
     if (scope === "unit" && unitId) matchBase.unitId = unitId;
 
-    // Hoje (timezone do servidor). Se quiser, troque para fuso fixo de Brasília.
-    const startOfToday = new Date(); startOfToday.setHours(0,0,0,0);
-    const endOfToday = new Date(); endOfToday.setHours(23,59,59,999);
+    // === Parâmetros de "hoje" vindos do front com fuso ===
+    // InformativeCard envia tz + startOfTodayISO + endOfTodayISO
+    const tz = (req.query?.tz as string) || "America/Sao_Paulo";
+    const startOfTodayISO = req.query?.startOfTodayISO as string | undefined;
+    const endOfTodayISO   = req.query?.endOfTodayISO   as string | undefined;
+
+    let startOfToday: Date;
+    let endOfToday: Date;
+
+    if (startOfTodayISO && endOfTodayISO) {
+      startOfToday = new Date(startOfTodayISO);
+      endOfToday   = new Date(endOfTodayISO);
+    } else {
+      // Fallback no servidor (caso o front não envie os limites)
+      const now = new Date();
+      startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
+      endOfToday = new Date(now);   endOfToday.setHours(23, 59, 59, 999);
+    }
 
     // Últimos 6 meses para o gráfico
-    const from6m = new Date();
-    from6m.setMonth(from6m.getMonth() - 5);
-    from6m.setDate(1); from6m.setHours(0,0,0,0);
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5, 1);
+    sixMonthsAgo.setHours(0, 0, 0, 0);
 
+    // === Agregado único com $facet: summary, ordersByMonth, topOrders ===
     const [agg] = await OrderModel.aggregate([
       { $match: matchBase },
       {
@@ -358,69 +374,93 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
             {
               $group: {
                 _id: null,
-                total:       { $sum: 1 },
-                completed:   { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-                paid:        { $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] } },
-                cancelled:   { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
-                processing:  { $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] } },
-                // pedidos criados hoje e NÃO cancelados
-                todayTotal:  { $sum: { 
-                  $cond: [
-                    { $and: [
-                      { $gte: ["$createdAt", startOfToday] },
-                      { $lte: ["$createdAt", endOfToday]   },
-                      { $ne:  ["$status", "cancelled"]     }
-                    ]},
-                    1, 0
-                  ] 
-                } },
-              }
+                total:      { $sum: 1 },
+                completed:  { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+                paid:       { $sum: { $cond: [{ $eq: ["$status", "paid"] }, 1, 0] } },
+                cancelled:  { $sum: { $cond: [{ $eq: ["$status", "cancelled"] }, 1, 0] } },
+                processing: { $sum: { $cond: [{ $eq: ["$status", "processing"] }, 1, 0] } },
+                todayTotal: {
+                  $sum: {
+                    $cond: [
+                      {
+                        $and: [
+                          { $gte: ["$createdAt", startOfToday] },
+                          { $lte: ["$createdAt", endOfToday] },
+                          { $ne: ["$status", "cancelled"] }, // ajuste se quiser incluir cancelados
+                        ],
+                      },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+              },
             },
-            { $project: { _id: 0 } }
+            { $project: { _id: 0 } },
           ],
+
           ordersByMonth: [
-            { $match: { createdAt: { $gte: from6m } } },
+            { $match: { createdAt: { $gte: sixMonthsAgo } } },
             {
               $group: {
                 _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
-                value: { $sum: 1 }
-              }
+                value: { $sum: 1 },
+              },
             },
             { $sort: { "_id.y": 1, "_id.m": 1 } },
             {
               $project: {
                 _id: 0,
-                month: {
-                  $let: {
-                    vars: { m: "$_id.m" },
-                    in: {
-                      $arrayElemAt: [
-                        ["", "jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."],
-                        "$$m"
-                      ]
-                    }
-                  }
-                },
-                value: 1
-              }
-            }
+                monthIndex: { $subtract: ["$_id.m", 1] }, // 0..11
+                value: 1,
+              },
+            },
           ],
+
+          // Pipeline genérico; se você já tinha um, pode manter sua versão
           topOrders: [
-            // mantenha seu pipeline atual
-          ]
-        }
-      }
+            { $unwind: "$items" },
+            {
+              $group: {
+                _id: "$items.product.name",
+                value: { $sum: "$items.quantity" },
+              },
+            },
+            { $sort: { value: -1 } },
+            { $limit: 5 },
+            { $project: { _id: 0, name: "$_id", value: 1 } },
+          ],
+        },
+      },
     ]);
 
-    const summary = (agg?.summary?.[0]) ?? { total:0, completed:0, paid:0, cancelled:0, processing:0, todayTotal:0 };
+    // === Normalização: sempre 6 meses (mês atual + 5 anteriores) ===
+    const MONTHS_PT = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."];
+    const now = new Date();
+    const last6Idx = Array.from({ length: 6 }, (_, i) => (now.getMonth() - (5 - i) + 12) % 12);
+
+    const monthMap = new Map<number, number>();
+    for (const row of agg?.ordersByMonth ?? []) {
+      monthMap.set(row.monthIndex, (monthMap.get(row.monthIndex) ?? 0) + (Number(row.value) || 0));
+    }
+    const ordersByMonth = last6Idx.map((mi) => ({
+      month: MONTHS_PT[mi],
+      value: monthMap.get(mi) ?? 0,
+    }));
+
+    const summary =
+      (agg?.summary?.[0]) ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
     return res.json({
       summary,
-      ordersByMonth: agg?.ordersByMonth ?? [],
-      topOrders: agg?.topOrders ?? []
+      ordersByMonth,
+      topOrders: agg?.topOrders ?? [],
+      // útil para debug:
+      meta: { tz, startOfTodayISO: startOfToday.toISOString(), endOfTodayISO: endOfToday.toISOString() },
     });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ message: "Erro ao carregar dashboard de pedidos" });
   }
 };
+
