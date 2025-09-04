@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { TableAssignmentModel } from "../models/TableAssignment";
-import { UserModel } from "../models/User";
 
 // GET público: garçom atual da mesa
 export const getPublicAttendantForTable = async (req: Request, res: Response) => {

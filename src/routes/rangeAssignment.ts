@@ -1,12 +1,19 @@
 import { Router } from "express";
-import { getPublicAttendantForTable, putBulkRangeAssignments } from "../controllers/RangeAssignmentController";
+import { getPublicManagerForTable, putBulkRangeAssignments } from "../controllers/RangeAssignmentController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (router: Router) => {
-  // público (cliente via QR)
-  router.get("/public/units/:unitId/tables/:tableId/attendant", getPublicAttendantForTable);
+  // Público (cliente/QR): agora “manager”
+  router.get("/public/units/:unitId/tables/:tableId/manager", getPublicManagerForTable);
 
-  // manager agenda/atribui intervalos
-  router.put("/units/:unitId/range-assignments/bulk",
-    isAuthenticated, hasRole(["MANAGER"]), putBulkRangeAssignments);
+  // (Compat opcional por um tempo)
+  router.get("/public/units/:unitId/tables/:tableId/attendant", getPublicManagerForTable);
+
+  // Somente MANAGER pode aplicar escala
+  router.put(
+    "/units/:unitId/range-assignments/bulk",
+    isAuthenticated,
+    hasRole(["MANAGER"]),
+    putBulkRangeAssignments
+  );
 };

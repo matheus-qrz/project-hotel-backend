@@ -110,7 +110,6 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
 };
 
 // Criar um novo funcionário
-// Criar um novo funcionário
 export const createEmployeeController = async (req: Request, res: Response) => {
   try {
     // extrai e normaliza

@@ -1,17 +1,7 @@
+import mongoose from "mongoose";
 import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/rangeAssignment";
 import { UserModel } from "../models/User";
-import mongoose from "mongoose";
-
-type AssignmentInput = {
-  startTable: number;
-  endTable: number;
-  attendantId?: string;
-  attendantName?: string; // <— NOVO
-  label?: string | null;
-  startsAt?: string | null;
-  endsAt?: string | null;
-};
 
 const overlapsRange = (a1:number,a2:number,b1:number,b2:number) => Math.max(a1,b1) <= Math.min(a2,b2);
 const overlapsTime = (aS:Date|null,aE:Date|null,bS:Date|null,bE:Date|null) => {
@@ -21,70 +11,45 @@ const overlapsTime = (aS:Date|null,aE:Date|null,bS:Date|null,bE:Date|null) => {
   const eB = bE ? bE.getTime() : +Infinity;
   return sA < eB && sB < eA;
 };
-
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Resolve `attendantName` OU `attendantId` para um usuário único da unidade (ATTENDANT/MANAGER)
-async function resolveAttendant(unitId: string, nameOrId?: string, explicitId?: string) {
-  // Prioriza id explícito
+// Resolve SOMENTE usuários com role MANAGER na unidade
+async function resolveManager(unitId: string, name?: string, explicitId?: string) {
   if (explicitId && mongoose.isValidObjectId(explicitId)) {
-    const byId = await UserModel.findOne({
-      _id: explicitId,
-      restaurantUnit: unitId,
-      role: { $in: ["ATTENDANT", "MANAGER"] },
-    });
+    const byId = await UserModel.findOne({ _id: explicitId, restaurantUnit: unitId, role: "MANAGER" });
     if (byId) return { user: byId, many: false };
   }
 
-  const needle = (nameOrId || "").trim();
+  const needle = (name || "").trim();
   if (!needle) return { user: null as any, many: false };
 
-  // Se vier e-mail, tente match exato
   if (needle.includes("@")) {
-    const byEmail = await UserModel.findOne({
-      restaurantUnit: unitId,
-      role: { $in: ["ATTENDANT", "MANAGER"] },
-      email: needle,
-    });
+    const byEmail = await UserModel.findOne({ restaurantUnit: unitId, role: "MANAGER", email: needle });
     if (byEmail) return { user: byEmail, many: false };
   }
 
-  // Busca por nome (case/acentos-insensitive via collation)
   const parts = needle.split(/\s+/).filter(Boolean);
-  const coll = { locale: "pt", strength: 1 as const }; // ignora acentos/maiúsculas
+  const coll = { locale: "pt", strength: 1 as const };
 
   let query: any;
   if (parts.length >= 2) {
     const first = escapeRegExp(parts[0]);
     const last = escapeRegExp(parts.slice(1).join(" "));
-    query = {
-      $or: [
-        { firstName: new RegExp(`^${first}`, "i"), lastName: new RegExp(last, "i") },
-        { lastName: new RegExp(`^${last}`, "i"), firstName: new RegExp(first, "i") },
-      ],
-    };
+    query = { $or: [
+      { firstName: new RegExp(`^${first}`, "i"), lastName: new RegExp(last, "i") },
+      { lastName:  new RegExp(`^${last}`, "i"),  firstName: new RegExp(first, "i") },
+    ]};
   } else {
     const one = escapeRegExp(needle);
-    query = {
-      $or: [
-        { firstName: new RegExp(one, "i") },
-        { lastName: new RegExp(one, "i") },
-      ],
-    };
+    query = { $or: [{ firstName: new RegExp(one, "i") }, { lastName: new RegExp(one, "i") }] };
   }
 
-  const candidates = await UserModel.find({
-    restaurantUnit: unitId,
-    role: { $in: ["ATTENDANT", "MANAGER"] },
-    ...query,
-  })
-    .collation(coll)
-    .limit(5);
+  const candidates = await UserModel.find({ restaurantUnit: unitId, role: "MANAGER", ...query })
+    .collation(coll).limit(5);
 
   if (candidates.length === 1) return { user: candidates[0], many: false };
   if (candidates.length === 0) return { user: null as any, many: false };
 
-  // Ambíguo: devolve lista para o front decidir (evita atribuir errado)
   return {
     user: null as any,
     many: true,
@@ -96,14 +61,13 @@ async function resolveAttendant(unitId: string, nameOrId?: string, explicitId?: 
   };
 }
 
-// GET público: quem atende AGORA a mesa (resolve por intervalo + janela)
-export const getPublicAttendantForTable = async (req: Request, res: Response) => {
+// GET público: quem GERENCIA (agora) a mesa pelo intervalo/turno
+export const getPublicManagerForTable = async (req: Request, res: Response) => {
   const { unitId, tableId } = req.params as { unitId: string; tableId: string };
   const tableNum = Number(tableId);
   if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
   const now = new Date();
-
   const doc = await RangeAssignmentModel.findOne({
     restaurantUnit: unitId,
     isActive: true,
@@ -111,17 +75,26 @@ export const getPublicAttendantForTable = async (req: Request, res: Response) =>
     endTable:   { $gte: tableNum },
     $and: [
       { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
-      { $or: [{ endsAt: null }, { endsAt: { $gt: now } }] },
+      { $or: [{ endsAt: null },   { endsAt: { $gt: now } }] },
     ],
-  })
-  .sort({ startsAt: -1 })
-  .populate({ path: "attendant", select: "firstName lastName role" });
+  }).sort({ startsAt: -1 })
+    .populate({ path: "manager", select: "firstName lastName role" });
 
-  if (!doc) return res.json({ attendant: null, updatedAt: null });
+  if (!doc) return res.json({ manager: null, updatedAt: null });
 
-  const a: any = doc.attendant;
-  const name = a ? `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() : null;
-  return res.json({ attendant: a ? { id: String(a._id), name } : null, updatedAt: doc.updatedAt });
+  const m: any = doc.manager;
+  const name = m ? `${m.firstName ?? ""} ${m.lastName ?? ""}`.trim() : null;
+  return res.json({ manager: m ? { id: String(m._id), name } : null, updatedAt: doc.updatedAt });
+};
+
+type AssignmentInput = {
+  startTable: number;
+  endTable: number;
+  managerId?: string;     // <-- trocado
+  managerName?: string;   // <-- trocado
+  label?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
 };
 
 // PUT (MANAGER): criar/alterar escala em LOTE por intervalos
@@ -129,7 +102,7 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
   const { unitId } = req.params as { unitId: string };
   const { assignments } = (req.body || {}) as { assignments: AssignmentInput[] };
   if (!Array.isArray(assignments) || !assignments.length) {
-    return res.status(400).json({ message: "Envie assignments=[{startTable,endTable,attendantName?,attendantId?,startsAt?,endsAt?,label?}]." });
+    return res.status(400).json({ message: "Envie assignments=[{startTable,endTable,managerName?,managerId?,startsAt?,endsAt?,label?}]." });
   }
 
   const now = new Date();
@@ -143,23 +116,14 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
       const startsAt = raw.startsAt ? new Date(raw.startsAt) : null;
       const endsAt   = raw.endsAt   ? new Date(raw.endsAt)   : null;
 
-      const r = await resolveAttendant(
-        unitId,
-        raw.attendantName,
-        raw.attendantId
-      );
-
+      const r = await resolveManager(unitId, raw.managerName, raw.managerId);
       if ((r as any).many) {
-        return res.status(409).json({
-          message: "Nome de atendente ambíguo. Selecione uma opção.",
-          options: (r as any).options, // [{id,name,email}]
-        });
+        return res.status(409).json({ message: "Nome de gerente ambíguo. Selecione uma opção.", options: (r as any).options });
       }
       if (!r.user) {
-        return res.status(404).json({ message: `Atendente não encontrado para: "${raw.attendantName || raw.attendantId}"` });
+        return res.status(404).json({ message: `Gerente não encontrado: "${raw.managerName || raw.managerId}"` });
       }
 
-      // Fechar janelas ativas que colidem em tempo E intervalo
       const existing = await RangeAssignmentModel.find({ restaurantUnit: unitId, isActive: true });
       for (const ex of existing) {
         if (overlapsRange(lo, hi, ex.startTable, ex.endTable) &&
@@ -173,7 +137,7 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
         restaurantUnit: unitId,
         startTable: lo,
         endTable: hi,
-        attendant: r.user._id,
+        manager: r.user._id,       // <-- trocado
         label: raw.label ?? null,
         startsAt, endsAt,
         isActive: true,
