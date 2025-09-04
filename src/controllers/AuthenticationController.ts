@@ -102,14 +102,26 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    if (!user.authentication || !user.authentication.salt) {
+    if (!user?.authentication?.salt || !user?.authentication?.password) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const expectedHash = generateHash(password, user.authentication.salt);
+    const salt = user.authentication.salt
+    const legacyHash = authentication(salt, password);
+    const preferredHash = generateHash(password, salt);
 
-    if (expectedHash !== user.authentication.password) {
+    const matchesLegacy   = user.authentication.password === legacyHash;
+    const matchesPreferred = user.authentication.password === preferredHash;
+
+    if (!matchesLegacy && !matchesPreferred) {
       return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+
+    // migra automaticamente para o “oficial”, se necessário
+    if (matchesLegacy && !matchesPreferred) {
+      user.authentication.password = preferredHash;
+      // salt permanece o mesmo
+      await user.save();
     }
 
     const token = issueJWT(user._id.toString(), user.email || "", user.role || '');
