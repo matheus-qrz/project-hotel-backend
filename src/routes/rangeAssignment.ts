@@ -10,7 +10,7 @@ export default (router: Router) => {
   router.get("/public/units/:unitId/tables/:tableId/attendant", getPublicManagerForTable);
 
   // Somente MANAGER pode aplicar escala
-  router.put(
+  router.patch(
     "/units/:unitId/range-assignments/bulk",
     isAuthenticated,
     hasRole(["ADMIN","MANAGER"]),

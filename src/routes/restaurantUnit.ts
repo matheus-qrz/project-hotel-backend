@@ -44,7 +44,7 @@ export default (restaurantUnitRouter: Router) => {
   );
 
   // Atualizar uma unidade
-  restaurantUnitRouter.put(
+  restaurantUnitRouter.patch(
     "/units/:unitId",
     isAuthenticated,
     hasRole("ADMIN"),
