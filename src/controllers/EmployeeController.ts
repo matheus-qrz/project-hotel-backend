@@ -110,140 +110,157 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
 };
 
 // Criar um novo funcionário
+// Criar um novo funcionário
 export const createEmployeeController = async (req: Request, res: Response) => {
-    try {
-        const {
-            firstName,
-            lastName,
-            email,
-            phone,
-            password,
-            role,
-            restaurant,
-            restaurantUnit
-        } = req.body;
+  try {
+    // extrai e normaliza
+    let {
+      firstName,
+      lastName,
+      email,
+      cpf,
+      phone,
+      password,
+      role,
+      restaurant,
+      restaurantUnit, // pode vir vazio, id de unit ou id do restaurante (matriz)
+      // compat opcional: aceitar restaurantUnitId do front antigo:
+      restaurantUnitId,
+    } = req.body as any;
 
-        // Verifica campos obrigatórios básicos
-        if (!firstName || !lastName || !email || !role) {
-            return res.status(400).json({
-                message: "Nome, sobrenome, email e função são obrigatórios"
-            });
-        }
+    email = email ? String(email).trim().toLowerCase() : undefined;
+    cpf = cpf ? String(cpf).replace(/\D/g, "") : undefined;
+    phone = phone ? String(phone).trim() : "";
 
-        // Verifica se o email já está em uso
-        const existingUser = await UserModel.findOne({ email });
-        if (existingUser) {
-            return res.status(400).json({
-                message: "Email já está em uso"
-            });
-        }
-
-        // Valida o tipo de função
-        const validRoles = ["ADMIN", "MANAGER", "ATTENDANT"];
-        if (!validRoles.includes(role)) {
-            return res.status(400).json({
-                message: "Função inválida. Use ADMIN, MANAGER ou ATTENDANT"
-            });
-        }
-
-        // Verifica se o ID de restaurante foi fornecido
-        if (!restaurant) {
-            return res.status(400).json({
-                message: "O ID do restaurante é obrigatório"
-            });
-        }
-
-        // Validação do ID do restaurante
-        if (!mongoose.Types.ObjectId.isValid(restaurant)) {
-            return res.status(400).json({
-                message: "ID de restaurante inválido"
-            });
-        }
-
-        let restaurantDoc = await RestaurantModel.findById(restaurant);
-        if (!restaurantDoc) {
-            return res.status(404).json({
-                message: "Restaurante não encontrado"
-            });
-        }
-
-        let unitDoc = null;
-
-        // Se houver unidade, validar também
-        if (restaurantUnit) {
-            if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
-                return res.status(400).json({
-                    message: "ID de unidade inválido"
-                });
-            }
-
-            unitDoc = await RestaurantUnitModel.findById(restaurantUnit);
-            if (!unitDoc) {
-                return res.status(404).json({
-                    message: "Unidade não encontrada"
-                });
-            }
-
-            // Garante que a unidade pertença ao restaurante informado
-            if (unitDoc.restaurant.toString() !== restaurant) {
-                return res.status(400).json({
-                    message: "Esta unidade não pertence ao restaurante informado"
-                });
-            }
-        }
-
-        const salt = generateSalt();
-        const hashedPassword = generateHash(password, salt);
-
-        const newEmployee = new UserModel({
-            firstName,
-            lastName,
-            email,
-            phone: phone || "",
-            role,
-            authentication: {
-                password: hashedPassword,
-                salt,
-                sessionToken: "",
-            },
-            restaurant: restaurantDoc._id,
-            restaurantUnit: unitDoc ? unitDoc._id : restaurantDoc._id,
-            orders: []
-        });
-
-        await newEmployee.save();
-
-        // Atualiza as referências apropriadas
-        if (unitDoc) {
-            await RestaurantUnitModel.findByIdAndUpdate(
-                unitDoc._id,
-                { $addToSet: { staff: newEmployee._id } }
-            );
-        }
-
-        await RestaurantModel.findByIdAndUpdate(
-            restaurantDoc._id,
-            { $addToSet: { staff: newEmployee._id } }
-        );
-
-        return res.status(201).json({
-            message: "Funcionário criado com sucesso",
-            employee: {
-                id: newEmployee._id,
-                firstName: newEmployee.firstName,
-                lastName: newEmployee.lastName,
-                email: newEmployee.email,
-                role: newEmployee.role,
-                restaurant: newEmployee.restaurant,
-                restaurantUnit: newEmployee.restaurantUnit,
-            }
-        });
-    } catch (error: any) {
-        console.error("Erro ao criar funcionário:", error);
-        return res.status(500).json({
-            message: error.message || "Erro interno no servidor"
-        });
+    // role padrão e guarda flag
+    const validRoles = ["ADMIN", "MANAGER", "ATTENDANT"] as const;
+    role = (role || "ATTENDANT").toUpperCase();
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ message: "Função inválida. Use ADMIN, MANAGER ou ATTENDANT" });
     }
+    const isStrict = role === "ADMIN" || role === "MANAGER";
+
+    // obrigatórios comuns
+    if (!firstName || !lastName) {
+      return res.status(400).json({ message: "Nome e sobrenome são obrigatórios" });
+    }
+
+    // restaurante obrigatório e válido
+    if (!restaurant) {
+      return res.status(400).json({ message: "O ID do restaurante é obrigatório" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(restaurant)) {
+      return res.status(400).json({ message: "ID de restaurante inválido" });
+    }
+
+    const restaurantDoc = await RestaurantModel.findById(restaurant);
+    if (!restaurantDoc) {
+      return res.status(404).json({ message: "Restaurante não encontrado" });
+    }
+
+    // normaliza campo de unidade (aceita restaurantUnitId também)
+    restaurantUnit = restaurantUnit || restaurantUnitId || null;
+
+    // Regras por cargo
+    if (isStrict) {
+      if (!cpf) return res.status(400).json({ message: "CPF é obrigatório para ADMIN/MANAGER" });
+      if (!email) return res.status(400).json({ message: "Email é obrigatório para ADMIN/MANAGER" });
+      if (!phone) return res.status(400).json({ message: "Telefone é obrigatório para ADMIN/MANAGER" });
+      if (!password) return res.status(400).json({ message: "Senha é obrigatória para ADMIN/MANAGER" });
+      if (!restaurantUnit) return res.status(400).json({ message: "Unidade é obrigatória para ADMIN/MANAGER" });
+    } else {
+      // ATTENDANT: email/telefone/cpf/senha opcionais
+      // Se quiser credenciais, precisa dos dois: email + password
+      if ((email && !password) || (!email && password)) {
+        return res.status(400).json({ message: "Para criar credenciais, informe Email e Senha" });
+      }
+    }
+
+    // email único (se informado)
+    if (email) {
+      const existingUser = await UserModel.findOne({ email: new RegExp(`^${email}$`, "i") });
+      if (existingUser) {
+        return res.status(400).json({ message: "Email já está em uso" });
+      }
+    }
+
+    // validar unidade (quando vier uma unit de fato)
+    let unitDoc: any = null;
+    let isMatrixSelection = false;
+
+    if (restaurantUnit) {
+      if (String(restaurantUnit) === String(restaurantDoc._id)) {
+        // Usuário escolheu "Matriz" (front costuma enviar o próprio restaurantId)
+        isMatrixSelection = true;
+      } else {
+        if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
+          return res.status(400).json({ message: "ID de unidade inválido" });
+        }
+        unitDoc = await RestaurantUnitModel.findById(restaurantUnit);
+        if (!unitDoc) return res.status(404).json({ message: "Unidade não encontrada" });
+        if (String(unitDoc.restaurant) !== String(restaurantDoc._id)) {
+          return res.status(400).json({ message: "Esta unidade não pertence ao restaurante informado" });
+        }
+      }
+    }
+
+    // monta authentication APENAS quando for necessário
+    let authentication: any = undefined;
+    if (isStrict || (email && password)) {
+      const salt = generateSalt();
+      const hashedPassword = generateHash(password, salt);
+      authentication = { password: hashedPassword, salt, sessionToken: "" };
+    }
+
+    // monta doc do usuário
+    const newEmployee = new UserModel({
+      firstName,
+      lastName,
+      email,                 // se undefined, não salva o campo
+      cpf,                   // se undefined, não salva o campo
+      phone: phone || "",
+      role,
+      authentication,        // pode ser undefined para atendente sem login
+      restaurant: restaurantDoc._id,
+      // se escolheu Matriz, persista null; se escolheu uma unit, persista o _id; se não veio nada, null
+      restaurantUnit: unitDoc ? unitDoc._id : (isMatrixSelection ? null : null),
+      orders: [],
+    });
+
+    await newEmployee.save();
+
+    // vinculações
+    if (unitDoc) {
+      await RestaurantUnitModel.findByIdAndUpdate(unitDoc._id, { $addToSet: { staff: newEmployee._id } });
+    }
+    await RestaurantModel.findByIdAndUpdate(restaurantDoc._id, { $addToSet: { staff: newEmployee._id } });
+
+    return res.status(201).json({
+      message: "Funcionário criado com sucesso",
+      employee: {
+        id: newEmployee._id,
+        firstName: newEmployee.firstName,
+        lastName: newEmployee.lastName,
+        email: newEmployee.email,
+        role: newEmployee.role,
+        restaurant: newEmployee.restaurant,
+        restaurantUnit: newEmployee.restaurantUnit, // null para matriz
+      },
+    });
+  } catch (error: any) {
+    console.error("Erro ao criar funcionário:", error);
+
+    // respostas mais claras
+    if (error?.name === "ValidationError") {
+      const first = Object.values(error.errors || {})[0] as any;
+      return res.status(400).json({ message: first?.message || "Erro de validação", path: first?.path });
+    }
+    if (error?.code === 11000) {
+      return res.status(409).json({ message: "Duplicado", dup: error.keyValue });
+    }
+
+    return res.status(500).json({ message: error.message || "Erro interno no servidor" });
+  }
 };
 
 // Atualizar um funcionário existente

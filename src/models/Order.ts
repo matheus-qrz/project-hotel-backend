@@ -124,7 +124,8 @@ const orderSchema = new Schema(
         originalPrice: {
           type: Number,
           required: false
-        }
+        },
+        completedAt: { type: Date },
       }
     ],
     totalAmount: {

@@ -581,46 +581,122 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
 
 // Atualizar quantidade/detalhes de item específico de um pedido
 export const updateOrderItemController = async (req: Request, res: Response) => {
-  const { tableId, orderId, itemId } = req.params as { tableId: string; orderId: string; itemId: string };
-  const { guestId, quantity, status } = (req.body || {}) as { guestId?: string; quantity?: number; status?: string };
+  const { tableId, orderId, itemId } = req.params as {
+    tableId: string;
+    orderId: string;
+    itemId: string;
+  };
+
+  const {
+    guestId,
+    quantity,
+    status,           // "processing" | "completed" | "cancelled" | "reduced"
+    servedAt,         // opcional: ISO string (se quiser mandar do front); se ausente, servidor usa now
+  } = (req.body || {}) as {
+    guestId?: string;
+    quantity?: number;
+    status?: string;
+    servedAt?: string;
+  };
 
   try {
     const tableNum = Number(tableId);
-    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
-
-    const filter: any = {
-      _id: orderId,
-      'meta.tableId': tableNum,
-      isPaid: false,
-      status: { $in: ['processing', 'payment_requested'] },
-      'items._id': itemId,
-    };
-    if (guestId) filter['guestInfo.id'] = guestId;
-    const hdr = req.headers['x-session-id'];
-    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
-
-    const $set: any = {};
-    if (typeof quantity === 'number') $set['items.$.quantity'] = quantity;
-    if (typeof status === 'string')   $set['items.$.status']   = status;
-        if (typeof quantity === 'number' && quantity <= 0) {
-      // política: zerou quantidade ⇒ vira cancelado e quantity = 0
-      $set['items.$.quantity'] = 0;
-      $set['items.$.status'] = 'cancelled';
+    if (Number.isNaN(tableNum)) {
+      return res.status(400).json({ message: "tableId inválido." });
     }
-    if (!Object.keys($set).length) return res.status(400).json({ message: 'Nada para atualizar.' });
 
-    const updated = await OrderModel.findOneAndUpdate(filter, { $set }, { new: true });
-    if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou bloqueado para edição.' });
+    // Filtro: pedido aberto, na mesa, item existente e ainda editável
+    const baseFilter: any = {
+      _id: orderId,
+      "meta.tableId": tableNum,
+      isPaid: false,
+      status: { $in: ["processing", "payment_requested"] },
+      "items._id": itemId,
+    };
+    if (guestId) baseFilter["guestInfo.id"] = guestId;
+    const hdr = req.headers["x-session-id"];
+    if (typeof hdr === "string" && hdr.trim()) baseFilter.sessionId = hdr.trim();
 
+    // Vamos montar o update
+    const now = new Date();
+    const $set: any = {};
+    const $unset: any = {};
+    const $currentDate: any = { "items.$.updatedAt": true };
+
+    // 1) Lógica de quantidade
+    if (typeof quantity === "number") {
+      if (quantity <= 0) {
+        // Política: zerou quantidade ⇒ cancela
+        $set["items.$.quantity"] = 0;
+        $set["items.$.status"] = "cancelled";
+        $set["items.$.cancelledAt"] = now;
+      } else {
+        $set["items.$.quantity"] = quantity;
+
+        // Se NÃO veio status explícito, detecta redução e marca 'reduced'
+        if (!status) {
+          // Buscar quantidade atual do item para comparar
+          const existing = await OrderModel.findOne(baseFilter, { "items.$": 1 })
+            .lean()
+            .exec();
+
+          const prevQty =
+            existing?.items && Array.isArray(existing.items) && existing.items[0]
+              ? Number((existing.items as any)[0].quantity ?? 0)
+              : null;
+
+          if (prevQty !== null && quantity < prevQty) {
+            $set["items.$.status"] = "reduced";
+          }
+        }
+      }
+    }
+
+    // 2) Lógica de status (tem precedência sobre detecção automática acima)
+    if (typeof status === "string") {
+      const normalized = status.toLowerCase();
+      if (["processing", "completed", "cancelled", "reduced"].includes(normalized)) {
+        $set["items.$.status"] = normalized;
+
+        if (normalized === "completed") {
+          // Marcar hora do item concluído (para aparecer riscado + horário)
+          $set["items.$.completedAt"] = servedAt ? new Date(servedAt) : now;
+          // Se porventura havia cancelledAt, limpamos
+          $unset["items.$.cancelledAt"] = "";
+        } else if (normalized === "cancelled") {
+          $set["items.$.cancelledAt"] = now;
+          // Não apagamos completedAt para manter histórico (opcional)
+        }
+        // processing/reduced não alteram timestamps específicos
+      }
+    }
+
+    if (!Object.keys($set).length && !Object.keys($unset).length) {
+      return res.status(400).json({ message: "Nada para atualizar." });
+    }
+
+    const updateOp: any = { $set, $currentDate };
+    if (Object.keys($unset).length) updateOp.$unset = $unset;
+
+    const updated = await OrderModel.findOneAndUpdate(baseFilter, updateOp, { new: true });
+    if (!updated) {
+      return res
+        .status(404)
+        .json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
+    }
+
+    // Recalcular totais/flags do pedido (mantido do seu fluxo)
     let recomputed = null;
     try {
       recomputed = await recomputeAndReturn(orderId);
     } catch (err) {
-      console.warn('recomputeAndReturn falhou (update item):', err);
+      console.warn("recomputeAndReturn falhou (update item):", err);
     }
+
     return res.json(recomputed ?? updated);
   } catch (e) {
-    console.error('Erro ao atualizar item:', e);
-    return res.status(500).json({ message: 'Erro ao atualizar item.' });
+    console.error("Erro ao atualizar item:", e);
+    return res.status(500).json({ message: "Erro ao atualizar item." });
   }
 };
+
