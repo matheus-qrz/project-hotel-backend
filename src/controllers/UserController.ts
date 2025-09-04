@@ -175,7 +175,7 @@ export const createRestaurantUserController = async (
         const phone = fields.phone?.[0];
         const password = fields.password?.[0];
         const restaurantUnitId = fields.restaurantUnitId?.[0];
-        const role = fields.role?.[0] || "ATTENDANT"; // Valor padrão se não fornecido
+        const role = fields.role?.[0] || "ATTENDANT"; 
 
         // Validar role
         if (!["ADMIN", "MANAGER", "ATTENDANT"].includes(role)) {
@@ -303,7 +303,8 @@ export const createRestaurantUserController = async (
         password,
         restaurantUnitId,
         avatar,
-        role = "ATTENDANT" // Valor padrão se não fornecido
+        role,
+        cpf,
       } = req.body;
 
       // Validar role
@@ -313,9 +314,25 @@ export const createRestaurantUserController = async (
         });
       }
 
+      const isStrict = role === "ADMIN" || role === "MANAGER";
+
       // Validar campos obrigatórios
-      if (!email || !password || !firstName || !phone) {
-        return res.status(400).json({ msg: 'Campos obrigatórios não preenchidos' });
+      if (!firstName || !lastName) {
+        return res.status(400).json({ msg: "Nome e Sobrenome são obrigatórios" });
+      }
+
+      if (isStrict) {
+        if (!cpf) return res.status(400).json({ msg: "CPF é obrigatório" });
+        if (!email) return res.status(400).json({ msg: "Email é obrigatório" });
+        if (!phone) return res.status(400).json({ msg: "Telefone é obrigatório" });
+        if (!password) return res.status(400).json({ msg: "Senha é obrigatória" });
+        if (!restaurantUnitId) return res.status(400).json({ msg: "Unidade é obrigatória" });
+      } else {
+        // ATTENDANT → restante opcional
+        // Se for criar credenciais, então exigir email+password coerentes
+        if ((email && !password) || (!email && password)) {
+          return res.status(400).json({ msg: "Para criar credenciais, informe Email e Senha" });
+        }
       }
 
       // Verificar se o email já está em uso
@@ -324,31 +341,34 @@ export const createRestaurantUserController = async (
         return res.status(400).json({ msg: 'Email já cadastrado' });
       }
 
+      if (email) {
+        const existingUser = await getUserByEmail(email);
+        if (existingUser) return res.status(400).json({ msg: "Email já cadastrado" });
+      }
+
       // Validar unidade do restaurante, se fornecida
       if (restaurantUnitId) {
         const unit = await RestaurantUnitModel.findById(restaurantUnitId);
-        if (!unit) {
-          return res.status(404).json({ msg: 'Unidade de restaurante não encontrada' });
-        }
-
+        if (!unit) return res.status(404).json({ msg: "Unidade de restaurante não encontrada" });
         if (unit.restaurant.toString() !== restaurantId.toString()) {
-          return res.status(403).json({
-            msg: 'Esta unidade não pertence ao seu restaurante'
-          });
+          return res.status(403).json({ msg: "Esta unidade não pertence ao seu restaurante" });
         }
       }
 
       // Criar o usuário
-      const salt = random();
+      let authObj: any = undefined;
+      if (isStrict || (email && password)) {
+        const salt = random();
+        const hashedPassword = authentication(salt, password);
+        authObj = { salt, password: hashedPassword };
+      }
       const user = await createUser({
         firstName,
         lastName,
-        email,
-        phone,
-        authentication: {
-          salt,
-          password: authentication(salt, password),
-        },
+        email: email || undefined,
+        cpf: cpf || undefined,
+        phone: phone || '',
+        authentication: authObj,
         role,
         avatar: avatar || null,
         restaurant: restaurantId,
@@ -373,12 +393,8 @@ export const createRestaurantUserController = async (
         { new: true }
       );
 
-      // Formatar mensagem baseada na role
-      const userType = role === "ADMIN" ? "Administrador" :
-        role === "MANAGER" ? "Gerente" : "Atendente";
-
       return res.status(201).json({
-        msg: `${userType} ${user.firstName} criado com sucesso!`,
+        msg: `${role === "ADMIN" ? "Administrador" : role === "MANAGER" ? "Gerente" : "Atendente"} ${user.firstName} criado com sucesso!`,
         user: {
           _id: user._id,
           firstName: user.firstName,
@@ -386,8 +402,8 @@ export const createRestaurantUserController = async (
           email: user.email,
           role: user.role,
           restaurant: restaurantId,
-          restaurantUnit: restaurantUnitId || null
-        }
+          restaurantUnit: restaurantUnitId || null,
+        },
       });
     } catch (error) {
       console.error('Erro ao criar usuário:', error);

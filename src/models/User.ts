@@ -8,7 +8,7 @@ export interface IUser extends Document {
   lastName: string;
   email: string;
   phone: string;
-  cpf: string;
+  cpf?: string;
   avatar?: string;
   authentication: {
     password: string;
@@ -38,17 +38,31 @@ const userSchema = new Schema(
     },
     cpf: {
       type: String,
-      require: true
+      required: function (this: any) {
+        return this.role === "ADMIN" || this.role === "MANAGER";
+      },
+      trim: true,
     },
     email: {
       type: String,
-      validate: [validator.isEmail, "Please, provide a valid email."],
-      require: true
+      trim: true,
+      validate: {
+        validator: (v: string) => !v || validator.isEmail(v),
+        message: "Please, provide a valid email."
+      },
+      required: function (this: any) {
+        return this.role === "ADMIN" || this.role === "MANAGER";
+      },
+      unique: true,
+      sparse: true, 
     },
     phone: {
       type: String,
-      minLength: [11, "Please insert an valid phone number."],
-      maxLength: [13, "Please insert an valid phone number."],
+      required: function (this: any) {
+        return this.role === "ADMIN" || this.role === "MANAGER";
+      },
+      minLength: 10,
+      maxLength: 13,
     },
     avatar: {
       type: String,
@@ -57,11 +71,19 @@ const userSchema = new Schema(
     authentication: {
       password: {
         type: String,
-        required: [true, 'Password is required'],
+        required: function (this: any) {
+          return this.role === "ADMIN" || this.role === "MANAGER";
+        },
         select: false,
       },
-      salt: { type: String, required: true, select: false },
-      sessionToken: { type: String, select: false },
+      salt: {
+        type: String,
+        required: function (this: any) {
+          return this.role === "ADMIN" || this.role === "MANAGER";
+        },
+        select: false,
+      },
+      sessionToken: { type: String, default: "", select: false },
     },
     role: {
       type: String,
