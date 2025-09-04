@@ -71,18 +71,10 @@ const userSchema = new Schema(
     authentication: {
       password: {
         type: String,
-        required: function (this: any) {
-          return this.role === "ADMIN" || this.role === "MANAGER";
-        },
-        select: false,
+        required: true,
+        select: false
       },
-      salt: {
-        type: String,
-        required: function (this: any) {
-          return this.role === "ADMIN" || this.role === "MANAGER";
-        },
-        select: false,
-      },
+      salt: { type: String, required: true, select: false },
       sessionToken: { type: String, default: "", select: false },
     },
     role: {

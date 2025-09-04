@@ -95,7 +95,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
 
     // Buscar usuário pelo email com populate do restaurante
     const user = await UserModel.findOne({ email })
-      .select('+authentication.password +authentication.salt +restaurant +restaurantUnit')
+      .select('+authentication.password +authentication.salt')
       .populate('restaurant'); // Adicionar populate
 
     if (!user) {
@@ -106,11 +106,9 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const salt = user.authentication.salt;
-    const legacyHash = authentication(salt, password);
-    const newHash = generateHash(password, salt);
+    const expectedHash = generateHash(password, user.authentication.salt);
 
-    if (user.authentication.password !== legacyHash && user.authentication.password !== newHash) {
+    if (expectedHash !== user.authentication.password) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
