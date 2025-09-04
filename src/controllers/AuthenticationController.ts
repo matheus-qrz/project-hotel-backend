@@ -106,9 +106,11 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const expectedHash = generateHash(password, user.authentication.salt);
+    const salt = user.authentication.salt;
+    const legacyHash = authentication(salt, password);
+    const newHash = generateHash(password, salt);
 
-    if (expectedHash !== user.authentication.password) {
+    if (user.authentication.password !== legacyHash && user.authentication.password !== newHash) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
