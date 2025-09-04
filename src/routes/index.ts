@@ -8,6 +8,8 @@ import products from './products';
 import restaurantUnit from './restaurantUnit';
 import employee from "./employee";
 import dashboard from "./dashboard";
+import rangeAssignment from "./rangeAssignment";
+import tableAssignment from "./tableAssignment";
 
 export default (): Router => {
   const router = Router();
@@ -21,6 +23,8 @@ export default (): Router => {
   restaurant(router);
   restaurantUnit(router)
   requests(router);
+  rangeAssignment(router);
+  tableAssignment(router);
 
   return router;
 };
