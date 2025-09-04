@@ -13,7 +13,7 @@ export default (router: Router) => {
   router.put(
     "/units/:unitId/range-assignments/bulk",
     isAuthenticated,
-    hasRole(["MANAGER"]),
+    hasRole(["ADMIN","MANAGER"]),
     putBulkRangeAssignments
   );
 };
