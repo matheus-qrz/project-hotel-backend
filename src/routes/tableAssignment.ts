@@ -10,7 +10,7 @@ export default (router: Router) => {
   router.put(
     "/units/:unitId/table-assignments/bulk",
     isAuthenticated,
-    hasRole(["MANAGER"]),
+    hasRole(["ADMIN","MANAGER"]),
     putBulkTableAssignments
   );
 };
