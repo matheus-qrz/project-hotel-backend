@@ -74,7 +74,6 @@ const userSchema = new Schema(
         required: function (this: any) {
           return this.role === "ADMIN" || this.role === "MANAGER";
         },
-        select: false,
       },
       salt: {
         type: String,
