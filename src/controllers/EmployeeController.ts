@@ -22,7 +22,7 @@ export const getEmployeesByRestaurantController = async (req: Request, res: Resp
         // Busca todos os funcionários associados ao restaurante
         const employees = await UserModel.find({
             restaurant: restaurantId,
-        }).select("firstName lastName avatar restaurantUnit role");
+        }).select("firstName lastName avatar restaurantUnit role email createdAt");
 
         if (employees.length === 0) {
             return res.status(404).json({
