@@ -7,6 +7,7 @@ import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
+import { isAttendantAssigned } from "../helpers/assignments";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -590,8 +591,8 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
   const {
     guestId,
     quantity,
-    status,           // "processing" | "completed" | "cancelled" | "reduced"
-    servedAt,         // opcional: ISO string (se quiser mandar do front); se ausente, servidor usa now
+    status,     // "processing" | "completed" | "cancelled" | "reduced"
+    servedAt,   // opcional ISO string; se ausente e status=completed, usa now
   } = (req.body || {}) as {
     guestId?: string;
     quantity?: number;
@@ -599,13 +600,39 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     servedAt?: string;
   };
 
+  const user = req.user as any;
+
   try {
     const tableNum = Number(tableId);
     if (Number.isNaN(tableNum)) {
       return res.status(400).json({ message: "tableId inválido." });
     }
 
-    // Filtro: pedido aberto, na mesa, item existente e ainda editável
+    // Descobre a unidade a partir do pedido (necessária p/ validação de escala)
+    const doc = await OrderModel.findOne(
+      { _id: orderId, "meta.tableId": tableNum },
+      { "meta.unitId": 1 }
+    );
+    if (!doc) return res.status(404).json({ message: "Pedido não encontrado." });
+
+    const unitId = String(doc.restaurantUnit || "");
+
+    // 🔒 Gate: somente ATTENDANT precisa estar escalado para a mesa AGORA
+    if (user?.role === "ATTENDANT") {
+      const userId = String(user?._id ?? user?.id ?? "");
+      if (!userId) return res.status(401).json({ message: "Usuário não autenticado." });
+
+      const ok = await isAttendantAssigned({
+        unitId,
+        attendantId: userId,
+        tableId: tableNum,
+      });
+      if (!ok) {
+        return res.status(403).json({ message: "Você não está escalado para esta mesa agora." });
+      }
+    }
+
+    // ---------- Filtro do item editável ----------
     const baseFilter: any = {
       _id: orderId,
       "meta.tableId": tableNum,
@@ -614,34 +641,31 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       "items._id": itemId,
     };
     if (guestId) baseFilter["guestInfo.id"] = guestId;
+
     const hdr = req.headers["x-session-id"];
     if (typeof hdr === "string" && hdr.trim()) baseFilter.sessionId = hdr.trim();
 
-    // Vamos montar o update
+    // ---------- Montagem do update ----------
     const now = new Date();
     const $set: any = {};
     const $unset: any = {};
     const $currentDate: any = { "items.$.updatedAt": true };
 
-    // 1) Lógica de quantidade
+    // 1) Quantidade
     if (typeof quantity === "number") {
       if (quantity <= 0) {
-        // Política: zerou quantidade ⇒ cancela
+        // Zerar => cancela
         $set["items.$.quantity"] = 0;
         $set["items.$.status"] = "cancelled";
         $set["items.$.cancelledAt"] = now;
       } else {
         $set["items.$.quantity"] = quantity;
 
-        // Se NÃO veio status explícito, detecta redução e marca 'reduced'
+        // Se não veio status explícito, detectar redução e marcar 'reduced'
         if (!status) {
-          // Buscar quantidade atual do item para comparar
-          const existing = await OrderModel.findOne(baseFilter, { "items.$": 1 })
-            .lean()
-            .exec();
-
+          const existing = await OrderModel.findOne(baseFilter, { "items.$": 1 }).lean().exec();
           const prevQty =
-            existing?.items && Array.isArray(existing.items) && existing.items[0]
+            existing?.items && Array.isArray(existing.items) && (existing.items as any)[0]
               ? Number((existing.items as any)[0].quantity ?? 0)
               : null;
 
@@ -652,20 +676,20 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       }
     }
 
-    // 2) Lógica de status (tem precedência sobre detecção automática acima)
+    // 2) Status (tem precedência)
     if (typeof status === "string") {
       const normalized = status.toLowerCase();
       if (["processing", "completed", "cancelled", "reduced"].includes(normalized)) {
         $set["items.$.status"] = normalized;
 
         if (normalized === "completed") {
-          // Marcar hora do item concluído (para aparecer riscado + horário)
-          $set["items.$.completedAt"] = servedAt ? new Date(servedAt) : now;
-          // Se porventura havia cancelledAt, limpamos
+          const ts = servedAt ? new Date(servedAt) : now;
+          $set["items.$.completedAt"] = ts;
+          // Se havia cancelamento, limpar
           $unset["items.$.cancelledAt"] = "";
         } else if (normalized === "cancelled") {
           $set["items.$.cancelledAt"] = now;
-          // Não apagamos completedAt para manter histórico (opcional)
+          // Mantemos completedAt (histórico) — ajuste se quiser limpar também
         }
         // processing/reduced não alteram timestamps específicos
       }
@@ -685,7 +709,7 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
         .json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
     }
 
-    // Recalcular totais/flags do pedido (mantido do seu fluxo)
+    // Recalcular totals/flags (mantém seu fluxo)
     let recomputed = null;
     try {
       recomputed = await recomputeAndReturn(orderId);
@@ -699,4 +723,3 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     return res.status(500).json({ message: "Erro ao atualizar item." });
   }
 };
-

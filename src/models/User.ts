@@ -38,10 +38,14 @@ const userSchema = new Schema(
     },
     cpf: {
       type: String,
-      required: function (this: any) {
-        return this.role === "ADMIN" || this.role === "MANAGER";
-      },
       trim: true,
+      unique: true,  
+      sparse: true,
+      set: (v: string) => (v ? v.replace(/\D/g, "") : v),
+      required: function (this: any) {
+        // agora ATTENDANT também é obrigatório
+        return this.role === "ADMIN" || this.role === "MANAGER" || this.role === "ATTENDANT";
+      },
     },
     email: {
       type: String,
@@ -80,6 +84,8 @@ const userSchema = new Schema(
     role: {
       type: String,
       enum: ["ADMIN", "MANAGER", "ATTENDANT", "CLIENT"],
+      required: true,
+      trim: true,
     },
     orders: [
       {

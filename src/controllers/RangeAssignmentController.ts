@@ -82,7 +82,7 @@ export const getPublicManagerForTable = async (req: Request, res: Response) => {
 
   if (!doc) return res.json({ manager: null, updatedAt: null });
 
-  const m: any = doc.manager;
+  const m: any = doc.attendant;
   const name = m ? `${m.firstName ?? ""} ${m.lastName ?? ""}`.trim() : null;
   return res.json({ manager: m ? { id: String(m._id), name } : null, updatedAt: doc.updatedAt });
 };

@@ -5,7 +5,7 @@ export interface IRangeAssignment extends mongoose.Document {
   restaurantUnit: mongoose.Types.ObjectId;
   startTable: number;
   endTable: number;
-  manager: mongoose.Types.ObjectId;   // <-- era 'attendant'
+  attendant: mongoose.Types.ObjectId;   // <-- era 'attendant'
   label?: string | null;
   startsAt?: Date | null;
   endsAt?: Date | null;
@@ -17,7 +17,7 @@ const rangeAssignmentSchema = new Schema<IRangeAssignment>({
   restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", required: true },
   startTable:     { type: Number, required: true },
   endTable:       { type: Number, required: true },
-  manager:        { type: Schema.Types.ObjectId, ref: "User", required: true }, // <-- trocado
+  attendant:        { type: Schema.Types.ObjectId, ref: "User", required: true }, // <-- trocado
   label:          { type: String, default: null },
   startsAt:       { type: Date, default: null },
   endsAt:         { type: Date, default: null },
@@ -26,7 +26,7 @@ const rangeAssignmentSchema = new Schema<IRangeAssignment>({
 
 rangeAssignmentSchema.index({ restaurantUnit: 1, startTable: 1, endTable: 1, isActive: 1 });
 rangeAssignmentSchema.index({ restaurantUnit: 1, startsAt: 1, endsAt: 1 });
-rangeAssignmentSchema.index({ manager: 1, startsAt: 1, endsAt: 1 }); // <-- trocado
+rangeAssignmentSchema.index({ attendant: 1, startsAt: 1, endsAt: 1 }); // <-- trocado
 
 export const RangeAssignmentModel = mongoose.model<IRangeAssignment>(
   "RangeAssignment",

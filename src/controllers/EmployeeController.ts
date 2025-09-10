@@ -137,7 +137,6 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     if (!validRoles.includes(role)) {
       return res.status(400).json({ message: "Função inválida. Use ADMIN, MANAGER ou ATTENDANT" });
     }
-    const isStrict = role === "ADMIN" || role === "MANAGER";
 
     // obrigatórios comuns
     if (!firstName || !lastName) {
@@ -160,32 +159,29 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     // normaliza campo de unidade (aceita restaurantUnitId também)
     restaurantUnit = restaurantUnit || restaurantUnitId || null;
 
-    // Regras por cargo
-    if (isStrict) {
+    // Regras por função
+    if (role === "ADMIN" || role === "MANAGER") {
       if (!cpf) return res.status(400).json({ message: "CPF é obrigatório para ADMIN/MANAGER" });
       if (!email) return res.status(400).json({ message: "Email é obrigatório para ADMIN/MANAGER" });
-      if (!phone) return res.status(400).json({ message: "Telefone é obrigatório para ADMIN/MANAGER" });
       if (!password) return res.status(400).json({ message: "Senha é obrigatória para ADMIN/MANAGER" });
-      if (!restaurantUnit) return res.status(400).json({ message: "Unidade é obrigatória para ADMIN/MANAGER" });
-    } else {
-      // ATTENDANT: email/telefone/cpf/senha opcionais
-      // Se quiser credenciais, precisa dos dois: email + password
-      if ((email && !password) || (!email && password)) {
-        return res.status(400).json({ message: "Para criar credenciais, informe Email e Senha" });
-      }
     }
 
-    // email único (se informado)
-    if (email) {
-      const existingUser = await UserModel.findOne({ email: new RegExp(`^${email}$`, "i") });
-      if (existingUser) {
-        return res.status(400).json({ message: "Email já está em uso" });
-      }
+    if (role === "ATTENDANT") {
+      if (!cpf) return res.status(400).json({ message: "CPF é obrigatório para ATTENDANT" });
+      if (!password) return res.status(400).json({ message: "Senha é obrigatória para ATTENDANT" });
+      // email é opcional para ATTENDANT
     }
 
     // validar unidade (quando vier uma unit de fato)
     let unitDoc: any = null;
     let isMatrixSelection = false;
+
+    if (!restaurant || !mongoose.Types.ObjectId.isValid(restaurant)) {
+      return res.status(400).json({ message: "ID de restaurante inválido/ausente" });
+    }
+    if (!restaurantDoc) {
+      return res.status(404).json({ message: "Restaurante não encontrado" });
+    }
 
     if (restaurantUnit) {
       if (String(restaurantUnit) === String(restaurantDoc._id)) {
@@ -203,9 +199,18 @@ export const createEmployeeController = async (req: Request, res: Response) => {
       }
     }
 
+    if (cpf) {
+      const cpfExists = await UserModel.findOne({ cpf });
+      if (cpfExists) return res.status(409).json({ message: "Já existe um usuário com este CPF" });
+    }
+    if (email) {
+      const emailExists = await UserModel.findOne({ email });
+      if (emailExists) return res.status(409).json({ message: "Já existe um usuário com este email" });
+    }
+
     // monta authentication APENAS quando for necessário
     let authentication: any = undefined;
-    if (isStrict || (email && password)) {
+     if (role === "ADMIN" || role === "MANAGER" || role === "ATTENDANT") {
       const salt = generateSalt();
       const hashedPassword = generateHash(password, salt);
       authentication = { password: hashedPassword, salt, sessionToken: "" };
