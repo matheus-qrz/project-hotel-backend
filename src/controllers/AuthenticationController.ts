@@ -87,49 +87,51 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { email, password } = req.body;
+    const { email, cpf, password } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "E-mail e senha são obrigatórios" });
+    if (!password) {
+      return res.status(400).json({ message: "Senha é obrigatória" });
     }
 
-    // Buscar usuário pelo email com populate do restaurante
-    const user = await UserModel.findOne({ email })
-      .select('+authentication.password +authentication.salt')
-      .populate('restaurant'); // Adicionar populate
-
-    if (!user) {
-      return res.status(401).json({ message: "Credenciais inválidas" });
+    const identifierRaw = String(email ?? cpf ?? "").trim();
+    if (!identifierRaw) {
+      return res.status(400).json({ message: "Informe email ou CPF" });
     }
+
+    const isEmail = /\S+@\S+\.\S+/.test(identifierRaw);
+    const query = isEmail
+      ? { email: new RegExp(`^${identifierRaw}$`, "i") }
+      : { cpf: identifierRaw.replace(/\D/g, "") };
+
+    // pega campos de auth e restaurante como já faz hoje
+    const user = await UserModel.findOne(query)
+      .select("+authentication.password +authentication.salt")
+      .populate("restaurant");
 
     if (!user?.authentication?.salt || !user?.authentication?.password) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const salt = user.authentication.salt
+    const salt = user.authentication.salt;
     const legacyHash = authentication(salt, password);
     const preferredHash = generateHash(password, salt);
 
-    const matchesLegacy   = user.authentication.password === legacyHash;
-    const matchesPreferred = user.authentication.password === preferredHash;
+    const ok =
+      user.authentication.password === legacyHash ||
+      user.authentication.password === preferredHash;
 
-    if (!matchesLegacy && !matchesPreferred) {
-      return res.status(401).json({ message: "Credenciais inválidas" });
-    }
+    if (!ok) return res.status(401).json({ message: "Credenciais inválidas" });
 
-    // migra automaticamente para o “oficial”, se necessário
-    if (matchesLegacy && !matchesPreferred) {
+    // migração automática para hash preferido
+    if (user.authentication.password === legacyHash && legacyHash !== preferredHash) {
       user.authentication.password = preferredHash;
-      // salt permanece o mesmo
       await user.save();
     }
 
-    const token = issueJWT(user._id.toString(), user.email || "", user.role || '');
-
+    const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
     user.authentication.sessionToken = token;
     await user.save();
 
-    // Preparar resposta base
     const response: any = {
       token,
       user: {
@@ -137,30 +139,29 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        role: user.role
-      }
+        cpf: user.cpf,
+        role: user.role,
+      },
     };
 
-    // Adicionar informações do restaurante para ADMIN e MANAGER
     if (user.role === "ADMIN" || user.role === "MANAGER") {
       const restaurant = await RestaurantModel.findById(user.restaurant);
-
       if (restaurant) {
         response.restaurantInfo = {
-          restaurantId: restaurant._id.toString(), // Garantir que é string
+          restaurantId: restaurant._id.toString(),
           restaurantName: restaurant.name,
-          unitId: user.restaurantUnit?.toString() || null
+          unitId: user.restaurantUnit?.toString() || null,
         };
       }
     }
 
-    console.log('Login response:', response);
     return res.status(200).json(response);
   } catch (error: any) {
     console.error("Erro ao realizar login:", error);
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
+
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {
