@@ -20,7 +20,6 @@ const tableAssignmentSchema = new Schema<ITableAssignment>({
   isActive: { type: Boolean, default: true },
 }, { timestamps: true });
 
-// Garante 1 registro ativo por mesa/unidade
 tableAssignmentSchema.index(
   { restaurantUnit: 1, tableId: 1, isActive: 1 },
   { unique: true, partialFilterExpression: { isActive: true } }

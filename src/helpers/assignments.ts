@@ -1,4 +1,4 @@
-import { RangeAssignmentModel } from "../models/rangeAssignment";
+import { RangeAssignmentModel } from "../models/RangeAssignment";
 
 export async function isAttendantAssigned(opts: {
   unitId: string;
