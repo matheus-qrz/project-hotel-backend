@@ -103,9 +103,19 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     }
 
     const isEmail = /\S+@\S+\.\S+/.test(identifierRaw);
+    const cpfDigits = identifierRaw.replace(/\D/g, "");
+    
+    const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$");
+
     const query = isEmail
       ? { email: new RegExp(`^${identifierRaw}$`, "i") }
-      : { cpf: identifierRaw.replace(/\D/g, "") };
+      : {
+          $or: [
+            { cpf: cpfDigits },                 // só dígitos
+            { cpf: identifierRaw },            // como o usuário digitou
+            { cpf: { $regex: cpfRegex } },     // tolerante à máscara salva no DB
+          ],
+        };
 
     const user = await UserModel.findOne(query)
       .select("+authentication.password +authentication.salt")
