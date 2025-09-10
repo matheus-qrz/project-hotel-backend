@@ -87,13 +87,17 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { email, cpf, password } = req.body;
+    const { email: emailOrCpf, cpf: cpfFromBody, password } = req.body as {
+      email?: string; // pode vir email OU cpf nesse campo
+      cpf?: string;
+      password?: string;
+    };
 
     if (!password) {
       return res.status(400).json({ message: "Senha é obrigatória" });
     }
 
-    const identifierRaw = String(email ?? cpf ?? "").trim();
+    const identifierRaw = String(emailOrCpf ?? cpfFromBody ?? "").trim();
     if (!identifierRaw) {
       return res.status(400).json({ message: "Informe email ou CPF" });
     }
@@ -103,18 +107,21 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       ? { email: new RegExp(`^${identifierRaw}$`, "i") }
       : { cpf: identifierRaw.replace(/\D/g, "") };
 
-    // pega campos de auth e restaurante como já faz hoje
     const user = await UserModel.findOne(query)
       .select("+authentication.password +authentication.salt")
       .populate("restaurant");
+
+    if (!user) {
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
 
     if (!user?.authentication?.salt || !user?.authentication?.password) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
     const salt = user.authentication.salt;
-    const legacyHash = authentication(salt, password);
-    const preferredHash = generateHash(password, salt);
+    const legacyHash = authentication(salt, password);      // hash antigo
+    const preferredHash = generateHash(password, salt);     // hash novo
 
     const ok =
       user.authentication.password === legacyHash ||
@@ -122,7 +129,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
 
     if (!ok) return res.status(401).json({ message: "Credenciais inválidas" });
 
-    // migração automática para hash preferido
+    // migração automática para o hash novo
     if (user.authentication.password === legacyHash && legacyHash !== preferredHash) {
       user.authentication.password = preferredHash;
       await user.save();
@@ -138,13 +145,14 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         id: user._id.toString(),
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email,
-        cpf: user.cpf,
+        email: user.email ?? null,
+        cpf: user.cpf ?? null,
         role: user.role,
       },
     };
 
-    if (user.role === "ADMIN" || user.role === "MANAGER") {
+    // incluir restaurantInfo para qualquer role, pois o front usa isso pra redirecionar
+    if (user.restaurant) {
       const restaurant = await RestaurantModel.findById(user.restaurant);
       if (restaurant) {
         response.restaurantInfo = {
@@ -161,7 +169,6 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
-
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {
