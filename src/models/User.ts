@@ -38,27 +38,16 @@ const userSchema = new Schema(
     },
     cpf: {
       type: String,
-      trim: true,
-      unique: true,  
+      unique: true,
       sparse: true,
       set: (v: string) => (v ? v.replace(/\D/g, "") : v),
-      required: function (this: any) {
-        // agora ATTENDANT também é obrigatório
-        return this.role === "ADMIN" || this.role === "MANAGER" || this.role === "ATTENDANT";
-      },
     },
     email: {
       type: String,
       trim: true,
-      validate: {
-        validator: (v: string) => !v || validator.isEmail(v),
-        message: "Please, provide a valid email."
-      },
-      required: function (this: any) {
-        return this.role === "ADMIN" || this.role === "MANAGER";
-      },
+      lowercase: true,
       unique: true,
-      sparse: true, 
+      sparse: true,
     },
     phone: {
       type: String,

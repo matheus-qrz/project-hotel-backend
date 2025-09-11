@@ -85,54 +85,29 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
   }
 };
 
-export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
+export const loginHandler = async (req: Request, res: Response) => {
   try {
-    const { email: emailOrCpf, cpf: cpfBody, password } = req.body as {
-      email?: string; // pode vir email OU cpf nesse campo
-      cpf?: string;
-      password?: string;
-    };
+    const { identifier, password } = req.body as { identifier?: string; password?: string };
+    if (!identifier || !password) return res.status(400).json({ message: "Informe identificador e senha" });
 
-    if (!password) {
-      return res.status(400).json({ message: "Senha é obrigatória" });
-    }
-
-    const identifierRaw = String(emailOrCpf ?? cpfBody ?? "").trim();
-    if (!identifierRaw) {
-      return res.status(400).json({ message: "Informe email ou CPF" });
-    }
-
-    const isEmail = /\S+@\S+\.\S+/.test(identifierRaw);
-    const cpfDigits = identifierRaw.replace(/\D/g, "");
-
-    // Regex que casa os 11 dígitos permitindo NÃO-dígitos entre eles
-    // ex: 123\D*456\D*789\D*10 -> "123.456.789-10" ou "12345678910"
-    const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$");
+    const id = identifier.trim();
+    const isEmail = /\S+@\S+\.\S+/.test(id);
+    const cpfDigits = id.replace(/\D/g, "");
+    const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$"); // 123\D*456\D*789\D*10
 
     const query = isEmail
-      ? { email: new RegExp(`^${identifierRaw}$`, "i") }
-      : { $or: [{ cpf: cpfDigits }, { cpf: identifierRaw }, { cpf: { $regex: cpfRegex } }] };
+      ? { email: new RegExp(`^${id}$`, "i") }
+      : { $or: [{ cpf: cpfDigits }, { cpf: id }, { cpf: { $regex: cpfRegex } }] };
 
-    const user = await UserModel.findOne(query)
-      .select("+authentication.password +authentication.salt")
-      .populate("restaurant");
+    const user = await UserModel.findOne(query).select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit");
+    if (!user?.authentication?.salt || !user?.authentication?.password) return res.status(401).json({ message: "Credenciais inválidas" });
 
-    if (!user?.authentication?.salt || !user?.authentication?.password) {
-      return res.status(401).json({ message: "Credenciais inválidas" });
-    }
-
-    // Suporta hash legado e hash novo
     const salt = user.authentication.salt;
-    const legacyHash = authentication(salt, password);   // legado
-    const preferredHash = generateHash(password, salt);  // novo
-
-    const ok =
-      user.authentication.password === legacyHash ||
-      user.authentication.password === preferredHash;
-
+    const legacyHash = authentication(salt, password);
+    const preferredHash = generateHash(password, salt);
+    const ok = user.authentication.password === legacyHash || user.authentication.password === preferredHash;
     if (!ok) return res.status(401).json({ message: "Credenciais inválidas" });
 
-    // migração silenciosa para o hash novo
     if (user.authentication.password === legacyHash && legacyHash !== preferredHash) {
       user.authentication.password = preferredHash;
       await user.save();
@@ -142,36 +117,27 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     user.authentication.sessionToken = token;
     await user.save();
 
-    const response: any = {
+    return res.status(200).json({
       token,
       user: {
-        id: user._id.toString(),
+        id: String(user._id),
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email ?? null,
         cpf: user.cpf ?? null,
         role: user.role,
       },
-    };
-
-    if (user.restaurant) {
-      const restaurant = await RestaurantModel.findById(user.restaurant);
-      if (restaurant) {
-        response.restaurantInfo = {
-          restaurantId: restaurant._id.toString(),
-          restaurantName: restaurant.name,
-          unitId: user.restaurantUnit?.toString() || null,
-        };
-      }
-    }
-
-    return res.status(200).json(response);
-  } catch (error: any) {
-    console.error("Erro ao realizar login:", error);
-    return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
+      restaurantInfo: user.restaurant ? {
+        restaurantId: String(user.restaurant),
+        restaurantName: (await RestaurantModel.findById(user.restaurant))?.name,
+        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
+      } : undefined,
+    });
+  } catch (e: any) {
+    console.error(e);
+    return res.status(500).json({ message: "Erro interno do servidor" });
   }
 };
-
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {
