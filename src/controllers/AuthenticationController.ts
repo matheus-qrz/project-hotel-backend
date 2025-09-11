@@ -87,60 +87,68 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 
 export const loginHandler = async (req: Request, res: Response) => {
   try {
-    const { identifier, password } = req.body as { identifier?: string; password?: string };
-    if (!identifier || !password) return res.status(400).json({ message: "Informe identificador e senha" });
+    let { email, cpf, password } = (req.body || {}) as {
+      email?: string;
+      cpf?: string;
+      password: string;
+    };
 
-    const id = identifier.trim();
-    const isEmail = /\S+@\S+\.\S+/.test(id);
-    const cpfDigits = id.replace(/\D/g, "");
-    const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$"); // 123\D*456\D*789\D*10
-
-    const query = isEmail
-      ? { email: new RegExp(`^${id}$`, "i") }
-      : { $or: [{ cpf: cpfDigits }, { cpf: id }, { cpf: { $regex: cpfRegex } }] };
-
-    const user = await UserModel.findOne(query).select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit");
-    if (!user?.authentication?.salt || !user?.authentication?.password) return res.status(401).json({ message: "Credenciais inválidas" });
-
-    const salt = user.authentication.salt;
-    const legacyHash = authentication(salt, password);
-    const preferredHash = generateHash(password, salt);
-    const ok = user.authentication.password === legacyHash || user.authentication.password === preferredHash;
-    if (!ok) return res.status(401).json({ message: "Credenciais inválidas" });
-
-    if (user.authentication.password === legacyHash && legacyHash !== preferredHash) {
-      user.authentication.password = preferredHash;
-      await user.save();
+    if (!password || (!email && !cpf)) {
+      return res.status(400).json({ message: "Email/CPF e senha são obrigatórios" });
     }
 
-    const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
-    user.authentication.sessionToken = token;
-    await user.save();
+    const query = email
+      ? { email: String(email).toLowerCase() }
+      : { cpf: String(cpf).replace(/\D/g, "") };
 
-    return res.status(200).json({
+    const user = await UserModel.findOne(query)
+      .select("+authentication.salt +authentication.password")
+      .populate("restaurant")
+      .populate("restaurantUnit");
+
+    if (!user) return res.status(401).json({ message: "Credenciais inválidas" });
+
+    if (!user.authentication || !user.authentication.salt || !user.authentication.password) {
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+    const hash = authentication(user.authentication.salt, password);
+    if (hash !== user.authentication.password) {
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+
+    const token = jwt.sign(
+      { sub: user._id.toString(), email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.json({
       token,
       user: {
-        id: String(user._id),
+        _id: user._id,
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email ?? null,
-        cpf: user.cpf ?? null,
+        email: user.email,
+        cpf: user.cpf,
         role: user.role,
+        restaurant: user.restaurant?._id,
+        restaurantUnit: user.restaurantUnit?._id,
       },
-      restaurantInfo: user.restaurant ? {
-        restaurantId: String(user.restaurant),
-        restaurantName: (await RestaurantModel.findById(user.restaurant))?.name,
-        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
-      } : undefined,
+      restaurant: user.restaurant
+        ? { _id: user.restaurant._id, name: (user.restaurant as any).name }
+        : undefined,
+      unit: user.restaurantUnit
+        ? { _id: user.restaurantUnit._id, name: (user.restaurantUnit as any).name }
+        : undefined,
     });
-  } catch (e: any) {
-    console.error(e);
-    return res.status(500).json({ message: "Erro interno do servidor" });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Erro ao autenticar" });
   }
 };
 
 // Registrar um novo restaurante
-export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {
+export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
   try {
     const {
       firstName,
