@@ -85,65 +85,79 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
   }
 };
 
-export const loginHandler = async (req: Request, res: Response) => {
+export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    let { email, cpf, password } = (req.body || {}) as {
-      email?: string;
-      cpf?: string;
-      password: string;
-    };
+    const { email, password } = req.body;
 
-    if (!password || (!email && !cpf)) {
-      return res.status(400).json({ message: "Email/CPF e senha são obrigatórios" });
+    console.log("loginHandler body:", req.body);
+
+    if (!email || !password) {
+      console.log("validation failed: missing email or password");
+      return res.status(400).json({ message: "E-mail e senha são obrigatórios" });
     }
 
-    const query = email
-      ? { email: String(email).toLowerCase() }
-      : { cpf: String(cpf).replace(/\D/g, "") };
+    console.log("email:", email);
 
-    const user = await UserModel.findOne(query)
-      .select("+authentication.salt +authentication.password")
-      .populate("restaurant")
-      .populate("restaurantUnit");
+    // Encontra o usuário pelo e-mail
+    const user = await UserModel.findOne({ email })
+      .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
+      .populate("restaurant");
 
-    if (!user) return res.status(401).json({ message: "Credenciais inválidas" });
-
-    if (!user.authentication || !user.authentication.salt || !user.authentication.password) {
-      return res.status(401).json({ message: "Credenciais inválidas" });
-    }
-    const hash = authentication(user.authentication.salt, password);
-    if (hash !== user.authentication.password) {
+    if (!user) {
+      console.log("user not found by email");
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const token = jwt.sign(
-      { sub: user._id.toString(), email: user.email, role: user.role },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
+    console.log("user found:", user.email, user.role);
 
-    return res.json({
+    // Valida a senha com o hash original (helpers.authentication)
+    if (!user.authentication || !user.authentication.salt) {
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+    const expectedHash = authentication(user.authentication.salt, password);
+    console.log("expectedHash:", expectedHash);
+    console.log("user.authentication.password:", user.authentication.password);
+
+    if (user.authentication.password !== expectedHash) {
+      console.log("password mismatch");
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
+
+    // Gera token JWT
+    const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
+
+    // Salva token na sessão
+    user.authentication.sessionToken = token;
+    await user.save();
+
+    const response: any = {
       token,
       user: {
-        _id: user._id,
+        id: user._id.toString(),
         firstName: user.firstName,
         lastName: user.lastName,
-        email: user.email,
-        cpf: user.cpf,
+        email: user.email ?? null,
+        cpf: user.cpf ?? null,
         role: user.role,
-        restaurant: user.restaurant?._id,
-        restaurantUnit: user.restaurantUnit?._id,
       },
-      restaurant: user.restaurant
-        ? { _id: user.restaurant._id, name: (user.restaurant as any).name }
-        : undefined,
-      unit: user.restaurantUnit
-        ? { _id: user.restaurantUnit._id, name: (user.restaurantUnit as any).name }
-        : undefined,
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Erro ao autenticar" });
+    };
+
+    // incluir restaurantInfo para qualquer role, pois o front usa isso pra redireciona
+    if (user.restaurant) {
+      const restaurant = await RestaurantModel.findById(user.restaurant);
+      if (restaurant) {
+        response.restaurantInfo = {
+          restaurantId: restaurant._id.toString(),
+          restaurantName: restaurant.name,
+          unitId: user.restaurantUnit?.toString() || null,
+        };
+      }
+    }
+
+    return res.status(200).json(response);
+  } catch (error: any) {
+    console.error("Erro ao realizar login:", error);
+    return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
 
