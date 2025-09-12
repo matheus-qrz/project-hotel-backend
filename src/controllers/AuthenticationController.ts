@@ -88,7 +88,7 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 // login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    // aceita email/cpf e também identifier como fallback (sem mudar front se vier assim)
+    // aceita email/cpf e também identifier como fallback
     let { email, cpf, password, identifier } = (req.body || {}) as {
       email?: string;
       cpf?: string;
@@ -96,7 +96,6 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       identifier?: string;
     };
 
-    // mapear identifier -> email/cpf
     if (!email && !cpf && identifier) {
       const id = String(identifier).trim();
       if (/\S+@\S+\.\S+/.test(id)) email = id.toLowerCase();
@@ -110,30 +109,24 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     const normalizedEmail = (email ?? "").toLowerCase().trim();
     const cpfDigits = (cpf ?? "").replace(/\D/g, "");
 
-    // monta a query: se tiver email, prioriza email; senão usa CPF
-    let user =
-      normalizedEmail
-        ? await UserModel.findOne({ email: normalizedEmail })
-            .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
-            .populate("restaurant")
-        : await UserModel.findOne({
-            // tenta bater tanto com dígitos puros quanto com máscara
-            $or: [
-              { cpf: cpfDigits },
-              { cpf: new RegExp("^" + cpfDigits.split("").join("\\D*") + "$") },
-            ],
-          })
-            .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
-            .populate("restaurant");
+    // monta a query (email tem prioridade; CPF tolera máscara)
+    const query = normalizedEmail
+      ? { email: normalizedEmail }
+      : {
+          $or: [
+            { cpf: cpfDigits },
+            { cpf: new RegExp("^" + cpfDigits.split("").join("\\D*") + "$") }, // 123\D*456\D*789\D*10
+          ],
+        };
 
-    if (!user) {
+    const user = await UserModel.findOne(query)
+      .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit");
+
+    if (!user?.authentication?.salt || !user?.authentication?.password) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // ✅ comparação de senha permanece exatamente como antes
-    if (!user.authentication?.salt) {
-      return res.status(401).json({ message: "Credenciais inválidas" });
-    }
+    // ✅ mantém exatamente o seu esquema de senha
     const expectedHash = authentication(user.authentication.salt, String(password));
     if (user.authentication.password !== expectedHash) {
       return res.status(401).json({ message: "Credenciais inválidas" });
@@ -173,6 +166,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
+
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
