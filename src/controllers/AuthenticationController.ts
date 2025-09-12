@@ -85,32 +85,49 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
   }
 };
 
+// login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    const { email, password } = req.body;
+    // ★ agora aceitamos cpf também
+    const { email, cpf, password } = req.body as {
+      email?: string;
+      cpf?: string;
+      password?: string;
+    };
 
     console.log("loginHandler body:", req.body);
 
-    if (!email || !password) {
-      console.log("validation failed: missing email or password");
-      return res.status(400).json({ message: "E-mail e senha são obrigatórios" });
+    // ★ validação: precisa de (email OU cpf) E password
+    if ((!email && !cpf) || !password) {
+      console.log("validation failed: missing email/cpf or password");
+      return res.status(400).json({ message: "E-mail ou CPF e senha são obrigatórios" });
     }
 
-    console.log("email:", email);
+    // ★ normalizações
+    const normalizedEmail = (email ?? "").toLowerCase().trim();
+    const normalizedCpf = (cpf ?? "").replace(/\D/g, "");
 
-    // Encontra o usuário pelo e-mail
-    const user = await UserModel.findOne({ email })
+    console.log("email:", normalizedEmail || "(none)");
+    console.log("cpf:", normalizedCpf || "(none)");
+
+    // ★ decide a query: prioriza e-mail se vier ambos
+    const query = normalizedEmail
+      ? { email: normalizedEmail }
+      : { cpf: normalizedCpf };
+
+    // Encontra o usuário por e-mail OU por cpf
+    const user = await UserModel.findOne(query)
       .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
       .populate("restaurant");
 
     if (!user) {
-      console.log("user not found by email");
+      console.log("user not found by", normalizedEmail ? "email" : "cpf");
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
     console.log("user found:", user.email, user.role);
 
-    // Valida a senha com o hash original (helpers.authentication)
+    // Valida a senha com o hash original (helpers.authentication) — SEM alterações
     if (!user.authentication || !user.authentication.salt) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
@@ -142,7 +159,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       },
     };
 
-    // incluir restaurantInfo para qualquer role, pois o front usa isso pra redireciona
+    // incluir restaurantInfo para qualquer role, pois o front usa para redirecionar
     if (user.restaurant) {
       const restaurant = await RestaurantModel.findById(user.restaurant);
       if (restaurant) {
