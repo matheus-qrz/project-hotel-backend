@@ -13,7 +13,7 @@ export interface IRangeAssignment extends mongoose.Document {
   isActive: boolean;
 }
 
-const rangeAssignmentSchema = new Schema<IRangeAssignment>({
+const RangeAssignmentSchema = new Schema<IRangeAssignment>({
   restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", required: true },
   startTable:     { type: Number, required: true },
   endTable:       { type: Number, required: true },
@@ -24,11 +24,11 @@ const rangeAssignmentSchema = new Schema<IRangeAssignment>({
   isActive:       { type: Boolean, default: true },
 }, { timestamps: true });
 
-rangeAssignmentSchema.index({ restaurantUnit: 1, startTable: 1, endTable: 1, isActive: 1 });
-rangeAssignmentSchema.index({ restaurantUnit: 1, startsAt: 1, endsAt: 1 });
-rangeAssignmentSchema.index({ attendant: 1, startsAt: 1, endsAt: 1 });
+RangeAssignmentSchema.index({ restaurantUnit: 1, startTable: 1, endTable: 1, isActive: 1 });
+RangeAssignmentSchema.index({ restaurantUnit: 1, startsAt: 1, endsAt: 1 });
+RangeAssignmentSchema.index({ attendant: 1, startsAt: 1, endsAt: 1 });
 
 export const RangeAssignmentModel = mongoose.model<IRangeAssignment>(
   "RangeAssignment",
-  rangeAssignmentSchema
+  RangeAssignmentSchema
 );

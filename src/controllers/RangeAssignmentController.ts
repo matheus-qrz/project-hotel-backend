@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import { Request, Response } from "express";
-import { RangeAssignmentModel } from "../models/rangeAssignment";
+import { RangeAssignmentModel } from "../models/RangeAssignment";
 import { UserModel } from "../models/User";
 
 const overlapsRange = (a1:number,a2:number,b1:number,b2:number) => Math.max(a1,b1) <= Math.min(a2,b2);

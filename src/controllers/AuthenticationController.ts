@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { UserModel, getUserByEmail, createUser } from "../models/User";
-import { RestaurantModel, getRestaurantByEmail } from "../models/Restaurant";
+import { RestaurantModel } from "../models/Restaurant";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { authentication } from "../helpers";
 import { generateHash, generateSalt } from "../utils/generateSalt";
