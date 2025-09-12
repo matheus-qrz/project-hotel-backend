@@ -88,48 +88,58 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 // login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    // ✅ aceita email OU cpf (nada de identifier aqui)
-    let { email, cpf, password } = req.body as {
-      email?: string; cpf?: string; password?: string;
+    // aceita email/cpf e também identifier como fallback (sem mudar front se vier assim)
+    let { email, cpf, password, identifier } = (req.body || {}) as {
+      email?: string;
+      cpf?: string;
+      password?: string;
+      identifier?: string;
     };
+
+    // mapear identifier -> email/cpf
+    if (!email && !cpf && identifier) {
+      const id = String(identifier).trim();
+      if (/\S+@\S+\.\S+/.test(id)) email = id.toLowerCase();
+      else cpf = id.replace(/\D/g, "");
+    }
 
     if ((!email && !cpf) || !password) {
       return res.status(400).json({ message: "E-mail ou CPF e senha são obrigatórios" });
     }
 
-    // ✅ normalizações
     const normalizedEmail = (email ?? "").toLowerCase().trim();
-    const cpfDigits = (cpf ?? "").replace(/\D/g, ""); // só dígitos
+    const cpfDigits = (cpf ?? "").replace(/\D/g, "");
 
-    // ✅ monta a query (robusta p/ CPF com ou sem máscara)
-    let query: any;
-    if (normalizedEmail) {
-      query = { email: normalizedEmail };
-    } else {
-      // tenta igual aos dígitos, igual ao enviado e um regex tolerante a máscara
-      const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$"); // 123\D*456\D*789\D*10
-      query = { $or: [{ cpf: cpfDigits }, { cpf }, { cpf: { $regex: cpfRegex } }] };
-    }
-
-    // 🔎 busca o usuário
-    const user = await UserModel.findOne(query)
-      .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
-      .populate("restaurant");
+    // monta a query: se tiver email, prioriza email; senão usa CPF
+    let user =
+      normalizedEmail
+        ? await UserModel.findOne({ email: normalizedEmail })
+            .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
+            .populate("restaurant")
+        : await UserModel.findOne({
+            // tenta bater tanto com dígitos puros quanto com máscara
+            $or: [
+              { cpf: cpfDigits },
+              { cpf: new RegExp("^" + cpfDigits.split("").join("\\D*") + "$") },
+            ],
+          })
+            .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
+            .populate("restaurant");
 
     if (!user) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // 🔐 compara senha SEM alterar algoritmo
+    // ✅ comparação de senha permanece exatamente como antes
     if (!user.authentication?.salt) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
-    const expectedHash = authentication(user.authentication.salt, password!);
+    const expectedHash = authentication(user.authentication.salt, String(password));
     if (user.authentication.password !== expectedHash) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // 🔑 emite token e responde
+    // emite token e salva sessionToken (sem tocar em hash/salt)
     const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
     user.authentication.sessionToken = token;
     await user.save();
@@ -159,11 +169,10 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
 
     return res.status(200).json(response);
   } catch (error: any) {
-    console.error("Erro ao realizar login:", error);
+    console.error("[AUTH][login] error:", error);
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
-
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
