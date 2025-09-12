@@ -88,62 +88,49 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 // login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    // ★ agora aceitamos cpf também
-    const { email, cpf, password } = req.body as {
-      email?: string;
-      cpf?: string;
-      password?: string;
+    // ✅ aceita email OU cpf (nada de identifier aqui)
+    let { email, cpf, password } = req.body as {
+      email?: string; cpf?: string; password?: string;
     };
 
-    console.log("loginHandler body:", req.body);
-
-    // ★ validação: precisa de (email OU cpf) E password
     if ((!email && !cpf) || !password) {
-      console.log("validation failed: missing email/cpf or password");
       return res.status(400).json({ message: "E-mail ou CPF e senha são obrigatórios" });
     }
 
-    // ★ normalizações
+    // ✅ normalizações
     const normalizedEmail = (email ?? "").toLowerCase().trim();
-    const normalizedCpf = (cpf ?? "").replace(/\D/g, "");
+    const cpfDigits = (cpf ?? "").replace(/\D/g, ""); // só dígitos
 
-    console.log("email:", normalizedEmail || "(none)");
-    console.log("cpf:", normalizedCpf || "(none)");
+    // ✅ monta a query (robusta p/ CPF com ou sem máscara)
+    let query: any;
+    if (normalizedEmail) {
+      query = { email: normalizedEmail };
+    } else {
+      // tenta igual aos dígitos, igual ao enviado e um regex tolerante a máscara
+      const cpfRegex = new RegExp(cpfDigits.split("").join("\\D*") + "$"); // 123\D*456\D*789\D*10
+      query = { $or: [{ cpf: cpfDigits }, { cpf }, { cpf: { $regex: cpfRegex } }] };
+    }
 
-    // ★ decide a query: prioriza e-mail se vier ambos
-    const query = normalizedEmail
-      ? { email: normalizedEmail }
-      : { cpf: normalizedCpf };
-
-    // Encontra o usuário por e-mail OU por cpf
+    // 🔎 busca o usuário
     const user = await UserModel.findOne(query)
       .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit")
       .populate("restaurant");
 
     if (!user) {
-      console.log("user not found by", normalizedEmail ? "email" : "cpf");
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    console.log("user found:", user.email, user.role);
-
-    // Valida a senha com o hash original (helpers.authentication) — SEM alterações
-    if (!user.authentication || !user.authentication.salt) {
+    // 🔐 compara senha SEM alterar algoritmo
+    if (!user.authentication?.salt) {
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
-    const expectedHash = authentication(user.authentication.salt, password);
-    console.log("expectedHash:", expectedHash);
-    console.log("user.authentication.password:", user.authentication.password);
-
+    const expectedHash = authentication(user.authentication.salt, password!);
     if (user.authentication.password !== expectedHash) {
-      console.log("password mismatch");
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // Gera token JWT
+    // 🔑 emite token e responde
     const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
-
-    // Salva token na sessão
     user.authentication.sessionToken = token;
     await user.save();
 
@@ -159,7 +146,6 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       },
     };
 
-    // incluir restaurantInfo para qualquer role, pois o front usa para redirecionar
     if (user.restaurant) {
       const restaurant = await RestaurantModel.findById(user.restaurant);
       if (restaurant) {
@@ -177,6 +163,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
+
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
