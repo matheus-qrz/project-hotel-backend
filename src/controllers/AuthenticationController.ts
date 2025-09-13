@@ -1,12 +1,26 @@
-import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
+import crypto from 'crypto';
+import { Request, Response } from "express";
 import { UserModel, getUserByEmail, createUser } from "../models/User";
 import { RestaurantModel } from "../models/Restaurant";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { authentication } from "../helpers";
 import { generateHash, generateSalt } from "../utils/generateSalt";
+import mongoose from "mongoose";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_in_production";
+const DEBUG = process.env.DEBUG_AUTH === "1";
+
+function tSafeEqHex(aHex: string, bHex: string) {
+  const a = Buffer.from(String(aHex).toLowerCase(), "hex");
+  const b = Buffer.from(String(bHex).toLowerCase(), "hex");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function normalizeCPF(v: string) {
+  return v.replace(/\D/g, "");
+}
 
 const issueJWT = (id: string, email: string, role: string, expiresIn: string | number = "7d") => {
   const payload = {
@@ -88,7 +102,6 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
 // login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
-    // aceita email/cpf e também identifier como fallback
     let { email, cpf, password, identifier } = (req.body || {}) as {
       email?: string;
       cpf?: string;
@@ -99,7 +112,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     if (!email && !cpf && identifier) {
       const id = String(identifier).trim();
       if (/\S+@\S+\.\S+/.test(id)) email = id.toLowerCase();
-      else cpf = id.replace(/\D/g, "");
+      else cpf = normalizeCPF(id);
     }
 
     if ((!email && !cpf) || !password) {
@@ -107,32 +120,51 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     }
 
     const normalizedEmail = (email ?? "").toLowerCase().trim();
-    const cpfDigits = (cpf ?? "").replace(/\D/g, "");
+    const cpfDigits = normalizeCPF(cpf ?? "");
 
-    // monta a query (email tem prioridade; CPF tolera máscara)
     const query = normalizedEmail
       ? { email: normalizedEmail }
       : {
           $or: [
             { cpf: cpfDigits },
-            { cpf: new RegExp("^" + cpfDigits.split("").join("\\D*") + "$") }, // 123\D*456\D*789\D*10
+            { cpf: new RegExp("^" + cpfDigits.split("").join("\\D*") + "$") },
           ],
         };
 
-    const user = await UserModel.findOne(query)
-      .select("+authentication.password +authentication.salt +role +restaurant +restaurantUnit");
+    const user = await UserModel.findOne(query).select(
+      "+authentication.password +authentication.salt +role +restaurant +restaurantUnit +email +firstName +lastName +cpf"
+    );
+
+    if (!user) {
+      if (DEBUG) console.warn("[AUTH][login] user not found for query:", query);
+      return res.status(401).json({ message: "Credenciais inválidas" });
+    }
 
     if (!user?.authentication?.salt || !user?.authentication?.password) {
+      if (DEBUG) console.warn("[AUTH][login] user has no salt/password:", user._id.toString());
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // ✅ mantém exatamente o seu esquema de senha
-    const expectedHash = authentication(user.authentication.salt, String(password));
-    if (user.authentication.password !== expectedHash) {
+    const salt = String(user.authentication.salt);
+    const stored = String(user.authentication.password).toLowerCase();
+
+    // Cálculo EXATO usado no cadastro
+    const expected = generateHash(String(password), salt).toLowerCase();
+
+    const ok = tSafeEqHex(expected, stored);
+    if (!ok) {
+      if (DEBUG) {
+        console.warn("[AUTH][login] password mismatch", {
+          userId: user._id.toString(),
+          email: user.email,
+          // log seguro: só prefixo p/ não vazar hash completo
+          expectedPrefix: expected.slice(0, 8),
+          storedPrefix: stored.slice(0, 8),
+        });
+      }
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    // emite token e salva sessionToken (sem tocar em hash/salt)
     const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
     user.authentication.sessionToken = token;
     await user.save();
@@ -149,7 +181,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       },
     };
 
-    if (user.restaurant) {
+    if (user.restaurant && mongoose.Types.ObjectId.isValid(user.restaurant)) {
       const restaurant = await RestaurantModel.findById(user.restaurant);
       if (restaurant) {
         response.restaurantInfo = {
@@ -166,7 +198,6 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
   }
 };
-
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  

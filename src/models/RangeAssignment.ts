@@ -1,5 +1,4 @@
-import mongoose from "mongoose";
-const { Schema } = mongoose;
+import mongoose, { Schema } from "mongoose";
 
 export interface IRangeAssignment extends mongoose.Document {
   restaurantUnit: mongoose.Types.ObjectId;
