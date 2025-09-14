@@ -121,7 +121,7 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
         return res.status(409).json({ message: "Nome de gerente ambíguo. Selecione uma opção.", options: (r as any).options });
       }
       if (!r.user) {
-        return res.status(404).json({ message: `Gerente não encontrado: "${raw.attendantName || raw.attendantId}"` });
+        return res.status(404).json({ message: `Attendente não encontrado: "${raw.attendantName || raw.attendantId}"` });
       }
 
       const existing = await RangeAssignmentModel.find({ restaurantUnit: unitId, isActive: true });
@@ -137,7 +137,7 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
         restaurantUnit: unitId,
         startTable: lo,
         endTable: hi,
-        attendant: r.user._id,       
+        attendant: r.user.id,       
         label: raw.label ?? null,
         startsAt, endsAt,
         isActive: true,
