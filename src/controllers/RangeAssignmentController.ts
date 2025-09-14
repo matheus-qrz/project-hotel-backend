@@ -13,10 +13,10 @@ const overlapsTime = (aS:Date|null,aE:Date|null,bS:Date|null,bE:Date|null) => {
 };
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Resolve SOMENTE usuários com role MANAGER na unidade
-async function resolveManager(unitId: string, name?: string, explicitId?: string) {
+// Resolve SOMENTE usuários com role ATTENDANT na unidade
+async function resolveAttendant(unitId: string, name?: string, explicitId?: string) {
   if (explicitId && mongoose.isValidObjectId(explicitId)) {
-    const byId = await UserModel.findOne({ _id: explicitId, restaurantUnit: unitId, role: "MANAGER" });
+    const byId = await UserModel.findOne({ _id: explicitId, restaurantUnit: unitId, role: "ATTENDANT" });
     if (byId) return { user: byId, many: false };
   }
 
@@ -24,7 +24,7 @@ async function resolveManager(unitId: string, name?: string, explicitId?: string
   if (!needle) return { user: null as any, many: false };
 
   if (needle.includes("@")) {
-    const byEmail = await UserModel.findOne({ restaurantUnit: unitId, role: "MANAGER", email: needle });
+    const byEmail = await UserModel.findOne({ restaurantUnit: unitId, role: "ATTENDANT", email: needle });
     if (byEmail) return { user: byEmail, many: false };
   }
 
@@ -44,7 +44,7 @@ async function resolveManager(unitId: string, name?: string, explicitId?: string
     query = { $or: [{ firstName: new RegExp(one, "i") }, { lastName: new RegExp(one, "i") }] };
   }
 
-  const candidates = await UserModel.find({ restaurantUnit: unitId, role: "MANAGER", ...query })
+  const candidates = await UserModel.find({ restaurantUnit: unitId, role: "ATTENDANT", ...query })
     .collation(coll).limit(5);
 
   if (candidates.length === 1) return { user: candidates[0], many: false };
@@ -61,8 +61,8 @@ async function resolveManager(unitId: string, name?: string, explicitId?: string
   };
 }
 
-// GET público: quem GERENCIA (agora) a mesa pelo intervalo/turno
-export const getPublicManagerForTable = async (req: Request, res: Response) => {
+// GET público: quem ATENDE (agora) a mesa pelo intervalo/turno
+export const getPublicAttendantForTable = async (req: Request, res: Response) => {
   const { unitId, tableId } = req.params as { unitId: string; tableId: string };
   const tableNum = Number(tableId);
   if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
@@ -78,31 +78,31 @@ export const getPublicManagerForTable = async (req: Request, res: Response) => {
       { $or: [{ endsAt: null },   { endsAt: { $gt: now } }] },
     ],
   }).sort({ startsAt: -1 })
-    .populate({ path: "manager", select: "firstName lastName role" });
+    .populate({ path: "attendant", select: "firstName lastName role" });
 
-  if (!doc) return res.json({ manager: null, updatedAt: null });
+  if (!doc) return res.json({ attendant: null, updatedAt: null });
 
   const m: any = doc.attendant;
   const name = m ? `${m.firstName ?? ""} ${m.lastName ?? ""}`.trim() : null;
-  return res.json({ manager: m ? { id: String(m._id), name } : null, updatedAt: doc.updatedAt });
+  return res.json({ attendant: m ? { id: String(m._id), name } : null, updatedAt: doc.updatedAt });
 };
 
 type AssignmentInput = {
   startTable: number;
   endTable: number;
-  managerId?: string;     // <-- trocado
-  managerName?: string;   // <-- trocado
+  attendantId?: string;     
+  attendantName?: string;   
   label?: string | null;
   startsAt?: string | null;
   endsAt?: string | null;
 };
 
-// PUT (MANAGER): criar/alterar escala em LOTE por intervalos
+// PATCH (attendant): criar/alterar escala em LOTE por intervalos
 export const putBulkRangeAssignments = async (req: Request, res: Response) => {
   const { unitId } = req.params as { unitId: string };
   const { assignments } = (req.body || {}) as { assignments: AssignmentInput[] };
   if (!Array.isArray(assignments) || !assignments.length) {
-    return res.status(400).json({ message: "Envie assignments=[{startTable,endTable,managerName?,managerId?,startsAt?,endsAt?,label?}]." });
+    return res.status(400).json({ message: "Envie assignments=[{startTable,endTable,attendantName?,attendantId?,startsAt?,endsAt?,label?}]." });
   }
 
   const now = new Date();
@@ -116,12 +116,12 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
       const startsAt = raw.startsAt ? new Date(raw.startsAt) : null;
       const endsAt   = raw.endsAt   ? new Date(raw.endsAt)   : null;
 
-      const r = await resolveManager(unitId, raw.managerName, raw.managerId);
+      const r = await resolveAttendant(unitId, raw.attendantName, raw.attendantId);
       if ((r as any).many) {
         return res.status(409).json({ message: "Nome de gerente ambíguo. Selecione uma opção.", options: (r as any).options });
       }
       if (!r.user) {
-        return res.status(404).json({ message: `Gerente não encontrado: "${raw.managerName || raw.managerId}"` });
+        return res.status(404).json({ message: `Gerente não encontrado: "${raw.attendantName || raw.attendantId}"` });
       }
 
       const existing = await RangeAssignmentModel.find({ restaurantUnit: unitId, isActive: true });
@@ -137,7 +137,7 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
         restaurantUnit: unitId,
         startTable: lo,
         endTable: hi,
-        manager: r.user._id,       // <-- trocado
+        attendant: r.user._id,       
         label: raw.label ?? null,
         startsAt, endsAt,
         isActive: true,
