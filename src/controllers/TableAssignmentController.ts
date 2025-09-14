@@ -27,7 +27,7 @@ export const getPublicAttendantForTable = async (req: Request, res: Response) =>
   }
 };
 
-// PUT (MANAGER): atribuição em lote por mesa
+// PUT (ATTENDANT): atribuição em lote por mesa
 export const putBulkTableAssignments = async (req: Request, res: Response) => {
   const { unitId } = req.params as { unitId: string };
   const { assignments } = (req.body || {}) as {
