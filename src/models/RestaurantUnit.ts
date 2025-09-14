@@ -72,7 +72,8 @@ const restaurantUnitSchema = new Schema({
     default: 'active'
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  timezone: { type: String, default: "America/Sao_Paulo" }
 });
 
 // Criar o modelo

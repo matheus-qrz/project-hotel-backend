@@ -86,7 +86,10 @@ const restaurantSchema = new Schema({
       averagePackagingCost: { type: Number, default: 0 }
     }
   }
-}, { timestamps: true });
+}, { 
+  timestamps: true,
+  timezone: { type: String, default: "America/Sao_Paulo" }
+ });
 
 export const RestaurantModel = mongoose.model<IRestaurant>("Restaurant", restaurantSchema);
 
