@@ -112,7 +112,6 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
 // Criar um novo funcionário
 export const createEmployeeController = async (req: Request, res: Response) => {
   try {
-    // extrai e normaliza
     let {
       firstName,
       lastName,
@@ -122,8 +121,7 @@ export const createEmployeeController = async (req: Request, res: Response) => {
       password,
       role,
       restaurant,
-      restaurantUnit, // pode vir vazio, id de unit ou id do restaurante (matriz)
-      // compat opcional: aceitar restaurantUnitId do front antigo:
+      restaurantUnit, 
       restaurantUnitId,
     } = req.body as any;
 
@@ -131,7 +129,6 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     cpf = cpf ? String(cpf).replace(/\D/g, "") : undefined;
     phone = phone ? String(phone).trim() : "";
 
-    // role padrão e guarda flag
     const validRoles = ["ADMIN", "MANAGER", "ATTENDANT"] as const;
     role = (role || "ATTENDANT").toUpperCase();
     if (!validRoles.includes(role)) {

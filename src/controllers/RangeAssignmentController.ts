@@ -3,6 +3,16 @@ import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
 import { UserModel } from "../models/User";
 
+type AssignmentInput = {
+  startTable: number;
+  endTable: number;
+  attendantId?: string;     
+  attendantName?: string;   
+  label?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+};
+
 const overlapsRange = (a1:number,a2:number,b1:number,b2:number) => Math.max(a1,b1) <= Math.min(a2,b2);
 const overlapsTime = (aS:Date|null,aE:Date|null,bS:Date|null,bE:Date|null) => {
   const sA = aS ? aS.getTime() : -Infinity;
@@ -87,16 +97,6 @@ export const getPublicAttendantForTable = async (req: Request, res: Response) =>
   return res.json({ attendant: m ? { id: String(m._id), name } : null, updatedAt: doc.updatedAt });
 };
 
-type AssignmentInput = {
-  startTable: number;
-  endTable: number;
-  attendantId?: string;     
-  attendantName?: string;   
-  label?: string | null;
-  startsAt?: string | null;
-  endsAt?: string | null;
-};
-
 // PATCH (attendant): criar/alterar escala em LOTE por intervalos
 export const putBulkRangeAssignments = async (req: Request, res: Response) => {
   const { unitId } = req.params as { unitId: string };
@@ -148,5 +148,48 @@ export const putBulkRangeAssignments = async (req: Request, res: Response) => {
   } catch (e) {
     console.error("Erro ao atualizar atribuições:", e);
     return res.status(500).json({ message: "Erro ao atualizar atribuições." });
+  }
+};
+
+export const listRangeAssignmentsForUnit = async (req: Request, res: Response) => {
+  try {
+    const { unitId } = req.params as { unitId: string };
+    const scope = String(req.query.scope ?? "all"); // "all" | "current" | "upcoming"
+    const now = new Date();
+
+    const q: any = { restaurantUnit: unitId, isActive: true };
+
+    if (scope === "current") {
+      // janelas que estejam “pegando” agora
+      q.startsAt = { $lte: now };
+      q.endsAt = { $gte: now };
+    } else if (scope === "upcoming") {
+      // janelas futuras/atuais (não expiradas)
+      q.endsAt = { $gte: now };
+    }
+
+    const docs = await RangeAssignmentModel.find(q)
+      .populate({ path: "attendant", select: "firstName lastName" })
+      .sort({ startsAt: 1, endTable: 1, startTable: 1 });
+
+    const items = docs.map((d) => ({
+      _id: d._id,
+      startTable: d.startTable,
+      endTable: d.endTable,
+      attendantId: d.attendant ? (d.attendant as any)._id : undefined,
+      attendantName: d.attendant
+        ? `${(d.attendant as any).firstName ?? ""} ${(d.attendant as any).lastName ?? ""}`.trim() || null
+        : null,
+      label: d.label ?? null,
+      startsAt: d.startsAt ? d.startsAt.toISOString() : null,
+      endsAt: d.endsAt ? d.endsAt.toISOString() : null,
+      updatedAt: d.updatedAt ? d.updatedAt.toISOString() : null,
+      isActive: d.isActive,
+    }));
+
+    return res.status(200).json({ items, count: items.length });
+  } catch (e) {
+    console.error("Erro ao listar range-assignments:", e);
+    return res.status(500).json({ message: "Erro ao listar escalas." });
   }
 };
