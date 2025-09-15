@@ -99,97 +99,72 @@ export const getPublicAttendantForTable = async (req: Request, res: Response) =>
 
 // PATCH (attendant): criar/alterar escala em LOTE por intervalos
 export const putBulkRangeAssignments = async (req: Request, res: Response) => {
-  const { unitId } = req.params as { unitId: string };
-  const { assignments } = (req.body || {}) as { assignments: AssignmentInput[] };
-  if (!Array.isArray(assignments) || !assignments.length) {
-    return res.status(400).json({ message: "Envie assignments=[{startTable,endTable,attendantName?,attendantId?,startsAt?,endsAt?,label?}]." });
-  }
+  const { restaurantId, unitId } = req.params as { restaurantId?: string; unitId?: string };
+  const parent: any = unitId ? { restaurantUnit: unitId } : restaurantId ? { restaurant: restaurantId } : null;
+  if (!parent) return res.status(400).json({ message: "Faltou restaurantId ou unitId" });
 
-  const now = new Date();
+  const items = (req.body?.items || []) as Array<{
+    startTable: number; endTable: number; startsAt: string; endsAt: string;
+    attendantId?: string; attendantName?: string; label?: string | null;
+  }>;
 
-  try {
-    for (const raw of assignments) {
-      const sT = Number(raw.startTable), eT = Number(raw.endTable);
-      if (Number.isNaN(sT) || Number.isNaN(eT)) continue;
-
-      const [lo, hi] = sT <= eT ? [sT, eT] : [eT, sT];
-      const startsAt = raw.startsAt ? new Date(raw.startsAt) : null;
-      const endsAt   = raw.endsAt   ? new Date(raw.endsAt)   : null;
-
-      const r = await resolveAttendant(unitId, raw.attendantName, raw.attendantId);
-      if ((r as any).many) {
-        return res.status(409).json({ message: "Nome de gerente ambíguo. Selecione uma opção.", options: (r as any).options });
-      }
-      if (!r.user) {
-        return res.status(404).json({ message: `Attendente não encontrado: "${raw.attendantName || raw.attendantId}"` });
-      }
-
-      const existing = await RangeAssignmentModel.find({ restaurantUnit: unitId, isActive: true });
-      for (const ex of existing) {
-        if (overlapsRange(lo, hi, ex.startTable, ex.endTable) &&
-            overlapsTime(startsAt, endsAt, ex.startsAt ?? null, ex.endsAt ?? null)) {
-          ex.isActive = false;
-          await ex.save();
+  // upsert por janela/intervalo (idempotência)
+  const ops = items.map(i => ({
+    updateOne: {
+      filter: { ...parent, startTable: i.startTable, endTable: i.endTable, startsAt: new Date(i.startsAt), endsAt: new Date(i.endsAt) },
+      update: {
+        $set: {
+          ...parent,
+          startTable: i.startTable, endTable: i.endTable,
+          startsAt: new Date(i.startsAt), endsAt: new Date(i.endsAt),
+          label: i.label ?? null, isActive: true,
+          attendant: i.attendantId ?? undefined,
+          attendantName: i.attendantName ?? undefined,
         }
-      }
-
-      await RangeAssignmentModel.create({
-        restaurantUnit: unitId,
-        startTable: lo,
-        endTable: hi,
-        attendant: r.user.id,       
-        label: raw.label ?? null,
-        startsAt, endsAt,
-        isActive: true,
-      });
+      },
+      upsert: true
     }
+  }));
 
-    return res.status(200).json({ ok: true, updatedAt: now.toISOString() });
-  } catch (e) {
-    console.error("Erro ao atualizar atribuições:", e);
-    return res.status(500).json({ message: "Erro ao atualizar atribuições." });
-  }
+  await RangeAssignmentModel.bulkWrite(ops);
+  return res.status(200).json({ ok: true, upserts: ops.length });
 };
 
-export const listRangeAssignmentsForUnit = async (req: Request, res: Response) => {
+
+export const listRangeAssignments = async (req: Request, res: Response) => {
   try {
-    const { unitId } = req.params as { unitId: string };
+    const { restaurantId, unitId } = req.params as { restaurantId?: string; unitId?: string };
     const scope = String(req.query.scope ?? "all"); // "all" | "current" | "upcoming"
     const now = new Date();
 
-    const q: any = { restaurantUnit: unitId, isActive: true };
+    const q: any = { isActive: true };
+    if (unitId) q.restaurantUnit = unitId;
+    else if (restaurantId) q.restaurant = restaurantId;
+    else return res.status(400).json({ message: "Faltou restaurantId ou unitId" });
 
-    if (scope === "current") {
-      // janelas que estejam “pegando” agora
-      q.startsAt = { $lte: now };
-      q.endsAt = { $gte: now };
-    } else if (scope === "upcoming") {
-      // janelas futuras/atuais (não expiradas)
-      q.endsAt = { $gte: now };
-    }
+    if (scope === "current") { q.startsAt = { $lte: now }; q.endsAt = { $gte: now }; }
+    else if (scope === "upcoming") { q.endsAt = { $gte: now }; }
 
     const docs = await RangeAssignmentModel.find(q)
       .populate({ path: "attendant", select: "firstName lastName" })
       .sort({ startsAt: 1, endTable: 1, startTable: 1 });
 
-    const items = docs.map((d) => ({
+    const items = docs.map(d => ({
       _id: d._id,
       startTable: d.startTable,
       endTable: d.endTable,
       attendantId: d.attendant ? (d.attendant as any)._id : undefined,
-      attendantName: d.attendant
-        ? `${(d.attendant as any).firstName ?? ""} ${(d.attendant as any).lastName ?? ""}`.trim() || null
-        : null,
+      attendantName: d.attendant ? `${(d.attendant as any).firstName ?? ""} ${(d.attendant as any).lastName ?? ""}`.trim() || null : null,
       label: d.label ?? null,
-      startsAt: d.startsAt ? d.startsAt.toISOString() : null,
-      endsAt: d.endsAt ? d.endsAt.toISOString() : null,
-      updatedAt: d.updatedAt ? d.updatedAt.toISOString() : null,
+      startsAt: d.startsAt?.toISOString() ?? null,
+      endsAt: d.endsAt?.toISOString() ?? null,
+      updatedAt: d.updatedAt?.toISOString() ?? null,
       isActive: d.isActive,
     }));
 
     return res.status(200).json({ items, count: items.length });
   } catch (e) {
-    console.error("Erro ao listar range-assignments:", e);
+    console.error(e);
     return res.status(500).json({ message: "Erro ao listar escalas." });
   }
 };

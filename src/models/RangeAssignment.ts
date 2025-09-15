@@ -1,7 +1,8 @@
 import mongoose, { Schema } from "mongoose";
 
 export interface IRangeAssignment extends mongoose.Document {
-  restaurantUnit: mongoose.Types.ObjectId;
+  restaurant?: mongoose.Types.ObjectId;
+  restaurantUnit?: mongoose.Types.ObjectId;
   startTable: number;
   endTable: number;
   attendant: mongoose.Types.ObjectId;   
@@ -13,7 +14,8 @@ export interface IRangeAssignment extends mongoose.Document {
 }
 
 const RangeAssignmentSchema = new Schema<IRangeAssignment>({
-  restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", required: true },
+  restaurant: { type: Schema.Types.ObjectId, ref: "Restaurant", index: true, required: false },
+  restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", index: true, required: false },
   startTable:     { type: Number, required: true },
   endTable:       { type: Number, required: true },
   attendant:      { type: Schema.Types.ObjectId, ref: "User", required: true }, 
