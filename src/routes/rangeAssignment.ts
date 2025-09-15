@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getPublicAttendantForTable, listRangeAssignments, putBulkRangeAssignments } from '../controllers/RangeAssignmentController';
+import { getPublicAttendantForTable, listRangeAssignments, listRangeAssignmentsForUnit, putBulkRangeAssignments } from '../controllers/RangeAssignmentController';
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (router: Router) => {
@@ -17,7 +17,20 @@ export default (router: Router) => {
     listRangeAssignments
   );
 
+  router.get(
+    "/units/:unitId/range-assignments",
+    isAuthenticated,
+    hasRole(["ADMIN","MANAGER"]),
+    listRangeAssignmentsForUnit
+  );
+
   // Somente MANAGER pode aplicar escala
   router.patch("/restaurants/:restaurantId/range-assignments/bulk", isAuthenticated, hasRole(["ADMIN","MANAGER"]), putBulkRangeAssignments);
-  router.patch("/units/:unitId/range-assignments/bulk",        isAuthenticated, hasRole(["ADMIN","MANAGER"]), putBulkRangeAssignments);
+  
+router.patch(
+  "/units/:unitId/range-assignments/bulk",
+  isAuthenticated,
+  hasRole(["ADMIN","MANAGER"]),
+  putBulkRangeAssignments
+);
 };

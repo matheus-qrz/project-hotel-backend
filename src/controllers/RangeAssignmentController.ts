@@ -168,3 +168,38 @@ export const listRangeAssignments = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Erro ao listar escalas." });
   }
 };
+
+export const listRangeAssignmentsForUnit = async (req: Request, res: Response) => {
+  try {
+    const { unitId } = req.params as { unitId: string };
+    const windowParam = String(req.query.window ?? "all"); // "all" | "current" | "upcoming"
+    const now = new Date();
+
+    const q: any = { restaurantUnit: unitId, isActive: { $ne: false } };
+    if (windowParam === "current") { q.startsAt = { $lte: now }; q.endsAt = { $gte: now }; }
+    if (windowParam === "upcoming") { q.endsAt = { $gte: now }; }
+
+    const docs = await RangeAssignmentModel.find(q)
+      .populate({ path: "attendant", select: "firstName lastName" })
+      .sort({ startsAt: 1, endTable: 1, startTable: 1 });
+
+    const items = docs.map(d => ({
+      _id: d._id,
+      startTable: d.startTable,
+      endTable: d.endTable,
+      attendantId: (d as any)?.attendant?._id,
+      attendantName: (d as any)?.attendant
+        && `${(d as any).attendant.firstName ?? ""} ${(d as any).attendant.lastName ?? ""}`.trim() || null,
+      label: d.label ?? null,
+      startsAt: d.startsAt?.toISOString() ?? null,
+      endsAt: d.endsAt?.toISOString() ?? null,
+      updatedAt: d.updatedAt?.toISOString() ?? null,
+      isActive: d.isActive !== false,
+    }));
+
+    return res.status(200).json({ items, count: items.length });
+  } catch (e) {
+    console.error("Erro ao listar range-assignments:", e);
+    return res.status(500).json({ message: "Erro ao listar escalas." });
+  }
+};
