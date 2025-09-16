@@ -1,36 +1,107 @@
-import { Router } from "express";
-import { getPublicAttendantForTable, listRangeAssignments, listRangeAssignmentsForUnit, putBulkRangeAssignments } from '../controllers/RangeAssignmentController';
+import { Router, Request, Response, NextFunction } from "express";
+import {
+  listRangeAssignments,
+  createOrMergeRangeAssignment,
+  replaceDays,
+  toggleActive,
+  updateRangeAssignment,
+  deleteRangeAssignment,
+} from "../controllers/RangeAssignmentController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (router: Router) => {
-  // Público (cliente/QR): agora “manager”
-  router.get("/public/units/:unitId/tables/:tableId/manager", getPublicAttendantForTable);
-
-  // (Compat opcional por um tempo)
-  router.get("/public/units/:unitId/tables/:tableId/attendant", getPublicAttendantForTable);
-
-  // listar escalas da unidade (ADMIN/MANAGER) ***
+  /**
+   * LISTAR escalas agregadas por unidade (ADMIN/MANAGER)
+   * Usa o novo agregador que já unifica dias (compat com legados).
+   */
   router.get(
     "/units/:unitId/range-assignments",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
-    listRangeAssignments
+    (req: Request, res: Response, _next: NextFunction) => {
+      // injeta unitId da URL como filtro para o agregador
+      (req as any).query = { ...(req as any).query, unitId: req.params.unitId };
+      return listRangeAssignments(req, res);
+    }
   );
 
-  router.get(
+  /**
+   * CRIAR/MESCLAR uma escala única (daysOfWeek[] em um doc)
+   * Compat: o antigo "bulk" agora mapeia para este mesmo handler.
+   */
+  router.post(
     "/units/:unitId/range-assignments",
     isAuthenticated,
-    hasRole(["ADMIN","MANAGER"]),
-    listRangeAssignmentsForUnit
+    hasRole(["ADMIN", "MANAGER"]),
+    (req: Request, res: Response, _next: NextFunction) => {
+      (req as any).body = { ...(req as any).body, unitId: req.params.unitId };
+      return createOrMergeRangeAssignment(req, res);
+    }
   );
 
-  // Somente MANAGER pode aplicar escala
-  router.patch("/restaurants/:restaurantId/range-assignments/bulk", isAuthenticated, hasRole(["ADMIN","MANAGER"]), putBulkRangeAssignments);
-  
-router.patch(
-  "/units/:unitId/range-assignments/bulk",
-  isAuthenticated,
-  hasRole(["ADMIN","MANAGER"]),
-  putBulkRangeAssignments
-);
+  // Compat com endpoint antigo de "aplicar intervalo em bulk"
+  router.patch(
+    "/units/:unitId/range-assignments/bulk",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    (req: Request, res: Response, _next: NextFunction) => {
+      (req as any).body = { ...(req as any).body, unitId: req.params.unitId };
+      return createOrMergeRangeAssignment(req, res);
+    }
+  );
+
+  // (Opcional) compat por restaurante/matriz, se ainda houver chamadas antigas:
+  router.patch(
+    "/restaurants/:restaurantId/range-assignments/bulk",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    (req: Request, res: Response, _next: NextFunction) => {
+      // mantém o comportamento antigo; o controller aceita restaurantId opcional
+      (req as any).body = {
+        ...(req as any).body,
+        restaurantId: req.params.restaurantId,
+      };
+      return createOrMergeRangeAssignment(req, res);
+    }
+  );
+
+  /**
+   * EDITAR campos gerais de uma escala (sem trocar dias)
+   */
+  router.patch(
+    "/range-assignments/:id",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    updateRangeAssignment
+  );
+
+  /**
+   * SUBSTITUIR completamente os dias de uma escala (daysOfWeek)
+   */
+  router.patch(
+    "/range-assignments/:id/days",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    replaceDays
+  );
+
+  /**
+   * ATIVAR/DESATIVAR uma escala
+   */
+  router.patch(
+    "/range-assignments/:id/toggle",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    toggleActive
+  );
+
+  /**
+   * REMOVER uma escala
+   */
+  router.delete(
+    "/range-assignments/:id",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    deleteRangeAssignment
+  );
 };

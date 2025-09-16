@@ -5,7 +5,8 @@ export interface IRangeAssignment extends mongoose.Document {
   restaurantUnit?: mongoose.Types.ObjectId;
   startTable: number;
   endTable: number;
-  attendant: mongoose.Types.ObjectId;   
+  attendant: mongoose.Types.ObjectId;
+  attendantName: string;   
   label?: string | null;
   startsAt?: Date | null;
   endsAt?: Date | null;
@@ -18,7 +19,8 @@ const RangeAssignmentSchema = new Schema<IRangeAssignment>({
   restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", index: true, required: false },
   startTable:     { type: Number, required: true },
   endTable:       { type: Number, required: true },
-  attendant:      { type: Schema.Types.ObjectId, ref: "User", required: true }, 
+  attendant:      { type: Schema.Types.ObjectId, ref: "User", required: true },
+  attendantName:  { type: String, ref: "User", required: true}, 
   label:          { type: String, default: null },
   startsAt:       { type: Date, default: null },
   endsAt:         { type: Date, default: null },
