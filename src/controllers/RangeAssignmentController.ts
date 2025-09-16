@@ -1,561 +1,355 @@
-import mongoose from "mongoose";
+// src/controllers/RangeAssignmentController.ts
+import mongoose, { Types } from "mongoose";
 import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
 import { UserModel } from "../models/User";
 
-/**
- * Convensão de dias da semana:
- * 0 = Domingo ... 6 = Sábado
- */
-type AssignmentInput = {
-  unitId?: string;                 // preferível
-  restaurantId?: string | null;    // opcional (matriz), se ainda usa
-  startTable: number;
-  endTable: number;
-  attendantId?: string;
-  attendantName?: string;
-  label?: string | null;
-  startsAt?: string | null;        // ISO ou "HH:mm" (ver parse)
-  endsAt?: string | null;          // ISO ou "HH:mm"
-  daysOfWeek: number[];            // NOVO: array de dias
-  isActive?: boolean;
-};
-
-const overlapsRange = (a1: number, a2: number, b1: number, b2: number) =>
-  Math.max(a1, b1) <= Math.min(a2, b2);
-
-const normalizeDays = (days?: number[]) => {
+/** 0=Dom ... 6=Sáb */
+const normDays = (arr: any): number[] => {
   const set = new Set<number>();
-  (days || []).forEach((d) => {
-    if (Number.isInteger(d) && d >= 0 && d <= 6) set.add(d);
+  (Array.isArray(arr) ? arr : []).forEach((d) => {
+    const n = Number(d);
+    if (Number.isInteger(n) && n >= 0 && n <= 6) set.add(n);
   });
   return Array.from(set).sort((a, b) => a - b);
 };
 
-const normalizeHourStringToDate = (hour?: string | null) => {
-  if (!hour) return null;
-  // Aceita "HH:mm" e ISO. Guardamos como Date para manter compat com schema atual.
-  // Anchor: 1970-01-01 UTC (evita dependência de fuso ao recriar Date).
-  if (/^\d{1,2}:\d{2}$/.test(hour)) {
-    const [h, m] = hour.split(":").map((x) => parseInt(x, 10));
-    const dt = new Date(Date.UTC(1970, 0, 1, h, m, 0, 0));
-    return dt;
+// "10:00" -> Date(1970-01-01T10:00:00.000Z)
+const toTimeDate = (t?: string | null): Date | null => {
+  if (!t) return null;
+  if (/^\d{1,2}:\d{2}$/.test(t)) {
+    const [h, m] = t.split(":").map((x) => parseInt(x, 10));
+    return new Date(Date.UTC(1970, 0, 1, h, m, 0, 0));
   }
-  const d = new Date(hour);
+  const d = new Date(t);
   return isNaN(d.getTime()) ? null : d;
 };
 
-const keyOf = (payload: {
-  unitId?: string | null;
-  restaurantId?: string | null;
-  attendantId?: string | null;
-  attendantName?: string | null;
-  startTable: number;
-  endTable: number;
-  label?: string | null;
-  startsAt?: Date | null;
-  endsAt?: Date | null;
-}) => JSON.stringify({
-  u: payload.unitId || null,
-  r: payload.restaurantId || null,
-  a: payload.attendantId || null,
-  an: payload.attendantName || null,
-  st: payload.startTable,
-  et: payload.endTable,
-  l: payload.label || null,
-  sa: payload.startsAt ? payload.startsAt.toISOString() : null,
-  ea: payload.endsAt ? payload.endsAt.toISOString() : null,
-});
+// Aceita unitId OU restaurantId como o mesmo id de unidade (matriz usa restaurantId)
+const getUnitOid = (req: Request): Types.ObjectId => {
+  const id =
+    (req.params as any).unitId ??
+    (req.params as any).restaurantId ??
+    (req.body as any).unitId ??
+    (req.body as any).restaurantUnit ??
+    (req.body as any).restaurantId ??
+    (req.query as any).unitId ??
+    (req.query as any).restaurantId;
 
-/**
- * Consolida duplicatas legadas (um doc por dia) em um único documento com daysOfWeek[].
- * Mantém o doc "keeper" (o mais antigo) e remove os demais.
- */
-const consolidateDuplicates = async (keeperId: mongoose.Types.ObjectId) => {
-  const keeper = await RangeAssignmentModel.findById(keeperId);
-  if (!keeper) return;
-
-  // Monta chave canônica do "grupo"
-  const key = keyOf({
-    unitId: (keeper as any).unitId ?? (keeper as any)?.meta?.unitId ?? null,
-    restaurantId: (keeper as any).restaurantId ?? (keeper as any)?.meta?.restaurantId ?? null,
-    attendantId: String(keeper.attendant) || null,
-    attendantName: keeper.attendantName || null,
-    startTable: keeper.startTable,
-    endTable: keeper.endTable,
-    label: keeper.label || null,
-    startsAt: keeper.startsAt || null,
-    endsAt: keeper.endsAt || null,
-  });
-
-  // Busca todos os que compartilham a mesma assinatura
-  const siblings = await RangeAssignmentModel.find({
-    $or: [
-      // match por campos explícitos
-      {
-        startTable: keeper.startTable,
-        endTable: keeper.endTable,
-        label: keeper.label || null,
-        startsAt: keeper.startsAt || null,
-        endsAt: keeper.endsAt || null,
-        attendantId: String(keeper.attendant )|| null,
-        attendantName: keeper.attendantName || null,
-        $or: [
-          { unitId: (keeper as any).unitId ?? null },
-          { "meta.unitId": (keeper as any)?.meta?.unitId ?? null },
-        ],
-      },
-    ],
-  });
-
-  if (!siblings.length) return;
-
-  // Escolhe o mais antigo como "keeper"
-  const sorted = siblings.sort((a: any, b: any) => {
-    const at = (a.createdAt || new Date()).getTime();
-    const bt = (b.createdAt || new Date()).getTime();
-    return at - bt;
-  });
-  const realKeeper = sorted[0];
-  const rest = sorted.slice(1);
-
-  // Junta daysOfWeek e dayOfWeek (legado)
-  const days = new Set<number>(
-    normalizeDays(
-      [
-        ...(Array.isArray((realKeeper as any).daysOfWeek) ? (realKeeper as any).daysOfWeek : []),
-        typeof (realKeeper as any).dayOfWeek === "number" ? (realKeeper as any).dayOfWeek : undefined,
-        ...rest.flatMap((doc: any) => [
-          ...(Array.isArray(doc.daysOfWeek) ? doc.daysOfWeek : []),
-          typeof doc.dayOfWeek === "number" ? doc.dayOfWeek : undefined,
-        ]),
-      ].filter((x) => typeof x === "number") as number[]
-    )
-  );
-
-  // Atualiza keeper com união dos dias
-  await RangeAssignmentModel.updateOne(
-    { _id: realKeeper._id },
-    {
-      $set: { daysOfWeek: Array.from(days), updatedAt: new Date() },
-      $unset: { dayOfWeek: "" }, // remove legado se existir
-    }
-  );
-
-  // Remove duplicatas extras
-  const idsToDelete = rest.map((d: any) => d._id).filter((id) => String(id) !== String(realKeeper._id));
-  if (idsToDelete.length) {
-    await RangeAssignmentModel.deleteMany({ _id: { $in: idsToDelete } });
+  if (!id || !Types.ObjectId.isValid(id)) {
+    throw new Error("unitId/restaurantId inválido.");
   }
+  return new Types.ObjectId(String(id));
 };
 
-/**
- * Cria/mescla um único documento por combinação chave com daysOfWeek[].
- * Se já existir, faz merge dos dias (addToSet) e consolida duplicatas legadas.
- */
+/** =========================
+ *  CRIAR / MESCLAR (upsert)
+ *  ========================= */
 export const createOrMergeRangeAssignment = async (req: Request, res: Response) => {
   try {
+    const restaurantUnit = getUnitOid(req);
+
     const {
-      unitId,
-      restaurantId,
       startTable,
       endTable,
-      attendantId,
+      attendantId,         // vindo do front
+      attendant,           // compat opcional
       attendantName,
       label,
       startsAt,
       endsAt,
       daysOfWeek,
       isActive,
-    } = (req.body || {}) as AssignmentInput;
+    } = (req.body || {}) as Record<string, any>;
 
-    if (!startTable || !endTable || startTable > endTable) {
+    // validações simples
+    const st = Number(startTable), et = Number(endTable);
+    if (!st || !et || st < 1 || et < st) {
       return res.status(400).json({ message: "Faixa de mesas inválida." });
     }
 
-    const days = normalizeDays(daysOfWeek);
+    const days = normDays(daysOfWeek);
     if (!days.length) {
       return res.status(400).json({ message: "Selecione ao menos um dia da semana." });
     }
 
-    // Horários (mantemos Date para compat)
-    const startsAtDate = normalizeHourStringToDate(startsAt || undefined);
-    const endsAtDate = normalizeHourStringToDate(endsAt || undefined);
-    if (!!startsAtDate !== !!endsAtDate) {
-      return res.status(400).json({ message: "Informe horário inicial e final." });
-    }
-    if (startsAtDate && endsAtDate && endsAtDate <= startsAtDate) {
-      return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
-    }
+    const sa = toTimeDate(startsAt);
+    const ea = toTimeDate(endsAt);
+    if (!!sa !== !!ea) return res.status(400).json({ message: "Informe horário inicial e final." });
+    if (sa && ea && ea <= sa) return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
 
-    // Valida atendente (se id for enviado)
-    let attendantNameFinal = attendantName || null;
-    let attendantIdFinal: mongoose.Types.ObjectId | null = null;
-    if (attendantId) {
-      if (!mongoose.Types.ObjectId.isValid(attendantId)) {
-        return res.status(400).json({ message: "attendantId inválido." });
-      }
-      const user = await UserModel.findById(attendantId);
-      if (!user) return res.status(404).json({ message: "Atendente não encontrado." });
-      attendantIdFinal = user._id;
-      if (!attendantNameFinal) {
-        attendantNameFinal = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() || null;
-      }
-    } else if (!attendantNameFinal) {
-      return res.status(400).json({ message: "Informe attendantId ou attendantName." });
+    // attendant (seu schema usa 'attendant')
+    const attRaw = attendantId ?? attendant;
+    if (!attRaw || !Types.ObjectId.isValid(attRaw)) {
+      return res.status(400).json({ message: "attendantId inválido." });
     }
+    const attendantOid = new Types.ObjectId(String(attRaw));
 
-    const matchUnit = unitId ? { unitId } : { "meta.unitId": null }; // mantém compat; ajuste se necessário
+    const user = await UserModel.findById(attendantOid);
+    const attendantNameFinal = attendantName ?? (user ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() : null);
+
+    const now = new Date();
+
+    // Base da "unicidade" do documento
     const baseMatch = {
-      ...matchUnit,
-      startTable,
-      endTable,
+      restaurantUnit,
+      startTable: st,
+      endTable: et,
+      attendant: attendantOid,
       label: label ?? null,
-      startsAt: startsAtDate ?? null,
-      endsAt: endsAtDate ?? null,
-      attendantId: attendantIdFinal,
-      attendantName: attendantNameFinal,
+      startsAt: sa ?? null,
+      endsAt: ea ?? null,
     };
 
-    // Upsert: um doc por combinação
-    const now = new Date();
+    // Upsert: um doc por combinação; agrega daysOfWeek
     const updated = await RangeAssignmentModel.findOneAndUpdate(
       baseMatch,
       {
         $setOnInsert: {
           ...baseMatch,
           daysOfWeek: [],
+          attendantName: attendantNameFinal,
           isActive: isActive !== false,
           createdAt: now,
           updatedAt: now,
         },
+        $set: {
+          attendantName: attendantNameFinal,
+          updatedAt: now,
+        },
         $addToSet: { daysOfWeek: { $each: days } },
-        $set: { updatedAt: now },
-        $unset: { dayOfWeek: "" }, // remove legado se houver
       },
-      { upsert: true, new: true }
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
-
-    // Consolida qualquer duplicata legado que ainda exista
-    await consolidateDuplicates(updated._id as mongoose.Types.ObjectId);
 
     return res.status(201).json({
       message: "Escala aplicada com sucesso.",
       item: {
         id: String(updated._id),
-        unitId: (updated as any).unitId ?? (updated as any)?.meta?.unitId ?? null,
+        unitId: String(updated.restaurantUnit),
         startTable: updated.startTable,
         endTable: updated.endTable,
-        attendantId: updated.attendant || null,
+        attendantId: updated.attendant ? String(updated.attendant) : null,
         attendantName: updated.attendantName ?? null,
         label: updated.label ?? null,
         startsAt: updated.startsAt ? updated.startsAt.toISOString() : null,
         endsAt: updated.endsAt ? updated.endsAt.toISOString() : null,
-        daysOfWeek: normalizeDays((updated as any).daysOfWeek),
+        daysOfWeek: Array.isArray(updated.daysOfWeek) ? [...updated.daysOfWeek].sort((a, b) => a - b) : [],
         isActive: updated.isActive !== false,
         updatedAt: updated.updatedAt?.toISOString() ?? null,
       },
     });
-  } catch (e) {
-    console.error("Erro ao criar/mesclar range-assignment:", e);
+  } catch (e: any) {
+    // conflito de índice único (se você criar um)
+    if (e?.code === 11000) {
+      return res.status(409).json({ message: "Já existe uma escala igual para esse garçom/faixa/horário." });
+    }
+    console.error("createOrMergeRangeAssignment error:", e);
     return res.status(500).json({ message: "Erro ao aplicar escala." });
   }
 };
 
-/**
- * Substitui COMPLETAMENTE o array de dias de um assignment (id exato).
- */
-export const replaceDays = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params as { id: string };
-    const { daysOfWeek } = (req.body || {}) as { daysOfWeek: number[] };
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID inválido." });
-    }
-    const days = normalizeDays(daysOfWeek);
-    if (!days.length) return res.status(400).json({ message: "Informe ao menos um dia." });
-
-    const doc = await RangeAssignmentModel.findByIdAndUpdate(
-      id,
-      {
-        $set: { daysOfWeek: days, updatedAt: new Date() },
-        $unset: { dayOfWeek: "" },
-      },
-      { new: true }
-    );
-    if (!doc) return res.status(404).json({ message: "Escala não encontrada." });
-
-    await consolidateDuplicates(doc._id as mongoose.Types.ObjectId);
-
-    return res.status(200).json({
-      message: "Dias atualizados.",
-      item: {
-        id: String(doc._id),
-        daysOfWeek: normalizeDays((doc as any).daysOfWeek),
-      },
-    });
-  } catch (e) {
-    console.error("Erro ao substituir dias:", e);
-    return res.status(500).json({ message: "Erro ao atualizar dias da escala." });
-  }
-};
-
-/**
- * Liga/Desliga uma escala (id exato).
- */
-export const toggleActive = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params as { id: string };
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID inválido." });
-    }
-    const doc = await RangeAssignmentModel.findById(id);
-    if (!doc) return res.status(404).json({ message: "Escala não encontrada." });
-
-    const next = !(doc.isActive !== false);
-    doc.isActive = next;
-    (doc as any).updatedAt = new Date();
-    await doc.save();
-
-    return res.status(200).json({ message: next ? "Escala ativada." : "Escala desativada.", isActive: next });
-  } catch (e) {
-    console.error("Erro ao alternar status:", e);
-    return res.status(500).json({ message: "Erro ao alternar status da escala." });
-  }
-};
-
-/**
- * Lista escalas já agregando dias (compat com legado).
- * Filtros opcionais: unitId, attendantId, activeOnly
- */
+/** =========================
+ *  LISTAR (agregado, compat)
+ *  ========================= */
 export const listRangeAssignments = async (req: Request, res: Response) => {
   try {
-    const { unitId, attendantId, activeOnly } = (req.query || {}) as {
-      unitId?: string;
-      attendantId?: string;
-      activeOnly?: string;
-    };
+    let unitId: Types.ObjectId | null = null;
+    try { unitId = getUnitOid(req); } catch { unitId = null; }
 
+    const { attendantId, activeOnly } = (req.query || {}) as any;
     const match: any = {};
-    if (unitId) match.$or = [{ unitId }, { "meta.unitId": unitId }];
-    if (attendantId && mongoose.Types.ObjectId.isValid(attendantId)) match.attendantId = new mongoose.Types.ObjectId(attendantId);
+    if (unitId) match.restaurantUnit = unitId;
+    if (attendantId && Types.ObjectId.isValid(attendantId)) match.attendant = new Types.ObjectId(attendantId);
     if (activeOnly === "true") match.isActive = { $ne: false };
 
-    // Pipeline que:
-    // 1) Unifica daysOfWeek com possível dayOfWeek legado
-    // 2) Agrupa por combinação chave para ter um card único
-    const pipeline: any[] = [
+    const pipeline = [
       { $match: match },
-      {
-        $addFields: {
-          __days: {
-            $cond: [
-              { $eq: [{ $type: "$daysOfWeek" }, "array"] },
-              "$daysOfWeek",
-              {
-                $cond: [
-                  { $ne: [{ $type: "$dayOfWeek" }, "missing"] },
-                  ["$dayOfWeek"],
-                  [],
-                ],
-              },
-            ],
-          },
-        },
-      },
-      { $unwind: { path: "$__days", preserveNullAndEmptyArrays: true } },
+      { $unwind: { path: "$daysOfWeek", preserveNullAndEmptyArrays: true } },
       {
         $group: {
           _id: {
-            unitId: { $ifNull: ["$unitId", "$meta.unitId"] },
-            attendantId: "$attendantId",
-            attendantName: "$attendantName",
+            restaurantUnit: "$restaurantUnit",
             startTable: "$startTable",
             endTable: "$endTable",
+            attendant: "$attendant",
+            attendantName: "$attendantName",
             label: "$label",
             startsAt: "$startsAt",
             endsAt: "$endsAt",
           },
-          days: { $addToSet: "$__days" },
+          days: { $addToSet: "$daysOfWeek" },
           isActive: { $max: { $cond: [{ $eq: ["$isActive", false] }, 0, 1] } },
           updatedAt: { $max: "$updatedAt" },
           anyId: { $first: "$_id" },
         },
       },
       {
-        $lookup: {
-          from: "users",
-          localField: "_id.attendantId",
-          foreignField: "_id",
-          as: "attendant",
-        },
-      },
-      {
         $project: {
           _id: 0,
           id: "$anyId",
-          unitId: "$_id.unitId",
+          unitId: "$_id.restaurantUnit",
           startTable: "$_id.startTable",
           endTable: "$_id.endTable",
-          attendantId: "$_id.attendantId",
-          attendantName: {
-            $ifNull: [
-              "$_id.attendantName",
-              {
-                $let: {
-                  vars: { a: { $arrayElemAt: ["$attendant", 0] } },
-                  in: {
-                    $trim: {
-                      input: {
-                        $concat: [
-                          { $ifNull: ["$$a.firstName", ""] },
-                          " ",
-                          { $ifNull: ["$$a.lastName", ""] },
-                        ],
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          },
+          attendantId: "$_id.attendant",
+          attendantName: "$_id.attendantName",
           label: "$_id.label",
           startsAt: "$_id.startsAt",
           endsAt: "$_id.endsAt",
           daysOfWeek: {
-            $setUnion: [
-              {
-                $filter: {
-                  input: "$days",
-                  as: "d",
-                  cond: { $and: [{ $ne: ["$$d", null] }, { $gte: ["$$d", 0] }, { $lte: ["$$d", 6] }] },
-                },
-              },
-              [],
-            ],
+            $filter: {
+              input: "$days",
+              as: "d",
+              cond: { $and: [{ $ne: ["$$d", null] }, { $gte: ["$$d", 0] }, { $lte: ["$$d", 6] }] },
+            },
           },
           isActive: { $cond: [{ $gt: ["$isActive", 0] }, true, false] },
           updatedAt: 1,
         },
       },
-      { $sort: { "attendantName": 1, "startTable": 1, "label": 1 } },
+      { $sort: { attendantName: 1, startTable: 1, label: 1 } },
     ];
 
-    const itemsRaw = await RangeAssignmentModel.aggregate(pipeline);
-    const items = itemsRaw.map((d: any) => ({
+    const rows = await (RangeAssignmentModel as any).aggregate(pipeline);
+    // normaliza saída
+    const items = rows.map((d: any) => ({
       id: String(d.id),
-      unitId: d.unitId ?? null,
+      unitId: d.unitId ? String(d.unitId) : null,
       startTable: d.startTable,
       endTable: d.endTable,
       attendantId: d.attendantId ? String(d.attendantId) : null,
-      attendantName: d.attendantName || null,
+      attendantName: d.attendantName ?? null,
       label: d.label ?? null,
       startsAt: d.startsAt ? new Date(d.startsAt).toISOString() : null,
       endsAt: d.endsAt ? new Date(d.endsAt).toISOString() : null,
-      daysOfWeek: (Array.isArray(d.daysOfWeek) ? d.daysOfWeek : []).sort((a: number, b: number) => a - b),
-      updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
+      daysOfWeek: Array.isArray(d.daysOfWeek) ? [...d.daysOfWeek].sort((a: number, b: number) => a - b) : [],
       isActive: d.isActive !== false,
+      updatedAt: d.updatedAt ? new Date(d.updatedAt).toISOString() : null,
     }));
 
     return res.status(200).json({ items, count: items.length });
   } catch (e) {
-    console.error("Erro ao listar range-assignments:", e);
+    console.error("listRangeAssignments error:", e);
     return res.status(500).json({ message: "Erro ao listar escalas." });
   }
 };
 
-/**
- * Remove (hard delete) pelo id exato.
- */
-export const deleteRangeAssignment = async (req: Request, res: Response) => {
+/** =========================
+ *  SUBSTITUIR DIAS
+ *  ========================= */
+export const replaceDays = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params as { id: string };
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID inválido." });
-    }
-    const r = await RangeAssignmentModel.findByIdAndDelete(id);
-    if (!r) return res.status(404).json({ message: "Escala não encontrada." });
-    return res.status(200).json({ message: "Escala removida." });
+    const { id } = req.params as any;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "ID inválido." });
+
+    const days = normDays((req.body || {}).daysOfWeek);
+    if (!days.length) return res.status(400).json({ message: "Informe ao menos um dia." });
+
+    const doc = await RangeAssignmentModel.findByIdAndUpdate(
+      id,
+      { $set: { daysOfWeek: days, updatedAt: new Date() } },
+      { new: true }
+    );
+    if (!doc) return res.status(404).json({ message: "Escala não encontrada." });
+
+    return res.status(200).json({ message: "Dias atualizados.", daysOfWeek: days });
   } catch (e) {
-    console.error("Erro ao remover escala:", e);
-    return res.status(500).json({ message: "Erro ao remover escala." });
+    console.error("replaceDays error:", e);
+    return res.status(500).json({ message: "Erro ao atualizar dias." });
   }
 };
 
-/**
- * Atualiza campos básicos (sem substituir os dias).
- */
+/** =========================
+ *  ATIVAR / DESATIVAR
+ *  ========================= */
+export const toggleActive = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params as any;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "ID inválido." });
+    const doc = await RangeAssignmentModel.findById(id);
+    if (!doc) return res.status(404).json({ message: "Escala não encontrada." });
+    doc.isActive = !(doc.isActive === true);
+    (doc as any).updatedAt = new Date();
+    await doc.save();
+    return res.status(200).json({ message: doc.isActive ? "Escala ativada." : "Escala desativada.", isActive: doc.isActive });
+  } catch (e) {
+    console.error("toggleActive error:", e);
+    return res.status(500).json({ message: "Erro ao alternar status." });
+  }
+};
+
+/** =========================
+ *  UPDATE BÁSICO / DELETE
+ *  ========================= */
 export const updateRangeAssignment = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params as { id: string };
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ message: "ID inválido." });
-    }
+    const { id } = req.params as any;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "ID inválido." });
 
-    const {
-      startTable,
-      endTable,
-      attendantId,
-      attendantName,
-      label,
-      startsAt,
-      endsAt,
-      isActive,
-    } = (req.body || {}) as Partial<AssignmentInput>;
+    const patch: any = {};
+    const b = (req.body || {}) as any;
 
-    const payload: any = {};
-    if (typeof startTable === "number") payload.startTable = startTable;
-    if (typeof endTable === "number") payload.endTable = endTable;
-    if (typeof label !== "undefined") payload.label = label ?? null;
-    if (typeof isActive !== "undefined") payload.isActive = !!isActive;
+    if (b.startTable != null) patch.startTable = Number(b.startTable);
+    if (b.endTable != null) patch.endTable = Number(b.endTable);
+    if (b.label !== undefined) patch.label = b.label ?? null;
 
-    if (typeof attendantName !== "undefined") payload.attendantName = attendantName || null;
-    if (typeof attendantId !== "undefined") {
-      if (attendantId) {
-        if (!mongoose.Types.ObjectId.isValid(attendantId)) {
-          return res.status(400).json({ message: "attendantId inválido." });
-        }
-        payload.attendantId = new mongoose.Types.ObjectId(attendantId);
+    if (b.attendantId !== undefined || b.attendant !== undefined) {
+      const raw = b.attendantId ?? b.attendant;
+      if (raw) {
+        if (!Types.ObjectId.isValid(raw)) return res.status(400).json({ message: "attendantId inválido." });
+        patch.attendant = new Types.ObjectId(String(raw));
       } else {
-        payload.attendantId = null;
+        patch.attendant = null;
       }
     }
+    if (b.attendantName !== undefined) patch.attendantName = b.attendantName ?? null;
 
-    if (typeof startsAt !== "undefined" || typeof endsAt !== "undefined") {
-      const sa = normalizeHourStringToDate(startsAt || undefined);
-      const ea = normalizeHourStringToDate(endsAt || undefined);
+    if (b.startsAt !== undefined || b.endsAt !== undefined) {
+      const sa = toTimeDate(b.startsAt);
+      const ea = toTimeDate(b.endsAt);
       if (!!sa !== !!ea) return res.status(400).json({ message: "Informe horário inicial e final." });
       if (sa && ea && ea <= sa) return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
-      payload.startsAt = sa ?? null;
-      payload.endsAt = ea ?? null;
+      patch.startsAt = sa ?? null;
+      patch.endsAt = ea ?? null;
     }
 
-    payload.updatedAt = new Date();
+    patch.updatedAt = new Date();
 
-    const updated = await RangeAssignmentModel.findByIdAndUpdate(id, { $set: payload }, { new: true });
+    const updated = await RangeAssignmentModel.findByIdAndUpdate(id, { $set: patch }, { new: true });
     if (!updated) return res.status(404).json({ message: "Escala não encontrada." });
-
-    await consolidateDuplicates(updated._id as mongoose.Types.ObjectId);
 
     return res.status(200).json({
       message: "Escala atualizada.",
       item: {
         id: String(updated._id),
+        unitId: String(updated.restaurantUnit),
         startTable: updated.startTable,
         endTable: updated.endTable,
-        attendantId: updated.attendant ?? null,
+        attendantId: updated.attendant ? String(updated.attendant) : null,
         attendantName: updated.attendantName ?? null,
         label: updated.label ?? null,
         startsAt: updated.startsAt ? updated.startsAt.toISOString() : null,
         endsAt: updated.endsAt ? updated.endsAt.toISOString() : null,
-        daysOfWeek: normalizeDays((updated as any).daysOfWeek),
+        daysOfWeek: Array.isArray(updated.daysOfWeek) ? [...updated.daysOfWeek].sort((a, b) => a - b) : [],
         isActive: updated.isActive !== false,
         updatedAt: updated.updatedAt?.toISOString() ?? null,
       },
     });
   } catch (e) {
-    console.error("Erro ao atualizar escala:", e);
+    console.error("updateRangeAssignment error:", e);
     return res.status(500).json({ message: "Erro ao atualizar escala." });
+  }
+};
+
+export const deleteRangeAssignment = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params as any;
+    if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "ID inválido." });
+    const r = await RangeAssignmentModel.findByIdAndDelete(id);
+    if (!r) return res.status(404).json({ message: "Escala não encontrada." });
+    return res.status(200).json({ message: "Escala removida." });
+  } catch (e) {
+    console.error("deleteRangeAssignment error:", e);
+    return res.status(500).json({ message: "Erro ao remover escala." });
   }
 };
