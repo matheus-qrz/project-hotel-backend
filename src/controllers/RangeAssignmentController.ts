@@ -36,150 +36,109 @@ const parseHHmmToDate = (hhmm?: string | null) => {
   return d;
 };
 
+
+const asHHmm = (s: unknown) => (typeof s === "string" && /^\d{2}:\d{2}$/.test(s) ? s : null);
+
 /** =========================
  *  CRIAR / MESCLAR (upsert)
  *  ========================= */
 export const createOrMergeRangeAssignment = async (req: Request, res: Response) => {
   try {
-    const { unitId } = req.params;
-    const {
-      startTable,
-      endTable,
-      attendantId,
-      label,
-      startsAt,
-      endsAt,
-      daysOfWeek,
-      isActive,
-    } = req.body;
-
-    // Validação: unitId obrigatório
-    if (!unitId || !mongoose.Types.ObjectId.isValid(unitId)) {
+    // 1) Param
+    const unitId = String((req.params as any).unitId ?? (req.params as any).id ?? "").trim();
+    if (!mongoose.Types.ObjectId.isValid(unitId)) {
       return res.status(400).json({ message: "ID da unidade inválido." });
     }
 
-    const unit = await RestaurantUnitModel
-      .findById(unitId)
-      .select("_id restaurant")
-      .lean<{ _id: Types.ObjectId; restaurant: Types.ObjectId | null }>()
+    const unit = await RestaurantUnitModel.findById(unitId).select("_id restaurant");
+    if (!unit) return res.status(404).json({ message: "Unidade não encontrada." });
 
-    if (!unit) {
-      return res.status(404).json({ message: "Unidade não encontrada." });
-    }
+    // 2) Body safe-parse
+    const startTable = req.body.startTable;
+    const endTable = req.body.endTable;
+    const daysOfWeek = Array.isArray(req.body.daysOfWeek) ? req.body.daysOfWeek : [];
+    const startsAtStr = asHHmm(req.body.startsAt);
+    const endsAtStr = asHHmm(req.body.endsAt);
+    const attendantId: string | null =
+      req.body.attendantId && String(req.body.attendantId) !== "" ? String(req.body.attendantId) : null;
+    const attendantName: string | null =
+      req.body.attendantName ? String(req.body.attendantName) : null;
+    const label: string | null = req.body.label ? String(req.body.label) : null;
 
-    // Validação: mesas
-    const st = Number(startTable);
-    const et = Number(endTable);
-    if (!st || !et || st < 1 || et < st) {
+    if (!Number.isInteger(startTable) || !Number.isInteger(endTable) || startTable > endTable) {
       return res.status(400).json({ message: "Faixa de mesas inválida." });
     }
-
-    // Validação: dias da semana
-    const days = Array.isArray(daysOfWeek)
-      ? [...new Set(daysOfWeek.map(Number).filter((d) => d >= 0 && d <= 6))]
-      : [];
-    if (!days.length) {
-      return res.status(400).json({ message: "Selecione ao menos um dia da semana." });
+    if (!startsAtStr || !endsAtStr) {
+      return res.status(400).json({ message: "Horários devem estar no formato HH:mm." });
+    }
+    // valida dias 0..6
+    const dowOk = daysOfWeek.every((d: any) => Number.isInteger(d) && d >= 0 && d <= 6);
+    if (!dowOk) {
+      return res.status(400).json({ message: "daysOfWeek deve conter inteiros entre 0 e 6." });
     }
 
-    // Validação: horários
-    const startTime = startsAt ? new Date(`1970-01-01T${startsAt}:00Z`) : null;
-    const endTime = endsAt ? new Date(`1970-01-01T${endsAt}:00Z`) : null;
-    if ((startTime && !endTime) || (!startTime && endTime)) {
-      return res.status(400).json({ message: "Informe ambos os horários de início e fim." });
-    }
-    if (startTime && endTime && endTime <= startTime) {
-      return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
-    }
+    // 3) Converte horas
+    const startsAt = parseHHmmToDate(startsAtStr);
+    const endsAt = parseHHmmToDate(endsAtStr);
 
-    // Validação: atendente
-    if (!attendantId || !mongoose.Types.ObjectId.isValid(attendantId)) {
-      return res.status(400).json({ message: "ID do atendente inválido." });
-    }
-
-    const user = await UserModel.findById(attendantId);
-    if (!user) {
-      return res.status(404).json({ message: "Atendente não encontrado." });
-    }
-
-    const attendantName = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
-
-    const payload = {
-      restaurantUnit: unit._id,
-      restaurant: unit.restaurant ?? null,
-      startTable: Number(req.body.startTable),
-      endTable: Number(req.body.endTable),
-      attendant: req.body.attendantId ?? req.body.attendant ?? null,
-      attendantName: req.body.attendantName ?? null,
-      label: req.body.label ?? null,
-      daysOfWeek: Array.isArray(req.body.daysOfWeek) ? req.body.daysOfWeek : [],
-      startsAt: parseHHmmToDate(req.body.startsAt),
-      endsAt: parseHHmmToDate(req.body.endsAt),
-      isActive: true,
-    };
-
-    // Base para upsert
-    const baseMatch = {
-      unit,
-      startTable: st,
-      endTable: et,
-      attendant: attendantId,
-      label: label ?? null,
-      startsAt: startTime,
-      endsAt: endTime,
-    };
-
-    const now = new Date();
-
-    const updated = await RangeAssignmentModel.findOneAndUpdate(
-      baseMatch,
-      {
-        $setOnInsert: {
-          ...baseMatch,
-          daysOfWeek: [],
-          attendantName,
-          isActive: isActive !== false,
-          createdAt: now,
-          updatedAt: now,
-        },
-        $set: {
-          attendantName,
-          updatedAt: now,
-        },
-        $addToSet: {
-          daysOfWeek: { $each: days },
-        },
-      },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true,
+    // 4) (Opcional) valida atendente
+    let attendant: Types.ObjectId | null = null;
+    if (attendantId) {
+      const user = await UserModel.findById(attendantId).select("_id");
+      if (!user) {
+        return res.status(422).json({ message: "Atendente não encontrado." });
       }
-    );
-
-    return res.status(201).json({
-      message: "Escala aplicada com sucesso.",
-      item: {
-        id: String(updated._id),
-        restaurantUnit: String(updated.restaurantUnit),
-        startTable: updated.startTable,
-        endTable: updated.endTable,
-        attendantId: updated.attendant?.toString() ?? null,
-        attendantName: updated.attendantName,
-        label: updated.label,
-        startsAt: updated.startsAt?.toISOString() ?? null,
-        endsAt: updated.endsAt?.toISOString() ?? null,
-        daysOfWeek: updated.daysOfWeek,
-        isActive: updated.isActive,
-        updatedAt: updated.updatedAt?.toISOString() ?? null,
-      },
-    });
-  } catch (error: any) {
-    if (error?.code === 11000) {
-      return res.status(409).json({ message: "Já existe uma escala igual para esse garçom/faixa/horário." });
+      attendant = user._id;
     }
 
-    console.error("Erro ao criar/atualizar escala:", error);
+    // 5) Upsert idempotente por (unit, attendant, faixa, hora)
+    const baseQuery = {
+      restaurantUnit: unit._id,
+      attendant, // pode ser null
+      startTable,
+      endTable,
+      startsAt,
+      endsAt,
+    };
+
+    const existing = await RangeAssignmentModel.findOne(baseQuery);
+    if (existing) {
+      const set = new Set([...(existing.daysOfWeek || []), ...daysOfWeek]);
+      existing.daysOfWeek = Array.from(set).sort();
+      if (attendantName) existing.attendantName = attendantName;
+      if (label !== null) existing.label = label;
+      await existing.save();
+      return res.status(200).json(existing);
+    }
+
+    const created = await RangeAssignmentModel.create({
+      ...baseQuery,
+      restaurant: unit.restaurant ?? null,
+      attendantName,
+      label,
+      daysOfWeek,
+      isActive: true,
+    });
+
+    return res.status(201).json(created);
+  } catch (err: any) {
+    // mapeia erros comuns para evitar 500 genérico
+    if (err?.name === "ValidationError") {
+      return res.status(400).json({ message: err.message });
+    }
+    if (err?.name === "CastError") {
+      return res.status(400).json({ message: `Campo inválido: ${err?.path}` });
+    }
+    if (err?.code === 11000) {
+      // duplicata exata pelo índice único
+      return res.status(409).json({ message: "Já existe uma escala idêntica ativa." });
+    }
+    console.error("[range-assignments] erro inesperado:", {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message,
+      stack: err?.stack,
+    });
     return res.status(500).json({ message: "Erro interno ao aplicar escala." });
   }
 };
