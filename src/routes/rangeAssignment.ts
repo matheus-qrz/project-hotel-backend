@@ -17,7 +17,8 @@ export default (router: Router) => {
   router.get(
     "/units/:unitId/range-assignments",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"])
+    hasRole(["ADMIN", "MANAGER"]), 
+    listRangeAssignments
   );
 
   /**
@@ -27,21 +28,24 @@ export default (router: Router) => {
   router.post(
     "/units/:unitId/range-assignments",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"])
+    hasRole(["ADMIN", "MANAGER"]),
+      createOrMergeRangeAssignment
   );
 
   // Compat com endpoint antigo de "aplicar intervalo em bulk"
   router.patch(
     "/units/:unitId/range-assignments/bulk",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"])
+    hasRole(["ADMIN", "MANAGER"]),
+    createOrMergeRangeAssignment
   );
 
   // (Opcional) compat por restaurante/matriz, se ainda houver chamadas antigas:
   router.patch(
     "/restaurants/:restaurantId/range-assignments/bulk",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"])
+    hasRole(["ADMIN", "MANAGER"]),
+    createOrMergeRangeAssignment
   );
 
   /**
