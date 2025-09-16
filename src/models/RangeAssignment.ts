@@ -78,16 +78,6 @@ const RangeAssignmentSchema = new Schema<IRangeAssignment>(
   { timestamps: true }
 );
 
-RangeAssignmentSchema.index({ restaurantUnit: 1, startTable: 1, endTable: 1, isActive: 1 });
-RangeAssignmentSchema.index({ restaurantUnit: 1, startsAt: 1, endsAt: 1 });
-RangeAssignmentSchema.index({ attendant: 1, startsAt: 1, endsAt: 1 });
-
-// (um doc por restaurantUnit + faixa + atendente + rótulo + horário)
-RangeAssignmentSchema.index(
-  { restaurantUnit: 1, startTable: 1, endTable: 1, attendant: 1, label: 1, startsAt: 1, endsAt: 1 },
-  { unique: true, name: "uniq_ru_range_attendant_time" }
-);
-
 export const RangeAssignmentModel = mongoose.model<IRangeAssignment>(
   "RangeAssignment",
   RangeAssignmentSchema
