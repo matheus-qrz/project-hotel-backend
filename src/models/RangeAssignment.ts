@@ -3,7 +3,7 @@ import mongoose, { Schema } from "mongoose";
 
 export interface IRangeAssignment extends mongoose.Document {
   restaurant?: mongoose.Types.ObjectId | null;
-  restaurantUnit?: mongoose.Types.ObjectId | null; 
+  restaurantUnit: mongoose.Types.ObjectId | null; 
   startTable: number;
   endTable: number;
   attendant: mongoose.Types.ObjectId | null;       // attendantId
@@ -28,7 +28,8 @@ const RangeAssignmentSchema = new Schema<IRangeAssignment>(
       type: Schema.Types.ObjectId, 
       ref: "RestaurantUnit",
       index: true, 
-      default: null 
+      default: null,
+      required: true
     },
     startTable: { 
       type: Number, 
@@ -77,6 +78,18 @@ const RangeAssignmentSchema = new Schema<IRangeAssignment>(
   },
   { timestamps: true }
 );
+
+RangeAssignmentSchema.index(
+  { restaurantUnit: 1, attendant: 1, startTable: 1, endTable: 1, startsAt: 1, endsAt: 1 },
+  { unique: true, partialFilterExpression: { isActive: true } }
+);
+
+RangeAssignmentSchema.pre("validate", function (next) {
+  if (this.startTable > this.endTable) {
+    return next(new Error("startTable não pode ser maior que endTable"));
+  }
+  next();
+});
 
 export const RangeAssignmentModel = mongoose.model<IRangeAssignment>(
   "RangeAssignment",

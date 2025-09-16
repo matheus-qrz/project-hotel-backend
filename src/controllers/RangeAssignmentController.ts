@@ -3,6 +3,7 @@ import mongoose, { Types } from "mongoose";
 import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
 import { UserModel } from "../models/User";
+import { RestaurantUnitModel } from "../models/RestaurantUnit";
 
 /** 0=Dom ... 6=Sáb */
 const normDays = (arr: any): number[] => {
@@ -25,21 +26,14 @@ const toTimeDate = (t?: string | null): Date | null => {
   return isNaN(d.getTime()) ? null : d;
 };
 
-// Aceita unitId OU restaurantId como o mesmo id de unidade (matriz usa restaurantId)
-const getUnitOid = (req: Request): Types.ObjectId => {
-  const id =
-    (req.params as any).unitId ??
-    (req.params as any).restaurantId ??
-    (req.body as any).unitId ??
-    (req.body as any).restaurantUnit ??
-    (req.body as any).restaurantId ??
-    (req.query as any).unitId ??
-    (req.query as any).restaurantId;
-
-  if (!id || !Types.ObjectId.isValid(id)) {
-    throw new Error("unitId/restaurantId inválido.");
-  }
-  return new Types.ObjectId(String(id));
+const parseHHmmToDate = (hhmm?: string | null) => {
+  if (!hhmm || typeof hhmm !== "string") return null;
+  const [h, m] = hhmm.split(":").map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  // salva como hora/minuto ancorado no epoch (UTC) só para ordenação/comparação
+  const d = new Date(0);
+  d.setUTCHours(h, m, 0, 0);
+  return d;
 };
 
 /** =========================
@@ -47,6 +41,7 @@ const getUnitOid = (req: Request): Types.ObjectId => {
  *  ========================= */
 export const createOrMergeRangeAssignment = async (req: Request, res: Response) => {
   try {
+    const { unitId } = req.params;
     const {
       startTable,
       endTable,
@@ -56,12 +51,20 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
       endsAt,
       daysOfWeek,
       isActive,
-      restaurantUnit,
     } = req.body;
 
     // Validação: unitId obrigatório
-    if (!restaurantUnit || !mongoose.Types.ObjectId.isValid(restaurantUnit)) {
+    if (!unitId || !mongoose.Types.ObjectId.isValid(unitId)) {
       return res.status(400).json({ message: "ID da unidade inválido." });
+    }
+
+    const unit = await RestaurantUnitModel
+      .findById(unitId)
+      .select("_id restaurant")
+      .lean<{ _id: Types.ObjectId; restaurant: Types.ObjectId | null }>()
+
+    if (!unit) {
+      return res.status(404).json({ message: "Unidade não encontrada." });
     }
 
     // Validação: mesas
@@ -101,9 +104,23 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
 
     const attendantName = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
 
+    const payload = {
+      restaurantUnit: unit._id,
+      restaurant: unit.restaurant ?? null,
+      startTable: Number(req.body.startTable),
+      endTable: Number(req.body.endTable),
+      attendant: req.body.attendantId ?? req.body.attendant ?? null,
+      attendantName: req.body.attendantName ?? null,
+      label: req.body.label ?? null,
+      daysOfWeek: Array.isArray(req.body.daysOfWeek) ? req.body.daysOfWeek : [],
+      startsAt: parseHHmmToDate(req.body.startsAt),
+      endsAt: parseHHmmToDate(req.body.endsAt),
+      isActive: true,
+    };
+
     // Base para upsert
     const baseMatch = {
-      restaurantUnit,
+      unit,
       startTable: st,
       endTable: et,
       attendant: attendantId,
@@ -171,10 +188,8 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
  *  LISTAR (agregado, compat)
  *  ========================= */
 export const listRangeAssignments = async (req: Request, res: Response) => {
+  const { unitId } = req.params;
   try {
-    let unitId: Types.ObjectId | null = null;
-    try { unitId = getUnitOid(req); } catch { unitId = null; }
-
     const { attendantId, activeOnly } = (req.query || {}) as any;
     const match: any = {};
     if (unitId) match.restaurantUnit = unitId;
