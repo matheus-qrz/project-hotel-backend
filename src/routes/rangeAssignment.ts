@@ -17,12 +17,7 @@ export default (router: Router) => {
   router.get(
     "/units/:unitId/range-assignments",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    (req: Request, res: Response, _next: NextFunction) => {
-      // injeta unitId da URL como filtro para o agregador
-      (req as any).query = { ...(req as any).query, unitId: req.params.unitId };
-      return listRangeAssignments(req, res);
-    }
+    hasRole(["ADMIN", "MANAGER"])
   );
 
   /**
@@ -32,37 +27,21 @@ export default (router: Router) => {
   router.post(
     "/units/:unitId/range-assignments",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    (req: Request, res: Response, _next: NextFunction) => {
-      (req as any).body = { ...(req as any).body, unitId: req.params.unitId };
-      return createOrMergeRangeAssignment(req, res);
-    }
+    hasRole(["ADMIN", "MANAGER"])
   );
 
   // Compat com endpoint antigo de "aplicar intervalo em bulk"
   router.patch(
     "/units/:unitId/range-assignments/bulk",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    (req: Request, res: Response, _next: NextFunction) => {
-      (req as any).body = { ...(req as any).body, unitId: req.params.unitId };
-      return createOrMergeRangeAssignment(req, res);
-    }
+    hasRole(["ADMIN", "MANAGER"])
   );
 
   // (Opcional) compat por restaurante/matriz, se ainda houver chamadas antigas:
   router.patch(
     "/restaurants/:restaurantId/range-assignments/bulk",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    (req: Request, res: Response, _next: NextFunction) => {
-      // mantém o comportamento antigo; o controller aceita restaurantId opcional
-      (req as any).body = {
-        ...(req as any).body,
-        restaurantId: req.params.restaurantId,
-      };
-      return createOrMergeRangeAssignment(req, res);
-    }
+    hasRole(["ADMIN", "MANAGER"])
   );
 
   /**

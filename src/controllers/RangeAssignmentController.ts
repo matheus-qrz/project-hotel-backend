@@ -47,105 +47,123 @@ const getUnitOid = (req: Request): Types.ObjectId => {
  *  ========================= */
 export const createOrMergeRangeAssignment = async (req: Request, res: Response) => {
   try {
-    const restaurantUnit = getUnitOid(req);
-
     const {
       startTable,
       endTable,
-      attendantId,         // vindo do front
-      attendant,           // compat opcional
-      attendantName,
+      attendantId,
       label,
       startsAt,
       endsAt,
       daysOfWeek,
       isActive,
-    } = (req.body || {}) as Record<string, any>;
+      restaurantUnit,
+    } = req.body;
 
-    // validações simples
-    const st = Number(startTable), et = Number(endTable);
+    // Validação: unitId obrigatório
+    if (!restaurantUnit || !mongoose.Types.ObjectId.isValid(restaurantUnit)) {
+      return res.status(400).json({ message: "ID da unidade inválido." });
+    }
+
+    // Validação: mesas
+    const st = Number(startTable);
+    const et = Number(endTable);
     if (!st || !et || st < 1 || et < st) {
       return res.status(400).json({ message: "Faixa de mesas inválida." });
     }
 
-    const days = normDays(daysOfWeek);
+    // Validação: dias da semana
+    const days = Array.isArray(daysOfWeek)
+      ? [...new Set(daysOfWeek.map(Number).filter((d) => d >= 0 && d <= 6))]
+      : [];
     if (!days.length) {
       return res.status(400).json({ message: "Selecione ao menos um dia da semana." });
     }
 
-    const sa = toTimeDate(startsAt);
-    const ea = toTimeDate(endsAt);
-    if (!!sa !== !!ea) return res.status(400).json({ message: "Informe horário inicial e final." });
-    if (sa && ea && ea <= sa) return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
-
-    // attendant (seu schema usa 'attendant')
-    const attRaw = attendantId ?? attendant;
-    if (!attRaw || !Types.ObjectId.isValid(attRaw)) {
-      return res.status(400).json({ message: "attendantId inválido." });
+    // Validação: horários
+    const startTime = startsAt ? new Date(`1970-01-01T${startsAt}:00Z`) : null;
+    const endTime = endsAt ? new Date(`1970-01-01T${endsAt}:00Z`) : null;
+    if ((startTime && !endTime) || (!startTime && endTime)) {
+      return res.status(400).json({ message: "Informe ambos os horários de início e fim." });
     }
-    const attendantOid = new Types.ObjectId(String(attRaw));
+    if (startTime && endTime && endTime <= startTime) {
+      return res.status(400).json({ message: "Horário final deve ser maior que o inicial." });
+    }
 
-    const user = await UserModel.findById(attendantOid);
-    const attendantNameFinal = attendantName ?? (user ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() : null);
+    // Validação: atendente
+    if (!attendantId || !mongoose.Types.ObjectId.isValid(attendantId)) {
+      return res.status(400).json({ message: "ID do atendente inválido." });
+    }
 
-    const now = new Date();
+    const user = await UserModel.findById(attendantId);
+    if (!user) {
+      return res.status(404).json({ message: "Atendente não encontrado." });
+    }
 
-    // Base da "unicidade" do documento
+    const attendantName = `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim();
+
+    // Base para upsert
     const baseMatch = {
       restaurantUnit,
       startTable: st,
       endTable: et,
-      attendant: attendantOid,
+      attendant: attendantId,
       label: label ?? null,
-      startsAt: sa ?? null,
-      endsAt: ea ?? null,
+      startsAt: startTime,
+      endsAt: endTime,
     };
 
-    // Upsert: um doc por combinação; agrega daysOfWeek
+    const now = new Date();
+
     const updated = await RangeAssignmentModel.findOneAndUpdate(
       baseMatch,
       {
         $setOnInsert: {
           ...baseMatch,
           daysOfWeek: [],
-          attendantName: attendantNameFinal,
+          attendantName,
           isActive: isActive !== false,
           createdAt: now,
           updatedAt: now,
         },
         $set: {
-          attendantName: attendantNameFinal,
+          attendantName,
           updatedAt: now,
         },
-        $addToSet: { daysOfWeek: { $each: days } },
+        $addToSet: {
+          daysOfWeek: { $each: days },
+        },
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+      }
     );
 
     return res.status(201).json({
       message: "Escala aplicada com sucesso.",
       item: {
         id: String(updated._id),
-        unitId: String(updated.restaurantUnit),
+        restaurantUnit: String(updated.restaurantUnit),
         startTable: updated.startTable,
         endTable: updated.endTable,
-        attendantId: updated.attendant ? String(updated.attendant) : null,
-        attendantName: updated.attendantName ?? null,
-        label: updated.label ?? null,
-        startsAt: updated.startsAt ? updated.startsAt.toISOString() : null,
-        endsAt: updated.endsAt ? updated.endsAt.toISOString() : null,
-        daysOfWeek: Array.isArray(updated.daysOfWeek) ? [...updated.daysOfWeek].sort((a, b) => a - b) : [],
-        isActive: updated.isActive !== false,
+        attendantId: updated.attendant?.toString() ?? null,
+        attendantName: updated.attendantName,
+        label: updated.label,
+        startsAt: updated.startsAt?.toISOString() ?? null,
+        endsAt: updated.endsAt?.toISOString() ?? null,
+        daysOfWeek: updated.daysOfWeek,
+        isActive: updated.isActive,
         updatedAt: updated.updatedAt?.toISOString() ?? null,
       },
     });
-  } catch (e: any) {
-    // conflito de índice único (se você criar um)
-    if (e?.code === 11000) {
+  } catch (error: any) {
+    if (error?.code === 11000) {
       return res.status(409).json({ message: "Já existe uma escala igual para esse garçom/faixa/horário." });
     }
-    console.error("createOrMergeRangeAssignment error:", e);
-    return res.status(500).json({ message: "Erro ao aplicar escala." });
+
+    console.error("Erro ao criar/atualizar escala:", error);
+    return res.status(500).json({ message: "Erro interno ao aplicar escala." });
   }
 };
 
