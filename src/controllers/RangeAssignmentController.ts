@@ -151,7 +151,9 @@ export const listRangeAssignments = async (req: Request, res: Response) => {
   try {
     const { attendantId, activeOnly } = (req.query || {}) as any;
     const match: any = {};
-    if (unitId) match.restaurantUnit = unitId;
+    if (unitId && Types.ObjectId.isValid(unitId)) {
+      match.restaurantUnit = new Types.ObjectId(unitId);
+    }
     if (attendantId && Types.ObjectId.isValid(attendantId)) match.attendant = new Types.ObjectId(attendantId);
     if (activeOnly === "true") match.isActive = { $ne: false };
 
