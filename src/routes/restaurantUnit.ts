@@ -39,7 +39,7 @@ export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.get(
     "/restaurant/:restaurantId/units",
     isAuthenticated,
-    hasRole("ADMIN"),
+    hasRole(["ADMIN", "MANAGER"]),
     getAllRestaurantUnitsController
   );
 
@@ -47,7 +47,7 @@ export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.patch(
     "/units/:unitId",
     isAuthenticated,
-    hasRole("ADMIN"),
+    hasRole(["ADMIN", "MANAGER"]),
     updateRestaurantUnitController
   );
 
@@ -55,7 +55,7 @@ export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.delete(
     "/units/:unitId/restaurant/:restaurantId",
     isAuthenticated,
-    hasRole("ADMIN"),
+    hasRole(["ADMIN", "MANAGER"]),
     deleteRestaurantUnitController
   );
 
@@ -70,7 +70,7 @@ export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.delete(
     "/units/:unitId/attendant/:attendantId",
     isAuthenticated,
-    hasRole("ADMIN"),
+    hasRole(["ADMIN", "MANAGER"]),
     removeAttendantFromUnitController
   );
 };
