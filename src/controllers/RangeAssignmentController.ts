@@ -1,7 +1,8 @@
-// src/controllers/RangeAssignmentController.ts
+// src/controllers/RangeAssignmentController.ts (revisado)
 import mongoose, { Types } from "mongoose";
 import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
+import { TableAssignmentModel } from "../models/TableAssignment";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 
@@ -22,7 +23,7 @@ const toTimeDate = (t?: string | null): Date | null => {
     const [h, m] = t.split(":").map((x) => parseInt(x, 10));
     return new Date(Date.UTC(1970, 0, 1, h, m, 0, 0));
   }
-  const d = new Date(t);
+  const d = new Date(t as any);
   return isNaN(d.getTime()) ? null : d;
 };
 
@@ -36,8 +37,13 @@ const parseHHmmToDate = (hhmm?: string | null) => {
   return d;
 };
 
-
 const asHHmm = (s: unknown) => (typeof s === "string" && /^\d{2}:\d{2}$/.test(s) ? s : null);
+
+const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+const nowRefTime = () => {
+  const now = new Date();
+  return parseHHmmToDate(`${pad2(now.getHours())}:${pad2(now.getMinutes())}`)!;
+};
 
 /** =========================
  *  CRIAR / MESCLAR (upsert)
@@ -88,7 +94,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
       if (!user) {
         return res.status(422).json({ message: "Atendente não encontrado." });
       }
-      attendant = user._id;
+      attendant = user._id as Types.ObjectId;
     }
 
     // 5) Upsert idempotente por (unit, attendant, faixa, hora)
@@ -99,7 +105,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
       endTable,
       startsAt,
       endsAt,
-    };
+    } as const;
 
     const existing = await RangeAssignmentModel.findOne(baseQuery);
     if (existing) {
@@ -147,7 +153,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
  *  LISTAR (agregado, compat)
  *  ========================= */
 export const listRangeAssignments = async (req: Request, res: Response) => {
-  const { unitId } = req.params;
+  const { unitId } = req.params as any;
   try {
     const { attendantId, activeOnly } = (req.query || {}) as any;
     const match: any = {};
@@ -345,5 +351,135 @@ export const deleteRangeAssignment = async (req: Request, res: Response) => {
   } catch (e) {
     console.error("deleteRangeAssignment error:", e);
     return res.status(500).json({ message: "Erro ao remover escala." });
+  }
+};
+
+/** =========================
+ *  RESOLVER GARÇOM DA MESA (ATIVO) – usa TableAssignment e cai no plano (Range)
+ *  ========================= */
+export const getAssignedAttendantController = async (req: Request, res: Response) => {
+  try {
+    const { unitId, tableId } = req.params as any;
+    if (!Types.ObjectId.isValid(unitId)) return res.status(400).json({ message: "unitId inválido." });
+    const tableNum = Number(tableId);
+    if (!Number.isInteger(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+
+    // 1) ativo por mesa (fonte da verdade em tempo real)
+    const active = await TableAssignmentModel
+      .findOne({ restaurantUnit: unitId, tableId: tableNum, isActive: true })
+      .populate({ path: "attendant", select: "firstName lastName avatar role" });
+
+    if (active) {
+      const a: any = active.attendant;
+      const name = a ? `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() : null;
+      return res.status(200).json({
+        source: "table",
+        attendant: a ? { id: String(a._id), name, avatar: a.avatar ?? null } : null,
+        updatedAt: active.updatedAt ? active.updatedAt.toISOString() : null,
+      });
+    }
+
+    // 2) fallback: plano (range) considerando hora/dia atuais
+    const now = new Date();
+    const dow = now.getDay(); // 0..6 (0=domingo)
+    const timeRef = nowRefTime();
+
+    const candidates = await RangeAssignmentModel.find({
+      restaurantUnit: unitId,
+      startTable: { $lte: tableNum },
+      endTable: { $gte: tableNum },
+      isActive: { $ne: false },
+      $or: [ { daysOfWeek: { $size: 0 } }, { daysOfWeek: dow } ],
+      startsAt: { $ne: null },
+      endsAt: { $ne: null },
+    }).select("attendant attendantName startTable endTable startsAt endsAt updatedAt").lean();
+
+    const valid = candidates.filter((c: any) => c.startsAt && c.endsAt && c.startsAt <= timeRef && timeRef <= c.endsAt);
+
+    if (!valid.length) {
+      return res.status(200).json({ source: "range", attendant: null, updatedAt: null });
+    }
+
+    // melhor encaixe: menor faixa (mais específica), depois mais recente
+    valid.sort((a: any, b: any) => {
+      const wa = (a.endTable - a.startTable);
+      const wb = (b.endTable - b.startTable);
+      if (wa !== wb) return wa - wb;
+      const ua = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+      const ub = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+      return ub - ua;
+    });
+
+    const best = valid[0];
+
+    if (best.attendant) {
+      const u = await UserModel.findById(best.attendant).select("firstName lastName avatar");
+      const name = u ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : (best.attendantName ?? null);
+      return res.status(200).json({
+        source: "range",
+        attendant: { id: String(best.attendant), name, avatar: u?.avatar ?? null },
+        updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
+      });
+    }
+
+    return res.status(200).json({
+      source: "range",
+      attendant: best.attendantName ? { id: null as any, name: best.attendantName, avatar: null } : null,
+      updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
+    });
+  } catch (e) {
+    console.error("getAssignedAttendantController error:", e);
+    return res.status(500).json({ message: "Erro ao resolver atendente." });
+  }
+};
+
+/** =========================
+ *  REASSIGN (MANAGER) – aplica atribuição temporária via TableAssignment
+ *  ========================= */
+export const reassignTablesController = async (req: Request, res: Response) => {
+  try {
+    const { unitId } = req.params as any;
+    const { tableIds, toAttendantId } = (req.body || {}) as { tableIds: number[]; toAttendantId: string };
+
+    if (!Types.ObjectId.isValid(unitId)) return res.status(400).json({ message: "unitId inválido." });
+    if (!Array.isArray(tableIds) || tableIds.length === 0) {
+      return res.status(400).json({ message: "Selecione ao menos uma mesa." });
+    }
+    if (!Types.ObjectId.isValid(toAttendantId)) {
+      return res.status(400).json({ message: "toAttendantId inválido." });
+    }
+
+    const now = new Date();
+    const tableNums = tableIds.map((t) => Number(t)).filter((n) => Number.isInteger(n));
+
+    // 1) encerra ativos atuais dessas mesas
+    await TableAssignmentModel.updateMany(
+      { restaurantUnit: unitId, tableId: { $in: tableNums }, isActive: true },
+      { $set: { isActive: false, releasedAt: now } }
+    );
+
+    // 2) sobe novos ativos (upsert por mesa)
+    const ops = tableNums.map((tableId) => ({
+      updateOne: {
+        filter: { restaurantUnit: unitId, tableId, isActive: true },
+        update: {
+          $setOnInsert: {
+            restaurantUnit: unitId,
+            tableId,
+            attendant: new Types.ObjectId(toAttendantId),
+            assignedAt: now,
+            isActive: true,
+          },
+        },
+        upsert: true,
+      },
+    }));
+
+    if (ops.length) await TableAssignmentModel.bulkWrite(ops);
+
+    return res.status(200).json({ ok: true, updatedAt: now.toISOString(), tables: tableNums.length });
+  } catch (e) {
+    console.error("reassignTablesController error:", e);
+    return res.status(500).json({ message: "Erro ao reatribuir mesas." });
   }
 };

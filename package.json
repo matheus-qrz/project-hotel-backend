@@ -16,6 +16,7 @@
   "dependencies": {
     "@types/formidable": "^3.4.5",
     "@types/jsonwebtoken": "^9.0.6",
+    "@types/luxon": "^3.7.1",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
     "bull": "^4.11.3",

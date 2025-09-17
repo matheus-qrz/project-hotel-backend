@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { RestaurantModel } from "./Restaurant";
 import { OperationalCosts } from "../utils/finantials";
+import { DateTime } from "luxon";
 const Schema = mongoose.Schema;
 
 // models/RestaurantUnit.ts
@@ -22,6 +23,7 @@ export interface IRestaurantUnit extends Document {
   restaurant: mongoose.Types.ObjectId;
   isActive: boolean;
   operationalCosts: OperationalCosts;
+  timezone?: DateTime;
 };
 
 const restaurantUnitSchema = new Schema({
@@ -70,10 +72,10 @@ const restaurantUnitSchema = new Schema({
     type: String,
     enum: ['active', 'outOfHours', 'inactive'],
     default: 'active'
-  }
+  },
+  timezone: { type: String, default: "America/Sao_Paulo" }
 }, {
   timestamps: true,
-  timezone: { type: String, default: "America/Sao_Paulo" }
 });
 
 // Criar o modelo

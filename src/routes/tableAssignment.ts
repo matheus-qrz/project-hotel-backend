@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getPublicAttendantForTable, putBulkTableAssignments } from "../controllers/TableAssignmentController";
+import { getPublicAttendantForTable, putBulkTableAssignments, seedTableAssignmentsFromRanges } from "../controllers/TableAssignmentController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (router: Router) => {
@@ -13,4 +13,11 @@ export default (router: Router) => {
     hasRole(["ADMIN","MANAGER"]),
     putBulkTableAssignments
   );
+
+  router.post(
+  "/manager/units/:unitId/seed-table-assignments",
+  isAuthenticated,
+  hasRole(["MANAGER", "ADMIN"]),
+  seedTableAssignmentsFromRanges
+);
 };
