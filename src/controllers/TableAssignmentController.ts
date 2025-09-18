@@ -141,31 +141,57 @@ export const putBulkTableAssignments = async (req: Request, res: Response) => {
   }
 };
 
-// ========= 2) Seed: materializar plano em TableAssignment =========
-// POST /manager/units/:unitId/seed-table-assignments?replace=true
+// =======================================
+// SEED: materializa o plano em assignments
+// =======================================
 export const seedTableAssignmentsFromRanges = async (req: Request, res: Response) => {
   try {
-    const { unitId } = req.params as { unitId: string };
+    const { unitId: raw } = req.params as { unitId: string };
     const replace = String(req.query.replace || "false").toLowerCase() === "true";
-    if (!Types.ObjectId.isValid(unitId)) return res.status(400).json({ message: "unitId inválido." });
 
-    const unit = await RestaurantUnitModel.findById(unitId).select("timezone totalTables name").lean();
-    if (!unit) return res.status(404).json({ message: "Unidade não encontrada." });
+    if (!raw || !Types.ObjectId.isValid(raw)) {
+      return res.status(400).json({ message: "unitId inválido." });
+    }
 
+    // 1) Resolver a unidade efetiva
+    //    - primeiro tenta como RestaurantUnit._id
+    //    - se não achar, interpreta como Restaurant._id (unidade matriz) e busca uma Unit dessa Restaurant
+    let unit = await RestaurantUnitModel
+      .findById(raw)
+      .select("timezone totalTables name restaurant")
+      .lean();
+
+    if (!unit) {
+      // fallback: tratar raw como restaurantId (matriz)
+      unit = await RestaurantUnitModel
+        .findOne({ restaurant: new Types.ObjectId(raw) }) // se você tiver um flag isMain, use { restaurant: ..., isMain: true }
+        .select("timezone totalTables name restaurant")
+        .lean();
+    }
+
+    if (!unit) {
+      return res.status(404).json({ message: "Unidade não encontrada." });
+    }
+
+    const effectiveUnitId = String(unit._id);
     const tz = (unit as any).timezone || "America/Sao_Paulo";
     const { timeRef, dow } = timeRefFromTZ(tz);
     const timeHHmm = toHHmm(timeRef);
 
-    // 1) Coleta ranges válidos agora (dia + hora)
+    // 2) Coleta ranges válidos agora (dia + hora) para a unidade
     const ranges = await RangeAssignmentModel.find({
-      restaurantUnit: unitId,
+      restaurantUnit: new Types.ObjectId(effectiveUnitId),
       isActive: { $ne: false },
-      $or: [ { daysOfWeek: { $size: 0 } }, { daysOfWeek: dow } ],
-    }).select("attendant startTable endTable startsAt endsAt updatedAt").lean();
+      $or: [{ daysOfWeek: { $size: 0 } }, { daysOfWeek: dow }],
+    })
+      .select("attendant startTable endTable startsAt endsAt updatedAt")
+      .lean();
 
-    const valid = ranges.filter(r => isWithinShiftHHmm(timeHHmm, hhmmFromDateField(r.startsAt), hhmmFromDateField(r.endsAt)));
+    const valid = ranges.filter((r: any) =>
+      isWithinShiftHHmm(timeHHmm, hhmmFromDateField(r.startsAt), hhmmFromDateField(r.endsAt))
+    );
 
-    // 2) Escolhe melhor assignment por mesa (menor faixa vence; empate -> mais recente)
+    // 3) Escolhe o melhor responsável por mesa (menor faixa vence; empate → mais recente)
     type Candidate = { attendant: Types.ObjectId | null; width: number; updatedAt: number };
     const pick: Map<number, Candidate> = new Map();
 
@@ -184,36 +210,45 @@ export const seedTableAssignmentsFromRanges = async (req: Request, res: Response
     const targetTables = Array.from(pick.keys());
     const now = new Date();
 
-    // 3) Se replace=true, encerra assignments ativos dessas mesas
+    // 4) Se replace=true, encerra assignments ativos dessas mesas
     let deactivated = 0;
     if (replace && targetTables.length) {
       const r = await TableAssignmentModel.updateMany(
-        { restaurantUnit: unitId, tableId: { $in: targetTables }, isActive: true },
+        { restaurantUnit: new Types.ObjectId(effectiveUnitId), tableId: { $in: targetTables }, isActive: true },
         { $set: { isActive: false, releasedAt: now } }
       );
       deactivated = (r.modifiedCount || 0);
     }
 
-    // 4) Evita conflito: carrega ativos restantes para ignorar mesas já em uso quando replace=false
+    // 5) Evita conflito: quando replace=false, não sobrescreve mesas já ativas
     let existingActive: Set<number> = new Set();
     if (!replace && targetTables.length) {
-      const actives = await TableAssignmentModel.find({ restaurantUnit: unitId, tableId: { $in: targetTables }, isActive: true })
-        .select("tableId").lean();
-      existingActive = new Set(actives.map(a => a.tableId));
+      const actives = await TableAssignmentModel.find({
+        restaurantUnit: new Types.ObjectId(effectiveUnitId),
+        tableId: { $in: targetTables },
+        isActive: true,
+      })
+        .select("tableId")
+        .lean();
+      existingActive = new Set((actives || []).map((a: any) => a.tableId));
     }
 
-    // 5) Upserts
-    const ops = [] as any[];
+    // 6) Upserts por mesa
+    const ops: any[] = [];
     for (const t of targetTables) {
       if (!replace && existingActive.has(t)) continue;
       const cand = pick.get(t)!;
-      if (!cand.attendant) continue; // sem attendant definido nesse range
+      if (!cand.attendant) continue; // range sem attendant definido → ignora
       ops.push({
         updateOne: {
-          filter: { restaurantUnit: unitId, tableId: t, isActive: true },
+          filter: {
+            restaurantUnit: new Types.ObjectId(effectiveUnitId),
+            tableId: t,
+            isActive: true,
+          },
           update: {
             $setOnInsert: {
-              restaurantUnit: new Types.ObjectId(unitId),
+              restaurantUnit: new Types.ObjectId(effectiveUnitId),
               tableId: t,
               attendant: cand.attendant,
               assignedAt: now,
@@ -221,26 +256,34 @@ export const seedTableAssignmentsFromRanges = async (req: Request, res: Response
             },
           },
           upsert: true,
-        }
+        },
       });
     }
 
     const bulk = ops.length ? await TableAssignmentModel.bulkWrite(ops) : null;
     const upserts = bulk?.upsertedCount || 0;
 
-    return res.json({
+    // 7) Resposta com diagnóstico amigável
+    const payload: any = {
       ok: true,
-      unitId,
+      unitId: effectiveUnitId,
       timezone: tz,
       replace,
       deactivated,
       created: upserts,
       consideredTables: targetTables.length,
-    });
+      validRangesCount: valid.length,
+    };
+
+    if (valid.length === 0) {
+      payload.reason = "no_valid_ranges_now"; // sem escalas válidas para dia/horário atual
+    } else if (upserts === 0) {
+      payload.reason = replace ? "nothing_to_create_after_replace" : "existing_assignments_blocked_creation";
+    }
+
+    return res.json(payload);
   } catch (e) {
     console.error("seedTableAssignmentsFromRanges error", e);
     return res.status(500).json({ message: "Erro ao materializar assignments." });
   }
 };
-
-
