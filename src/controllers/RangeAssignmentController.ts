@@ -56,7 +56,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
       return res.status(400).json({ message: "ID da unidade inválido." });
     }
 
-    const unit = await RestaurantUnitModel.findById(unitId).select("_id restaurant");
+    const unit = await RestaurantUnitModel.findById(unitId);
     if (!unit) return res.status(404).json({ message: "Unidade não encontrada." });
 
     // 2) Body safe-parse
