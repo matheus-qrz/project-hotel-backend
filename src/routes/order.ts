@@ -32,13 +32,12 @@ export default (orderRouter: Router) => {
   );
 
   // Rota para processar pagamento (requer autenticação de staff)
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", isAuthenticated, hasRole('MANAGER'), processTablePaymentHandler);
+  orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", isAuthenticated, hasRole(['MANAGER', 'ATTENDANT']), processTablePaymentHandler);
 
   // Listar pedidos de uma unidade (requer autenticação)
   orderRouter.get(
     "/restaurant/:restaurantUnitId/orders",
     isAuthenticated,
-    hasRole(['ADMIN', 'MANAGER']),
     getRestaurantUnitOrdersController
   );
 
