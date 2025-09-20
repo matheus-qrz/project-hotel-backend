@@ -249,32 +249,97 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
 };
 
 // Controlador para obter pedidos de uma unidade
+// Controlador para obter pedidos de uma unidade (com filtro por atendente)
 export const getRestaurantUnitOrdersController = async (req: Request, res: Response) => {
   try {
-    const { restaurantUnitId } = req.params;
-    const { status } = req.query;
+    const { restaurantUnitId } = req.params as { restaurantUnitId: string };
+    const { status, attendantId, onlyAssigned } = (req.query || {}) as {
+      status?: string;
+      attendantId?: string;
+      onlyAssigned?: string; // "true" para exigir mesas atribuídas
+    };
 
-    // Verifique se restaurantUnitId é válido
     if (!restaurantUnitId || !mongoose.isValidObjectId(restaurantUnitId)) {
       return res.status(400).json({ message: "ID da unidade do restaurante inválido." });
     }
 
     const filter: any = { restaurantUnit: restaurantUnitId };
+    if (status) filter.status = status;
 
-    if (status) {
-      filter.status = status;
+    // ✅ Se veio attendantId, restringe às mesas atribuídas (ativos + range válido)
+    if (attendantId && mongoose.isValidObjectId(attendantId)) {
+      // 1) Mesas de TableAssignment ativo
+      const activeTableAssigns = await (await import("../models/TableAssignment")).TableAssignmentModel
+        .find({
+          restaurantUnit: restaurantUnitId,
+          attendant: attendantId,
+          isActive: true,
+        })
+        .select("tableId")
+        .lean();
+
+      const activeTables = new Set<number>(activeTableAssigns.map((a: any) => Number(a.tableId)));
+
+      // 2) Mesas de RangeAssignment válido (dia/horário da unidade)
+      const { RestaurantUnitModel } = await import("../models/RestaurantUnit");
+      const unit = await RestaurantUnitModel.findById(restaurantUnitId).select("timezone").lean();
+      const tz = unit?.timezone || "America/Sao_Paulo";
+
+      // Usamos o mesmo critério do TableAssignmentController: HH:mm da *unidade*
+      const { DateTime } = await import("luxon");
+      const nowTZ = DateTime.now().setZone(String(tz));
+      const dow = nowTZ.weekday % 7; // 0=Dom ... 6=Sáb
+      const hhmm = `${String(nowTZ.hour).padStart(2,"0")}:${String(nowTZ.minute).padStart(2,"0")}`;
+
+      // helpers locais (copiam a semântica existente)
+      const toHHmm = (d: Date) => `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
+      const isWithinShiftHHmm = (cur: string, start?: string | null, end?: string | null) => {
+        if (!start || !end) return false;
+        return start <= cur && cur <= end;
+      };
+
+      const { RangeAssignmentModel } = await import("../models/RangeAssignment");
+      const ranges = await RangeAssignmentModel.find({
+        restaurantUnit: restaurantUnitId,
+        attendant: attendantId,
+        isActive: { $ne: false },
+        $or: [{ daysOfWeek: { $size: 0 } }, { daysOfWeek: dow }],
+      })
+        .select("startTable endTable startsAt endsAt updatedAt")
+        .lean();
+
+      for (const r of ranges) {
+        const start = r.startsAt ? toHHmm(r.startsAt) : null;
+        const end = r.endsAt ? toHHmm(r.endsAt) : null;
+        if (!isWithinShiftHHmm(hhmm, start, end)) continue;
+        const s = Number(r.startTable);
+        const e = Number(r.endTable);
+        if (Number.isInteger(s) && Number.isInteger(e) && s <= e) {
+          for (let t = s; t <= e; t++) activeTables.add(t);
+        }
+      }
+
+      const allowed = Array.from(activeTables.values()).filter((n) => Number.isInteger(n));
+      if (onlyAssigned === "true") {
+        // Se explicitamente exigido e não há mesas válidas agora → retorna vazio
+        if (allowed.length === 0) return res.json([]);
+      }
+
+      if (allowed.length > 0) {
+        filter["meta.tableId"] = { $in: allowed };
+      } else {
+        // Sem allowed, mas não exigido → retorna tudo da unidade (comportamento antigo)
+      }
     }
 
-    const orders = await OrderModel.find(filter)
-      .sort({ createdAt: -1 })
-      .populate('user', 'firstName lastName');
-
-    res.json(orders);
+    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
+    return res.json(orders);
   } catch (error) {
     console.error("Erro ao buscar pedidos:", error);
     res.status(500).json({ message: "Erro ao buscar pedidos", error });
   }
 };
+
 
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
