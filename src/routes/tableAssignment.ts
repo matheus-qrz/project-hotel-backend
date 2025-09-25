@@ -17,7 +17,7 @@ export default (router: Router) => {
   router.post(
   "/manager/units/:unitId/seed-table-assignments",
   isAuthenticated,
-  hasRole(["MANAGER", "ADMIN"]),
+  hasRole(["ADMIN","MANAGER"]),
   seedTableAssignmentsFromRanges
 );
 };

@@ -18,14 +18,16 @@ export default (userRouter: express.Router) => {
     createRestaurantUserController);
   userRouter.get("/users",
     isAuthenticated,
-    hasRole('ADMIN'),
+    hasRole(['ADMIN', 'MANAGER']),
     getAllUsersController
   );
   userRouter.get("/users/:id",
     isAuthenticated,
-    hasRole('ADMIN'),
+    hasRole(['ADMIN', 'MANAGER']),
     getUserByIdController
   );
+
+  // Auto update ou delete
   userRouter.patch("/users/edit/:id", isAuthenticated, updateUserController);
   userRouter.delete("/users/delete/:id", isAuthenticated, deleteUserController);
 };

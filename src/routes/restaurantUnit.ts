@@ -62,6 +62,7 @@ export default (restaurantUnitRouter: Router) => {
   // Obter pedidos de uma unidade
   restaurantUnitRouter.get(
     "/units/:unitId/order",
+    hasRole(["ADMIN","MANAGER"]),
     isAuthenticated,
     getRestaurantUnitOrdersController
   );
