@@ -23,7 +23,7 @@ export interface IRestaurantUnit extends Document {
   restaurant: mongoose.Types.ObjectId;
   isActive: boolean;
   operationalCosts: OperationalCosts;
-  timezone?: DateTime;
+  timezone?: string;
 };
 
 const restaurantUnitSchema = new Schema({
