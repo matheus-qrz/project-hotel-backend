@@ -348,7 +348,6 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
   }
 };
 
-
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
   const { tableId, orderId } = req.params as { tableId: string; orderId: string };
@@ -481,7 +480,6 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
     return res.status(500).json({ message: error?.message || "Erro interno." });
   }
 };
-
 
 // Controlador para excluir um pedido
 export const deleteOrderController = async (req: Request, res: Response) => {
