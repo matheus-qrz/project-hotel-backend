@@ -8,6 +8,7 @@ import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.ty
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
 import { isAttendantAssigned } from "../helpers/assignments";
+import { applyAssignmentToOrder } from "../services/applyAssignment";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -18,7 +19,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
     const restaurantUnit = unitIdFromBody || restaurantId;
 
-    const { guestInfo, meta, items, totalAmount } = req.body as any;
+    const { guestInfo, meta, items, totalAmount, tableId, assignedAttendantId, assignedAttendantName } = req.body as any;
 
     if (
       !restaurantUnit ||
@@ -121,6 +122,14 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       totalAmount: Number(totalAmount) || 0,
       createdAt: now,
       updatedAt: now,
+    });
+
+    await applyAssignmentToOrder({
+      order: doc,
+      unitId: unitIdFromBody,
+      tableId,
+      preferredAttendantId: assignedAttendantId,
+      preferredAttendantName: assignedAttendantName,
     });
 
     await doc.save();
@@ -248,7 +257,6 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
   }
 };
 
-// Controlador para obter pedidos de uma unidade
 // Controlador para obter pedidos de uma unidade (com filtro por atendente)
 export const getRestaurantUnitOrdersController = async (req: Request, res: Response) => {
   try {

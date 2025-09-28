@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose, { Types } from "mongoose";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from '../types/order.types'
 const Schema = mongoose.Schema;
 
@@ -140,6 +140,10 @@ const orderSchema = new Schema(
       enum: Object.values(OrderStatus),
       default: OrderStatus.PROCESSING,
     },
+    assignedAttendantId: { type: Types.ObjectId, ref: "User", required: false, index: true },
+    assignedAttendantName: { type: String, required: false },
+    assignmentStrategy: { type: String, enum: ["scale", "manual", "auto"], default: "scale" },
+    assignmentResolvedAt: { type: Date },
     isPaid: {
       type: Boolean,
       default: false
