@@ -438,8 +438,7 @@ export const getAssignedAttendantController = async (req: Request, res: Response
  *  ========================= */
 export const reassignTablesController = async (req: Request, res: Response) => {
   try {
-    const { unitId } = req.params as any;
-    const { tableIds, toAttendantId } = (req.body || {}) as { tableIds: number[]; toAttendantId: string };
+    const { tableIds, toAttendantId, unitId } = (req.body || {}) as { tableIds: number[]; toAttendantId: string; unitId: string };
 
     if (!Types.ObjectId.isValid(unitId)) return res.status(400).json({ message: "unitId inválido." });
     if (!Array.isArray(tableIds) || tableIds.length === 0) {
