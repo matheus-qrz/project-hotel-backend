@@ -43,6 +43,7 @@
     "reflect-metadata": "^0.1.13",
     "secretjs": "^1.12.5",
     "sharp": "^0.34.3",
+    "socket.io": "^4.8.1",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui": "^5.18.2",
     "swagger-ui-express": "^5.0.1",

@@ -42,6 +42,10 @@ export interface IOrder extends mongoose.Document {
   totalAmount: number;
   isCancelled?: boolean;
   status: OrderStatusType;
+  assignedAttendantId?: mongoose.Schema.Types.ObjectId;
+  assignedAttendantName?: string;
+  assignmentStrategy?: 'scale' | 'manual' | 'auto';
+  assignmentResolvedAt?: Date;
   isPaid: boolean;
   processingAt?: Date;
   completedAt?: Date;

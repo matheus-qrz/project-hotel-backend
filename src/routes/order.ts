@@ -1,78 +1,116 @@
+// src/routes/orderRoutes.ts
 import { Router } from "express";
 import {
-  deleteOrderController,
+  // listagem
   getRestaurantUnitOrdersController,
-  getOrderByIdController,
-  updateOrderStatusController,
-  requestOrderCheckout,
   getTableOrdersController,
+  getOrderByIdController,
+  getGuestOrdersController,
+  // criação e lifecycle
+  initiateOrderController,
+  requestOrderCheckout,
   processTablePaymentHandler,
+  updateOrderStatusController,
+  updateOrderItemController,
   cancelOrderController,
   cancelOrderItemController,
-  updateOrderItemController,
-  getGuestOrdersController,
-  initiateOrderController
+  deleteOrderController,
+  // reatribuição
+  reassignOpenOrdersForUnitController,
 } from "../controllers/OrderController";
-import { isAuthenticated, hasRole } from "../middlewares/index";
+import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (orderRouter: Router) => {
-  // Rota para criação de pedidos (aberta para convidados)
-  orderRouter.post("/restaurant/:restaurantId/order/initiate", initiateOrderController);
-
-  // Rota para usuários autenticados criarem pedidos
-  orderRouter.post("/:userId/:restaurantId/order/initiate",
-    isAuthenticated,
-    hasRole(['CLIENT']),
-    initiateOrderController);
-
-  // Rota para solicitar fechamento de conta 
+  // --- Create (público via QR) ---
   orderRouter.post(
-    "/restaurant/:restaurantId/:tableId/order/:orderId/request-checkout",
+    "/restaurant/:restaurantUnitId/order/initiate",
+    initiateOrderController
+  );
+
+  // (opcional) versão autenticada para CLIENT
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/order/initiate/auth",
+    isAuthenticated,
+    hasRole(["CLIENT"]),
+    initiateOrderController
+  );
+
+  // --- Checkout & Payment ---
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/request-checkout",
     requestOrderCheckout
   );
 
-  // Rota para processar pagamento (requer autenticação de staff)
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/process-payment", 
-    isAuthenticated, 
-    processTablePaymentHandler);
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/:tableId/order/process-payment",
+    isAuthenticated,
+    hasRole(["MANAGER", "ATTENDANT"]),
+    processTablePaymentHandler
+  );
 
-  // Listar pedidos de uma unidade (requer autenticação)
+  // --- Listagens ---
   orderRouter.get(
     "/restaurant/:restaurantUnitId/orders",
     isAuthenticated,
     getRestaurantUnitOrdersController
   );
 
-  // Listar pedidos de uma mesa específica
-  orderRouter.get("/restaurant/:restaurantId/:tableId/orders", getTableOrdersController);
+  orderRouter.get(
+    "/restaurant/:restaurantUnitId/:tableId/orders",
+    getTableOrdersController
+  );
 
-  // Visualizar um pedido específico
-  orderRouter.get("/restaurant/:restaurantId/:tableId/order/:orderId", getOrderByIdController);
+  orderRouter.get(
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId",
+    getOrderByIdController
+  );
 
-  // Listar pedidos de convidado específico
-  orderRouter.get("/restaurant/:restaurantId/:tableId/guest/:guestId/orders", getGuestOrdersController);
+  orderRouter.get(
+    "/restaurant/:restaurantUnitId/:tableId/guest/:guestId/orders",
+    getGuestOrdersController
+  );
 
-  // Atualizar status de pedido (requer autenticação)
+  // --- Updates ---
   orderRouter.patch(
-    '/restaurant/:restaurantId/order/:orderId/status',
+    "/restaurant/:restaurantUnitId/order/:orderId/status",
     isAuthenticated,
-    hasRole(['MANAGER', 'ATTENDANT']),
+    hasRole(["MANAGER", "ATTENDANT"]),
     updateOrderStatusController
   );
 
-  // Excluir pedido (requer autenticação)
-  orderRouter.delete(
-    "/order/:orderId/delete",
+  orderRouter.patch(
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId",
     isAuthenticated,
+    hasRole(["MANAGER", "ATTENDANT"]),
+    updateOrderItemController
+  );
+
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/cancel",
+    isAuthenticated,
+    hasRole(["MANAGER", "ATTENDANT"]),
+    cancelOrderController
+  );
+
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId/cancel",
+    isAuthenticated,
+    hasRole(["MANAGER", "ATTENDANT"]),
+    cancelOrderItemController
+  );
+
+  orderRouter.delete(
+    "/restaurant/:restaurantUnitId/order/:orderId",
+    isAuthenticated,
+    hasRole(["MANAGER"]),
     deleteOrderController
   );
 
-  // Cancelar pedido:
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/:orderId/cancel", cancelOrderController);
-
-  // Cancelar item de pedido
-  orderRouter.post("/restaurant/:restaurantId/:tableId/order/:orderId/items/:itemId/cancel", cancelOrderItemController);
-
-  // Atualizar quantidade/detalhes de item específico de um pedido
-  orderRouter.patch("/restaurant/:restaurantId/:tableId/order/:orderId/items/:itemId", updateOrderItemController);
+  // --- Reassign (idempotente) ---
+  orderRouter.post(
+    "/restaurant/:restaurantUnitId/orders/reassign",
+    isAuthenticated,
+    hasRole(["MANAGER"]),
+    reassignOpenOrdersForUnitController
+  );
 };

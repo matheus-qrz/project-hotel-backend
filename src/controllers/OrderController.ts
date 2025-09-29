@@ -9,6 +9,8 @@ import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
 import { isAttendantAssigned } from "../helpers/assignments";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
+import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
+// import { io } from "../realtime";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -19,7 +21,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
     const restaurantUnit = unitIdFromBody || restaurantId;
 
-    const { guestInfo, meta, items, totalAmount, tableId, assignedAttendantId, assignedAttendantName } = req.body as any;
+    const { guestInfo, meta, items, totalAmount, assignedAttendantId, assignedAttendantName } = req.body as any;
 
     if (
       !restaurantUnit ||
@@ -73,7 +75,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
       ) || null;
 
-    if (existing) {
+ if (existing) {
       // ---------- acumula no MESMO documento e traz o pedido de volta para "processing" ----------
       await OrderModel.updateOne(
         { _id: existing._id },
@@ -93,6 +95,19 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         }
       );
 
+      // 🔹 NOVO: se ainda não tem atendente, resolve agora e salva
+      const updatedDoc = await OrderModel.findById(existing._id);
+      if (updatedDoc && !updatedDoc.assignedAttendantId) {
+        await applyAssignmentToOrder({
+          order: updatedDoc,
+          unitId: String(restaurantUnit),                     // usar o unitId efetivo
+          tableId: Number(meta.tableId),                      // garantir número
+          preferredAttendantId: assignedAttendantId,
+          preferredAttendantName: assignedAttendantName,
+        });
+        await updatedDoc.save();
+      }
+
       const updated = await OrderModel.findById(existing._id);
       res.setHeader("x-session-id", sessionId);
       return res.status(200).json(updated);
@@ -100,6 +115,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
     // ---------- CRIAR NOVO PEDIDO ----------
     const doc = new OrderModel({
+      restaurant: restaurantId || undefined,
       restaurantUnit,
       guestInfo: {
         id: guestInfo.id,
@@ -126,8 +142,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
 
     await applyAssignmentToOrder({
       order: doc,
-      unitId: unitIdFromBody,
-      tableId,
+      unitId: String(restaurantUnit),
+      tableId: Number(meta.tableId),
       preferredAttendantId: assignedAttendantId,
       preferredAttendantName: assignedAttendantName,
     });
@@ -385,6 +401,28 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
 
     const order = await OrderModel.findById(orderId);
     if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
+    
+    const userId = req.user?.id; // do token
+    const isManager = req.user?.role === "MANAGER";
+    
+    if (!isManager) {
+      // Se o pedido tem dono e não é o usuário -> 403
+      if (order?.assignedAttendantId && String(order.assignedAttendantId) !== String(userId)) {
+        return res.status(403).json({ message: "Você não está atribuído a este pedido." });
+      }
+
+      // Se não tem dono, só permitir se a mesa estiver no range/horário do atendente
+      if (!order?.assignedAttendantId) {
+        const canOperate = await isTableInCurrentRange({
+          unitId: String(order?.restaurantUnit),
+          attendantId: String(userId),
+          tableId: Number(order?.meta?.tableId),
+        });
+        if (!canOperate) {
+          return res.status(403).json({ message: "Pedido fora do seu range/horário." });
+        }
+      }
+    }
 
     const prevStatus = order.status;
     const nextStatus = status as
@@ -672,6 +710,28 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
   };
 
   const user = req.user as any;
+  const userId = req.user?.id; // do token
+  const isManager = req.user?.role === "MANAGER";
+  const order = await OrderModel.findById(orderId);
+
+  if (!isManager) {
+    // Se o pedido tem dono e não é o usuário -> 403
+    if (order?.assignedAttendantId && String(order.assignedAttendantId) !== String(userId)) {
+      return res.status(403).json({ message: "Você não está atribuído a este pedido." });
+    }
+
+    // Se não tem dono, só permitir se a mesa estiver no range/horário do atendente
+    if (!order?.assignedAttendantId) {
+      const canOperate = await isTableInCurrentRange({
+        unitId: String(order?.restaurantUnit),
+        attendantId: String(userId),
+        tableId: Number(order?.meta?.tableId),
+      });
+      if (!canOperate) {
+        return res.status(403).json({ message: "Pedido fora do seu range/horário." });
+      }
+    }
+  }
 
   try {
     const tableNum = Number(tableId);
@@ -792,5 +852,118 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
   } catch (e) {
     console.error("Erro ao atualizar item:", e);
     return res.status(500).json({ message: "Erro ao atualizar item." });
+  }
+};
+
+export const reassignOpenOrdersForUnitController = async (req: Request, res: Response) => {
+  try {
+    const { restaurantUnitId } = req.params as { restaurantUnitId: string };
+    const { dryRun, onlyUnassigned } = (req.query || {}) as {
+      dryRun?: string;           // "true" -> só simula
+      onlyUnassigned?: string;   // "true" -> só sem dono
+    };
+
+    if (!restaurantUnitId || !mongoose.isValidObjectId(restaurantUnitId)) {
+      return res.status(400).json({ message: "restaurantUnitId inválido." });
+    }
+
+    const baseFilter: any = {
+      restaurantUnit: restaurantUnitId,
+      status: { $nin: ["paid", "cancelled"] },
+      isPaid: { $ne: true },
+      "meta.tableId": { $exists: true },
+    };
+
+    if (onlyUnassigned === "true") {
+      baseFilter.$or = [
+        { assignedAttendantId: { $exists: false } },
+        { assignedAttendantId: null },
+      ];
+    }
+
+    const orders = await OrderModel.find(baseFilter).lean();
+    if (orders.length === 0) {
+      return res.json({ ok: true, matched: 0, changed: 0, details: [] });
+    }
+
+    const details: Array<{
+      orderId: string;
+      tableId: number;
+      prev?: { id?: string | null; name?: string | null };
+      next?: { id?: string | null; name?: string | null; strategy?: string };
+      changed: boolean;
+    }> = [];
+
+    let changed = 0;
+
+    for (const o of orders) {
+      const tableId = Number(o?.meta?.tableId);
+      if (!Number.isFinite(tableId)) continue;
+
+      const prev = {
+        id: o.assignedAttendantId ? String(o.assignedAttendantId) : null,
+        name: o.assignedAttendantName ?? null,
+      };
+
+      // reavalia com a regra atual (dia/hora/mesa/fuso da unidade)
+      // applyAssignmentToOrder PREENCHE no doc (quando houver alguém), mas aqui estamos em "dryRun"
+      // então chamaremos apenas para obter o "next" (truque simples: clonar doc em memória)
+      const mockDoc: any = { ...o };
+      await applyAssignmentToOrder({
+        order: mockDoc,
+        unitId: restaurantUnitId,
+        tableId,
+      });
+
+      const next = {
+        id: mockDoc.assignedAttendantId ? String(mockDoc.assignedAttendantId) : null,
+        name: mockDoc.assignedAttendantName ?? null,
+        strategy: mockDoc.assignmentStrategy ?? "scale",
+      };
+
+      const willChange = (prev.id || null) !== (next.id || null)
+        || (prev.name || null) !== (next.name || null);
+
+      details.push({
+        orderId: String(o._id),
+        tableId,
+        prev,
+        next,
+        changed: !!willChange,
+      });
+    }
+
+    if (dryRun === "true") {
+      return res.json({ ok: true, matched: orders.length, changed: details.filter(d => d.changed).length, details });
+    }
+
+    // aplica de verdade só nos que mudaram
+    for (const d of details) {
+      if (!d.changed) continue;
+
+      const real = await OrderModel.findById(d.orderId);
+      if (!real) continue;
+
+      await applyAssignmentToOrder({
+        order: real,
+        unitId: restaurantUnitId,
+        tableId: Number(real?.meta?.tableId),
+      });
+
+      await real.save();
+      changed++;
+      
+      // TODO: Implementar realtime notification via Socket.IO
+      // if (real.assignedAttendantId) {
+      //   io.to(`unit:${restaurantUnitId}:attendant:${real.assignedAttendantId}`).emit("order:reassigned", { orderId: real._id });
+      // } else {
+      //   io.to(`unit:${restaurantUnitId}`).emit("order:reassigned_unassigned", { orderId: real._id });
+      // }
+    }
+
+    return res.json({ ok: true, matched: orders.length, changed, details: details.filter(d => d.changed) });
+  } catch (err) {
+    console.error("REASSIGN_ORDERS_FAILED", err);
+    return res.status(500).json({ message: "REASSIGN_ORDERS_FAILED" });
   }
 };
