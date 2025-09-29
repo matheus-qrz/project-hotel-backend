@@ -1,4 +1,4 @@
-import { Router, Request, Response, NextFunction } from "express";
+import { Router } from "express";
 import {
   listRangeAssignments,
   createOrMergeRangeAssignment,
@@ -6,15 +6,16 @@ import {
   toggleActive,
   updateRangeAssignment,
   deleteRangeAssignment,
+  reassignTablesController,
 } from "../controllers/RangeAssignmentController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
-export default (router: Router) => {
+export default (rangeAssignRouter: Router) => {
   /**
    * LISTAR escalas agregadas por unidade (ADMIN/MANAGER)
    * Usa o novo agregador que já unifica dias (compat com legados).
    */
-  router.get(
+  rangeAssignRouter.get(
     "/units/:unitId/range-assignments",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]), 
@@ -25,7 +26,7 @@ export default (router: Router) => {
    * CRIAR/MESCLAR uma escala única (daysOfWeek[] em um doc)
    * Compat: o antigo "bulk" agora mapeia para este mesmo handler.
    */
-  router.post(
+  rangeAssignRouter.post(
     "/units/:unitId/range-assignments",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -33,7 +34,7 @@ export default (router: Router) => {
   );
 
   // Compat com endpoint antigo de "aplicar intervalo em bulk"
-  router.patch(
+  rangeAssignRouter.patch(
     "/units/:unitId/range-assignments/bulk",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -41,7 +42,7 @@ export default (router: Router) => {
   );
 
   // (Opcional) compat por restaurante/matriz, se ainda houver chamadas antigas:
-  router.patch(
+  rangeAssignRouter.patch(
     "/restaurants/:restaurantId/range-assignments/bulk",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -51,7 +52,7 @@ export default (router: Router) => {
   /**
    * EDITAR campos gerais de uma escala (sem trocar dias)
    */
-  router.patch(
+  rangeAssignRouter.patch(
     "/range-assignments/:id",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -61,7 +62,7 @@ export default (router: Router) => {
   /**
    * SUBSTITUIR completamente os dias de uma escala (daysOfWeek)
    */
-  router.patch(
+  rangeAssignRouter.patch(
     "/range-assignments/:id/days",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -71,7 +72,7 @@ export default (router: Router) => {
   /**
    * ATIVAR/DESATIVAR uma escala
    */
-  router.patch(
+  rangeAssignRouter.patch(
     "/range-assignments/:id/toggle",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
@@ -81,10 +82,18 @@ export default (router: Router) => {
   /**
    * REMOVER uma escala
    */
-  router.delete(
+  rangeAssignRouter.delete(
     "/range-assignments/:id",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     deleteRangeAssignment
   );
+
+  /** 
+   * ALTERAR ESCALA 
+  */
+  rangeAssignRouter.patch("/reassign",
+  isAuthenticated,
+  hasRole(["ADMIN", "MANAGER"]),
+  reassignTablesController);
 };
