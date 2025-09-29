@@ -92,7 +92,7 @@ export default (rangeAssignRouter: Router) => {
   /** 
    * ALTERAR ESCALA 
   */
-  rangeAssignRouter.patch("/reassign",
+  rangeAssignRouter.post("/reassign",
   isAuthenticated,
   hasRole(["ADMIN", "MANAGER"]),
   reassignTablesController);
