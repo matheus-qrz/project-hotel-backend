@@ -277,22 +277,29 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
 export const getRestaurantUnitOrdersController = async (req: Request, res: Response) => {
   try {
     const { restaurantUnitId } = req.params as { restaurantUnitId: string };
-    const { status, attendantId, onlyAssigned } = (req.query || {}) as {
+
+    // 🔹 agora também aceitamos includeUnassigned
+    const { status, attendantId, onlyAssigned, includeUnassigned } = (req.query || {}) as {
       status?: string;
       attendantId?: string;
-      onlyAssigned?: string; // "true" para exigir mesas atribuídas
+      onlyAssigned?: string;        // "true"
+      includeUnassigned?: string;   // "true"
     };
 
     if (!restaurantUnitId || !mongoose.isValidObjectId(restaurantUnitId)) {
       return res.status(400).json({ message: "ID da unidade do restaurante inválido." });
     }
 
-    const filter: any = { restaurantUnit: restaurantUnitId };
-    if (status) filter.status = status;
+    const baseFilter: any = { restaurantUnit: restaurantUnitId };
+    if (status) baseFilter.status = status;
 
-    // ✅ Se veio attendantId, restringe às mesas atribuídas (ativos + range válido)
+    // ================================
+    // Se veio attendantId, aplicamos lógica combinada:
+    //  - sempre incluir pedidos já atribuídos ao garçom (mesmo sem range/mesa ativa)
+    //  - opcionalmente incluir "unassigned" das mesas/horários que ele cobre AGORA
+    // ================================
     if (attendantId && mongoose.isValidObjectId(attendantId)) {
-      // 1) Mesas de TableAssignment ativo
+      // 1) Mesas cobertas AGORA por TableAssignment ativo
       const activeTableAssigns = await (await import("../models/TableAssignment")).TableAssignmentModel
         .find({
           restaurantUnit: restaurantUnitId,
@@ -304,23 +311,22 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 
       const activeTables = new Set<number>(activeTableAssigns.map((a: any) => Number(a.tableId)));
 
-      // 2) Mesas de RangeAssignment válido (dia/horário da unidade)
+      // 2) Mesas cobertas AGORA por RangeAssignment válido (dia/hora da unidade)
       const { RestaurantUnitModel } = await import("../models/RestaurantUnit");
       const unit = await RestaurantUnitModel.findById(restaurantUnitId).select("timezone").lean();
       const tz = unit?.timezone || "America/Sao_Paulo";
 
-      // Usamos o mesmo critério do TableAssignmentController: HH:mm da *unidade*
       const { DateTime } = await import("luxon");
       const nowTZ = DateTime.now().setZone(String(tz));
       const dow = nowTZ.weekday % 7; // 0=Dom ... 6=Sáb
-      const hhmm = `${String(nowTZ.hour).padStart(2,"0")}:${String(nowTZ.minute).padStart(2,"0")}`;
+      const hh = String(nowTZ.hour).padStart(2, "0");
+      const mm = String(nowTZ.minute).padStart(2, "0");
+      const hhmmNow = `${hh}:${mm}`;
 
-      // helpers locais (copiam a semântica existente)
-      const toHHmm = (d: Date) => `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
-      const isWithinShiftHHmm = (cur: string, start?: string | null, end?: string | null) => {
-        if (!start || !end) return false;
-        return start <= cur && cur <= end;
-      };
+      const toHHmm = (d: Date) =>
+        `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+      const isWithin = (cur: string, start?: string | null, end?: string | null) =>
+        !!start && !!end && start <= cur && cur <= end;
 
       const { RangeAssignmentModel } = await import("../models/RangeAssignment");
       const ranges = await RangeAssignmentModel.find({
@@ -329,40 +335,66 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
         isActive: { $ne: false },
         $or: [{ daysOfWeek: { $size: 0 } }, { daysOfWeek: dow }],
       })
-        .select("startTable endTable startsAt endsAt updatedAt")
+        .select("startTable endTable startsAt endsAt")
         .lean();
 
       for (const r of ranges) {
-        const start = r.startsAt ? toHHmm(r.startsAt) : null;
-        const end = r.endsAt ? toHHmm(r.endsAt) : null;
-        if (!isWithinShiftHHmm(hhmm, start, end)) continue;
         const s = Number(r.startTable);
         const e = Number(r.endTable);
-        if (Number.isInteger(s) && Number.isInteger(e) && s <= e) {
-          for (let t = s; t <= e; t++) activeTables.add(t);
-        }
+        const start = r.startsAt ? toHHmm(r.startsAt) : null;
+        const end = r.endsAt ? toHHmm(r.endsAt) : null;
+        if (!Number.isInteger(s) || !Number.isInteger(e) || s > e) continue;
+        if (!isWithin(hhmmNow, start, end)) continue;
+        for (let t = s; t <= e; t++) activeTables.add(t);
       }
 
-      const allowed = Array.from(activeTables.values()).filter((n) => Number.isInteger(n));
+      // ===========
+      // Filtro final
+      // ===========
+      const orConds: any[] = [];
+
+      // A) Sempre incluir o que já está atribuído a este garçom
+      orConds.push({ assignedAttendantId: new mongoose.Types.ObjectId(attendantId) });
+
+      // B) Incluir "sem dono" nas MESAS COBERTAS AGORA (se solicitado)
+      const allowed = Array.from(activeTables).filter((n) => Number.isInteger(n));
+      const wantsUnassigned = includeUnassigned === "true";
+      if (wantsUnassigned && allowed.length > 0) {
+        orConds.push({
+          "meta.tableId": { $in: allowed },
+          $or: [
+            { assignedAttendantId: { $exists: false } },
+            { assignedAttendantId: null },
+          ],
+        });
+      }
+
+      // C) Se explicitamente exigiu "só os meus", não retorna nada além do OR acima
+      //    (ou seja, não cai no "tudo da unidade")
       if (onlyAssigned === "true") {
-        // Se explicitamente exigido e não há mesas válidas agora → retorna vazio
-        if (allowed.length === 0) return res.json([]);
+        return res.json(await OrderModel.find({ ...baseFilter, $or: orConds }).sort({ createdAt: -1 }));
       }
 
-      if (allowed.length > 0) {
-        filter["meta.tableId"] = { $in: allowed };
-      } else {
-        // Sem allowed, mas não exigido → retorna tudo da unidade (comportamento antigo)
-      }
+      // Caso contrário, restringimos por mesas cobertas se existir lista; se não existir,
+      // mantemos apenas o OR (meus atribuídos + possivelmente unassigned nas minhas mesas).
+      const finalFilter =
+        allowed.length > 0
+          ? { ...baseFilter, $or: orConds.concat([{ "meta.tableId": { $in: allowed } }]) }
+          : { ...baseFilter, $or: orConds };
+
+      const orders = await OrderModel.find(finalFilter).sort({ createdAt: -1 });
+      return res.json(orders);
     }
 
-    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
+    // Sem attendantId → comportamento anterior (por unidade, opcionalmente status)
+    const orders = await OrderModel.find(baseFilter).sort({ createdAt: -1 });
     return res.json(orders);
   } catch (error) {
     console.error("Erro ao buscar pedidos:", error);
     res.status(500).json({ message: "Erro ao buscar pedidos", error });
   }
 };
+
 
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
