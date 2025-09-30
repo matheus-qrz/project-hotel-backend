@@ -59,6 +59,9 @@ importers:
       hbs:
         specifier: ^4.2.0
         version: 4.2.0
+      iconv-lite:
+        specifier: ^0.7.0
+        version: 0.7.0
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.2
@@ -83,6 +86,9 @@ importers:
       nodemailer:
         specifier: ^6.10.0
         version: 6.10.1
+      papaparse:
+        specifier: ^5.5.3
+        version: 5.5.3
       pg:
         specifier: ^8.10.0
         version: 8.16.3
@@ -144,6 +150,9 @@ importers:
       '@types/multer':
         specifier: ^1.4.12
         version: 1.4.13
+      '@types/papaparse':
+        specifier: ^5.3.16
+        version: 5.3.16
       '@types/swagger-ui-express':
         specifier: ^4.1.8
         version: 4.1.8
@@ -673,6 +682,9 @@ packages:
 
   '@types/node@24.3.3':
     resolution: {integrity: sha512-GKBNHjoNw3Kra1Qg5UXttsY5kiWMEfoHq2TmXb+b1rcm6N7B3wTrFYIf/oSZ1xNQ+hVVijgLkiDZh7jRRsh+Gw==}
+
+  '@types/papaparse@5.3.16':
+    resolution: {integrity: sha512-T3VuKMC2H0lgsjI9buTB3uuKj3EMD2eap1MOuEQuBQ44EnDx/IkGhU6EwiTf9zG3za4SKlmwKAImdDKdNnCsXg==}
 
   '@types/qs@6.14.0':
     resolution: {integrity: sha512-eOunJqu0K1923aExK6y8p6fsihYEn/BYuQ4g0CxAAgFc4b/ZLN4CrsRZ55srTdqoiLzU2B2evC+apEIxprEzkQ==}
@@ -1511,6 +1523,10 @@ packages:
     resolution: {integrity: sha512-v3MXnZAcvnywkTUEZomIActle7RXXeedOR31wwl7VlyoXO4Qi9arvSenNQWne1TcRwhCL1HwLI21bEqdpj8/rA==}
     engines: {node: '>=0.10.0'}
 
+  iconv-lite@0.7.0:
+    resolution: {integrity: sha512-cf6L2Ds3h57VVmkZe+Pn+5APsT7FpqJtEhhieDCvrE2MK5Qk9MyffgQyuxQTm6BChfeZNtcOLHp9IcWRVcIcBQ==}
+    engines: {node: '>=0.10.0'}
+
   ieee754@1.2.1:
     resolution: {integrity: sha512-dcyqhDvX1C46lXZcVqCpK+FtMRQVdIMN6/Df5js2zouUsqG7I6sFxitIC+7KYK29KdXOLHdu9zL4sFnoVQnqaA==}
 
@@ -2021,6 +2037,9 @@ packages:
 
   pako@2.0.4:
     resolution: {integrity: sha512-v8tweI900AUkZN6heMU/4Uy4cXRc2AYNRggVmTR+dEncawDJgCdLMximOVA2p4qO57WMynangsfGRb5WD6L1Bg==}
+
+  papaparse@5.5.3:
+    resolution: {integrity: sha512-5QvjGxYVjxO59MGU2lHVYpRWBBtKHnlIAcSe1uNFCkkptUh63NFRj0FJQm7nR67puEruUci/ZkjmEFrjCAyP4A==}
 
   parse-entities@2.0.0:
     resolution: {integrity: sha512-kkywGpCcRYhqQIchaWqZ875wzpS/bMKhz5HnN3p7wveJTkTtyAB/AlnS0f8DFSqYW1T82t6yEAkEcB+A1I3MbQ==}
@@ -3696,6 +3715,10 @@ snapshots:
     dependencies:
       undici-types: 7.10.0
 
+  '@types/papaparse@5.3.16':
+    dependencies:
+      '@types/node': 24.3.3
+
   '@types/qs@6.14.0': {}
 
   '@types/ramda@0.30.2':
@@ -4607,6 +4630,10 @@ snapshots:
     dependencies:
       safer-buffer: 2.1.2
 
+  iconv-lite@0.7.0:
+    dependencies:
+      safer-buffer: 2.1.2
+
   ieee754@1.2.1: {}
 
   ignore-by-default@1.0.1: {}
@@ -5086,6 +5113,8 @@ snapshots:
   package-json-from-dist@1.0.1: {}
 
   pako@2.0.4: {}
+
+  papaparse@5.5.3: {}
 
   parse-entities@2.0.0:
     dependencies:

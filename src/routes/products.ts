@@ -12,6 +12,7 @@ import {
 } from "../controllers/ProductController";
 import { hasRole, isAuthenticated } from "../middlewares/index";
 import { upload } from "../middlewares/multer";
+import { importProductsController } from "../controllers/ImportProductsController";
 
 export default (productsRouter: Router) => {
   // Criar produto individual
@@ -72,5 +73,13 @@ export default (productsRouter: Router) => {
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     updateComboController
+  );
+
+  productsRouter.post(
+    "/restaurant/:id/products/import",
+    isAuthenticated,
+    hasRole(["ADMIN","MANAGER"]),
+    upload.single("file"),
+    importProductsController
   );
 };
