@@ -230,11 +230,26 @@ export const createEmployeeController = async (req: Request, res: Response) => {
 
     await newEmployee.save();
 
-    // vinculações
     if (unitDoc) {
-      await RestaurantUnitModel.findByIdAndUpdate(unitDoc._id, { $addToSet: { staff: newEmployee._id } });
+    if (role === "MANAGER") {
+      await RestaurantUnitModel.findByIdAndUpdate(
+        unitDoc._id,
+        { $addToSet: { managers: newEmployee._id } }
+      );
+    } else if (role === "ATTENDANT") {
+      await RestaurantUnitModel.findByIdAndUpdate(
+        unitDoc._id,
+        { $addToSet: { attendants: newEmployee._id } }
+      );
     }
-    await RestaurantModel.findByIdAndUpdate(restaurantDoc._id, { $addToSet: { staff: newEmployee._id } });
+    }
+
+    const restaurantUpdate: any = {};
+    if (role === "MANAGER") restaurantUpdate.$addToSet = { ...(restaurantUpdate.$addToSet||{}), managers: newEmployee._id };
+    if (role === "ATTENDANT") restaurantUpdate.$addToSet = { ...(restaurantUpdate.$addToSet||{}), attendants: newEmployee._id };
+    if (Object.keys(restaurantUpdate).length) {
+      await RestaurantModel.findByIdAndUpdate(restaurantDoc._id, restaurantUpdate);
+    }
 
     return res.status(201).json({
       message: "Funcionário criado com sucesso",
@@ -245,7 +260,7 @@ export const createEmployeeController = async (req: Request, res: Response) => {
         email: newEmployee.email,
         role: newEmployee.role,
         restaurant: newEmployee.restaurant,
-        restaurantUnit: newEmployee.restaurantUnit, // null para matriz
+        restaurantUnit: newEmployee.restaurantUnit, 
       },
     });
   } catch (error: any) {
@@ -381,6 +396,35 @@ export const deleteEmployeeController = async (req: Request, res: Response) => {
                 employee.restaurant,
                 { $pull: { staff: employee._id } }
             );
+        }
+
+        if (employee.restaurantUnit) {
+          if (employee.role === "MANAGER") {
+            await RestaurantUnitModel.findByIdAndUpdate(
+              employee.restaurantUnit,
+              { $pull: { managers: employee._id } }
+            );
+          } else if (employee.role === "ATTENDANT") {
+            await RestaurantUnitModel.findByIdAndUpdate(
+              employee.restaurantUnit,
+              { $pull: { attendants: employee._id } }
+            );
+          }
+        }
+
+
+        if (employee.restaurant) {
+          if (employee.role === "MANAGER") {
+            await RestaurantModel.findByIdAndUpdate(
+              employee.restaurant,
+              { $pull: { managers: employee._id } }
+            );
+          } else if (employee.role === "ATTENDANT") {
+            await RestaurantModel.findByIdAndUpdate(
+              employee.restaurant,
+              { $pull: { attendants: employee._id } }
+            );
+          }
         }
 
         // Deleta o funcionário
