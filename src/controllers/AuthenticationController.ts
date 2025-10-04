@@ -22,17 +22,17 @@ function normalizeCPF(v: string) {
   return v.replace(/\D/g, "");
 }
 
-const issueJWT = (id: string, email: string, role: string, expiresIn: string | number = "7d") => {
+export function issueJWT(user: any) {
   const payload = {
-    sub: id,
-    email,
-    role,
-    iat: Date.now(),
+    sub: String(user._id),
+    role: user.role,
+    restaurantId: user.restaurant ? String(user.restaurant) : null,
+    unitId: user.restaurantUnit ? String(user.restaurantUnit) : null, // <- AQUI
   };
 
-  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "1d" });
+  const token = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: "7d" });
   return token;
-};
+}
 
 // Login para restaurante (admin)
 export const loginAdminHandler = async (req: Request, res: Response) => {
@@ -67,11 +67,7 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
 
-      const token = issueJWT(
-        user._id.toString(),
-        user.email || "",
-        "ADMIN"
-      );
+      const token = issueJWT(user);
 
       user.authentication.sessionToken = token;
       await user.save();
@@ -165,7 +161,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const token = issueJWT(user._id.toString(), user.email || "", user.role || "");
+    const token = issueJWT(user);
     user.authentication.sessionToken = token;
     await user.save();
 
@@ -178,6 +174,8 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         email: user.email ?? null,
         cpf: user.cpf ?? null,
         role: user.role,
+        restaurantId: user.restaurant ? String(user.restaurant) : null,
+        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
       },
     };
 
@@ -319,7 +317,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
     });
 
     // Gerar token JWT usando a nova função
-    const token = issueJWT(adminUser._id.toString(), email, "ADMIN");
+    const token = issueJWT(adminUser);
 
     // Atualizar token de sessão no usuário e no restaurante
     await UserModel.findByIdAndUpdate(adminUser._id, {
@@ -411,7 +409,7 @@ export const registerClientHandler = async (req: Request, res: Response) => {
     if (!newUser.email || !newUser.role) {
       throw new Error("Email or role is undefined for the new user.");
     }
-    const token = issueJWT(newUser._id.toString(), newUser.email, newUser.role);
+    const token = issueJWT(newUser);
 
     // Atualizar token de sessão no banco de dados
     await UserModel.findByIdAndUpdate(newUser._id, {
