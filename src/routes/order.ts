@@ -88,21 +88,19 @@ export default (orderRouter: Router) => {
   orderRouter.post(
     "/restaurant/:restaurantUnitId/:tableId/order/:orderId/cancel",
     isAuthenticated,
-    hasRole(["MANAGER", "ATTENDANT"]),
     cancelOrderController
   );
 
   orderRouter.post(
     "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId/cancel",
     isAuthenticated,
-    hasRole(["MANAGER", "ATTENDANT"]),
     cancelOrderItemController
   );
 
   orderRouter.delete(
     "/restaurant/:restaurantUnitId/order/:orderId",
     isAuthenticated,
-    hasRole(["MANAGER"]),
+    hasRole(["MANAGER", "ATTENDANT"]),
     deleteOrderController
   );
 
