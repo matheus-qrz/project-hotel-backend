@@ -51,7 +51,6 @@ export default (orderRouter: Router) => {
   // --- Listagens ---
   orderRouter.get(
     "/restaurant/:restaurantUnitId/orders",
-    isAuthenticated,
     getRestaurantUnitOrdersController
   );
 
@@ -86,14 +85,12 @@ export default (orderRouter: Router) => {
   );
 
   orderRouter.post(
-    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/cancel",
-    isAuthenticated,
+    "/restaurant/:restaurantUnitId/:tableId/order/:orderId/cancel",  
     cancelOrderController
   );
 
   orderRouter.post(
     "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId/cancel",
-    isAuthenticated,
     cancelOrderItemController
   );
 
