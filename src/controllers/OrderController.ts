@@ -723,47 +723,8 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
 
 // Atualizar quantidade/detalhes de item específico de um pedido
 export const updateOrderItemController = async (req: Request, res: Response) => {
-  const { tableId, orderId, itemId } = req.params as {
-    tableId: string;
-    orderId: string;
-    itemId: string;
-  };
-
-  const {
-    guestId,
-    quantity,
-    status,     // "processing" | "completed" | "cancelled" | "reduced"
-    servedAt,   // opcional ISO string; se ausente e status=completed, usa now
-  } = (req.body || {}) as {
-    guestId?: string;
-    quantity?: number;
-    status?: string;
-    servedAt?: string;
-  };
-
-  const user = req.user as any;
-  const userId = req.user?.id; // do token
-  const isManager = req.user?.role === "MANAGER";
-  const order = await OrderModel.findById(orderId);
-
-  if (!isManager) {
-    // Se o pedido tem dono e não é o usuário -> 403
-    if (order?.assignedAttendantId && String(order.assignedAttendantId) !== String(userId)) {
-      return res.status(403).json({ message: "Você não está atribuído a este pedido." });
-    }
-
-    // Se não tem dono, só permitir se a mesa estiver no range/horário do atendente
-    if (!order?.assignedAttendantId) {
-      const canOperate = await isTableInCurrentRange({
-        unitId: String(order?.restaurantUnit),
-        attendantId: String(userId),
-        tableId: Number(order?.meta?.tableId),
-      });
-      if (!canOperate) {
-        return res.status(403).json({ message: "Pedido fora do seu range/horário." });
-      }
-    }
-  }
+  const { tableId, orderId, itemId } = req.params as any;
+  const { guestId, quantity, status, servedAt } = (req.body || {}) as any;
 
   try {
     const tableNum = Number(tableId);
@@ -771,31 +732,32 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       return res.status(400).json({ message: "tableId inválido." });
     }
 
-    // Descobre a unidade a partir do pedido (necessária p/ validação de escala)
+    // Confirma pedido + mesa antes de gates
     const doc = await OrderModel.findOne(
       { _id: orderId, "meta.tableId": tableNum },
-      { "meta.unitId": 1 }
+      { assignedAttendantId: 1, assignedAttendantName: 1, restaurantUnit: 1, "meta.tableId": 1 }
     );
     if (!doc) return res.status(404).json({ message: "Pedido não encontrado." });
 
-    const unitId = String(doc.restaurantUnit || "");
+    const currentUserId = String(req.user?.id ?? "");
 
-    // 🔒 Gate: somente ATTENDANT precisa estar escalado para a mesa AGORA
-    if (user?.role === "ATTENDANT") {
-      const userId = String(user?._id ?? user?.id ?? "");
-      if (!userId) return res.status(401).json({ message: "Usuário não autenticado." });
-
-      const ok = await isAttendantAssigned({
-        unitId,
-        attendantId: userId,
-        tableId: tableNum,
-      });
-      if (!ok) {
-        return res.status(403).json({ message: "Você não está escalado para esta mesa agora." });
+      // 1) Se tem dono e não é o usuário -> 403
+      if (doc.assignedAttendantId && String(doc.assignedAttendantId) !== currentUserId) {
+        return res.status(403).json({ message: "Você não está atribuído a este pedido." });
       }
-    }
+      // 2) Se não tem dono, checa range/horário do atendente
+      if (!doc.assignedAttendantId) {
+        const canOperate = await isTableInCurrentRange({
+          unitId: String(doc.restaurantUnit),
+          attendantId: currentUserId,
+          tableId: tableNum,
+        });
+        if (!canOperate) {
+          return res.status(403).json({ message: "Pedido fora do seu range/horário." });
+        }
+      }
 
-    // ---------- Filtro do item editável ----------
+    // ---------- filtro de atualização ----------
     const baseFilter: any = {
       _id: orderId,
       "meta.tableId": tableNum,
@@ -805,56 +767,33 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     };
     if (guestId) baseFilter["guestInfo.id"] = guestId;
 
-    const hdr = req.headers["x-session-id"];
-    if (typeof hdr === "string" && hdr.trim()) baseFilter.sessionId = hdr.trim();
-
-    // ---------- Montagem do update ----------
     const now = new Date();
     const $set: any = {};
     const $unset: any = {};
     const $currentDate: any = { "items.$.updatedAt": true };
 
-    // 1) Quantidade
     if (typeof quantity === "number") {
       if (quantity <= 0) {
-        // Zerar => cancela
         $set["items.$.quantity"] = 0;
         $set["items.$.status"] = "cancelled";
         $set["items.$.cancelledAt"] = now;
       } else {
         $set["items.$.quantity"] = quantity;
-
-        // Se não veio status explícito, detectar redução e marcar 'reduced'
-        if (!status) {
-          const existing = await OrderModel.findOne(baseFilter, { "items.$": 1 }).lean().exec();
-          const prevQty =
-            existing?.items && Array.isArray(existing.items) && (existing.items as any)[0]
-              ? Number((existing.items as any)[0].quantity ?? 0)
-              : null;
-
-          if (prevQty !== null && quantity < prevQty) {
-            $set["items.$.status"] = "reduced";
-          }
-        }
+        // se quiser marcar como reduced/added aqui, mantenha sua lógica
       }
     }
 
-    // 2) Status (tem precedência)
     if (typeof status === "string") {
       const normalized = status.toLowerCase();
       if (["processing", "completed", "cancelled", "reduced"].includes(normalized)) {
         $set["items.$.status"] = normalized;
-
         if (normalized === "completed") {
           const ts = servedAt ? new Date(servedAt) : now;
           $set["items.$.completedAt"] = ts;
-          // Se havia cancelamento, limpar
           $unset["items.$.cancelledAt"] = "";
         } else if (normalized === "cancelled") {
           $set["items.$.cancelledAt"] = now;
-          // Mantemos completedAt (histórico) — ajuste se quiser limpar também
         }
-        // processing/reduced não alteram timestamps específicos
       }
     }
 
@@ -867,25 +806,26 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
 
     const updated = await OrderModel.findOneAndUpdate(baseFilter, updateOp, { new: true });
     if (!updated) {
-      return res
-        .status(404)
-        .json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
+      return res.status(404).json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
     }
 
-    // Recalcular totals/flags (mantém seu fluxo)
+    // recomputa totals com segurança
     let recomputed = null;
-    try {
-      recomputed = await recomputeAndReturn(orderId);
-    } catch (err) {
-      console.warn("recomputeAndReturn falhou (update item):", err);
+    try { recomputed = await recomputeAndReturn(orderId); } catch (e) {
+      console.warn("recomputeAndReturn falhou (update item):", e);
     }
 
     return res.json(recomputed ?? updated);
   } catch (e) {
-    console.error("Erro ao atualizar item:", e);
+    console.error("Erro ao atualizar item:", {
+      params: req.params,
+      body: req.body,
+      error: e,
+    });
     return res.status(500).json({ message: "Erro ao atualizar item." });
   }
 };
+
 
 export const reassignOpenOrdersForUnitController = async (req: Request, res: Response) => {
   try {
