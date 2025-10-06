@@ -115,7 +115,6 @@ export const createFoodController = async (
   }
 };
 
-// Controller para buscar produtos de um estabelecimento
 export const getAllFoodsController = async (
   req: express.Request,
   res: express.Response

@@ -205,5 +205,26 @@ export const deleteProduct = (id: string) =>
   ProductModel.findOneAndDelete({ _id: id });
 
 // Atualizar produto
-export const updateProduct = (id: string, values: Record<string, any>) =>
-  ProductModel.findByIdAndUpdate(id, values, { new: true });
+export const updateProduct = async (id: string, values: Record<string, any>) => {
+  const doc = await ProductModel.findById(id);
+  if (!doc) return null;
+
+  Object.assign(doc, values);
+
+  // garantir cálculo de promoção mesmo em update:
+  if (doc.isOnPromotion) {
+    if (doc.discountPercentage && !doc.promotionalPrice) {
+      doc.promotionalPrice = doc.price - (doc.price * (doc.discountPercentage / 100));
+    }
+    if (doc.promotionalPrice && !doc.discountPercentage) {
+      doc.discountPercentage = Math.round(((doc.price - doc.promotionalPrice) / doc.price) * 100);
+    }
+  } else {
+    doc.promotionalPrice = undefined;
+    doc.discountPercentage = undefined;
+    doc.promotionStartDate = undefined;
+    doc.promotionEndDate = undefined;
+  }
+
+  return doc.save();
+};
