@@ -8,6 +8,7 @@ import {
 } from "../models/RestaurantUnit";
 import { RestaurantModel, updateRestaurant } from "../models/Restaurant";
 import { UserModel } from "../models/User";
+import mongoose from "mongoose";
 
 export const addRestaurantUnitController = async (req: Request, res: Response) => {
   try {
@@ -179,52 +180,90 @@ export const getRestaurantUnitByIdController = async (
   }
 };
 
-export const updateRestaurantUnitController = async (
-  req: Request,
-  res: Response
-) => {
-  try {
-    const { unitId } = req.params;
-    const updateData = req.body;
+// supondo imports:
+// import mongoose from "mongoose";
+// import { RestaurantUnit } from "../models/RestaurantUnit";
 
-    // Não permitir alteração do status de matriz
-    if ('isMatrix' in updateData) {
-      return res.status(400).json({
-        message: "Não é permitido alterar o status de matriz de uma unidade"
-      });
-    }
+export const updateRestaurantUnitController = async (req: Request, res: Response) => {
+  const { unitId } = req.params;
+  const updateData = req.body ?? {};
 
-    // Verificar se é uma unidade matriz
-    const unit = await getRestaurantUnitById(unitId);
-    if (!unit) {
-      return res.status(404).json({ message: "Unidade não encontrada" });
-    }
-
-    if (unit.isMatrix) {
-      return res.status(400).json({
-        message: "Não é permitido modificar a unidade matriz diretamente"
-      });
-    }
-
-    // Criar objeto com valores a serem atualizados
-    const updateValues: Record<string, any> = {};
-    const allowedFields = ['address', 'cnpj', 'phone', 'manager', 'socialName', 'attendants'];
-
-    for (const field of allowedFields) {
-      if (field in updateData) {
-        updateValues[field] = updateData[field];
-      }
-    }
-
-    // Aplicar a atualização
-    const updatedUnit = await updateRestaurantUnit(unitId, updateValues);
-
-    return res.status(200).json(updatedUnit || { message: "Unidade atualizada com sucesso" });
-  } catch (error) {
-    console.log(error);
-    return res.status(500).json({ message: "Erro ao atualizar unidade", error });
+  const unit = await RestaurantUnitModel.findById(unitId);
+  if (!unit) {
+    return res.status(404).json({ message: "Unidade não encontrada" });
   }
+
+  // bloqueia troca de restaurante (se seu payload trouxer restaurant)
+  if (updateData.restaurant && String(updateData.restaurant) !== String(unit.restaurant)) {
+    return res.status(400).json({ message: "Não é permitido alterar o restaurante da unidade" });
+  }
+
+  // --- Regras específicas de isMatrix ---
+  if (typeof updateData.isMatrix !== "undefined") {
+    const wantMatrix = !!updateData.isMatrix;
+
+    if (wantMatrix) {
+      // Promover esta unidade a matriz (e despromover a anterior, se existir)
+      const session = await mongoose.startSession();
+      try {
+        await session.withTransaction(async () => {
+          const currentMatrix = await RestaurantUnitModel.findOne({
+            restaurant: unit.restaurant,
+            isMatrix: true,
+          }).session(session);
+
+          if (currentMatrix && String(currentMatrix._id) !== String(unit._id)) {
+            currentMatrix.isMatrix = false;
+            await currentMatrix.save({ session });
+          }
+
+          unit.isMatrix = true;
+          // aplique também outros campos que vierem no update (exceto isMatrix, já tratado)
+          const { isMatrix, restaurant, ...rest } = updateData;
+          Object.assign(unit, rest);
+
+          await unit.save({ session });
+        });
+      } finally {
+        session.endSession();
+      }
+
+      const updated = await RestaurantUnitModel.findById(unitId);
+      return res.status(200).json(updated);
+    } else {
+      // Despromover esta unidade (só se já existir outra matriz)
+      const anotherMatrixExists = await RestaurantUnitModel.exists({
+        restaurant: unit.restaurant,
+        isMatrix: true,
+        _id: { $ne: unit._id },
+      });
+
+      if (!anotherMatrixExists) {
+        return res.status(400).json({
+          message:
+            "Esta é a unidade matriz. Promova outra unidade a matriz antes de removê-la.",
+        });
+      }
+
+      unit.isMatrix = false;
+      const { isMatrix, restaurant, ...rest } = updateData;
+      Object.assign(unit, rest);
+
+      await unit.save();
+      const updated = await RestaurantUnitModel.findById(unitId);
+      return res.status(200).json(updated);
+    }
+  }
+
+  // --- Atualização comum (sem mudança de isMatrix) ---
+  const { isMatrix, restaurant, ...rest } = updateData; // garante que não caia aqui sem querer
+  Object.assign(unit, rest);
+
+  await unit.save();
+  const updated = await RestaurantUnitModel.findById(unitId);
+  return res.status(200).json(updated);
 };
+
 
 export const deleteRestaurantUnitController = async (
   req: Request,
