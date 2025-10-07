@@ -17,6 +17,9 @@ import {
   deleteOrderController,
   // reatribuição
   reassignOpenOrdersForUnitController,
+  removeOrderItemController,
+  addOrderItemExceptionController,
+  applyOrderCouponController,
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
@@ -108,4 +111,25 @@ export default (orderRouter: Router) => {
     hasRole(["MANAGER"]),
     reassignOpenOrdersForUnitController
   );
+
+  orderRouter.delete(
+  "/units/:unitId/orders/:orderId/items/:itemId",
+  isAuthenticated,
+  hasRole(["MANAGER"]),
+  removeOrderItemController,
+);
+
+orderRouter.patch(
+  "/units/:unitId/orders/:orderId/items/:itemId/exception",
+  isAuthenticated,
+  hasRole(["MANAGER"]),
+  addOrderItemExceptionController,
+);
+
+orderRouter.post(
+  "/units/:unitId/orders/:orderId/coupons",
+  isAuthenticated,
+  hasRole(["MANAGER"]),
+  applyOrderCouponController,
+);
 };

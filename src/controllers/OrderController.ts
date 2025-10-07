@@ -10,6 +10,7 @@ import { computeTotal } from "../utils/computeTotal";
 import { isAttendantAssigned } from "../helpers/assignments";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
 import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
+import { computeSubtotalWithoutCoupons, n0 } from "../helpers/coupon";
 // import { io } from "../realtime";
 
 // Inicializador do pedido
@@ -721,6 +722,24 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
   }
 };
 
+export const removeOrderItemController = async (req: Request, res: Response) => {
+  try {
+    const { unitId, orderId, itemId } = req.params;
+
+    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // remove fisicamente o item
+    order.items = (order.items || []).filter((it: any) => String(it._id) !== String(itemId));
+
+    // salva — teu pre('save') recalcula totalAmount automaticamente
+    await order.save();
+    return res.json(order.toObject());
+  } catch (err: any) {
+    return res.status(500).json({ message: "Failed to remove item", error: String(err?.message || err) });
+  }
+};
+
 // Atualizar quantidade/detalhes de item específico de um pedido
 export const updateOrderItemController = async (req: Request, res: Response) => {
   const { tableId, orderId, itemId } = req.params as any;
@@ -826,7 +845,7 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
   }
 };
 
-
+// Mudar para quem dos garçons registrados irá os pedidos
 export const reassignOpenOrdersForUnitController = async (req: Request, res: Response) => {
   try {
     const { restaurantUnitId } = req.params as { restaurantUnitId: string };
@@ -937,5 +956,103 @@ export const reassignOpenOrdersForUnitController = async (req: Request, res: Res
   } catch (err) {
     console.error("REASSIGN_ORDERS_FAILED", err);
     return res.status(500).json({ message: "REASSIGN_ORDERS_FAILED" });
+  }
+};
+
+export const addOrderItemExceptionController = async (req: Request, res: Response) => {
+  try {
+    const { unitId, orderId, itemId } = req.params;
+    const { reason, discount } = req.body || {};
+
+    if (!reason || !String(reason).trim()) {
+      return res.status(400).json({ message: "Reason is required" });
+    }
+
+    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    const item: any = order.items?.find((it: any) => String(it._id) === String(itemId));
+    if (!item) return res.status(404).json({ message: "Item not found" });
+
+    const note = `[EXCEÇÃO] ${String(reason).trim()}${discount ? ` (abatimento R$ ${n0(discount).toFixed(2)})` : ""}`;
+
+    // 1) addon negativo para abater no total (compatível com teu pre('save'))
+    const dec = n0(discount);
+    if (dec > 0) {
+      if (!Array.isArray(item.addons)) item.addons = [];
+      item.addons.push({
+        name: note,
+        price: -dec,      // valor negativo
+        quantity: 1,
+      });
+    }
+
+    // 2) guarda a nota no próprio item (campo já existe)
+    const currObs = String(item.observations || "");
+    item.observations = currObs
+      ? `${currObs} | ${note}`
+      : note;
+
+    await order.save(); // pre('save') recalcula totalAmount
+    return res.json(order.toObject());
+  } catch (err: any) {
+    return res.status(500).json({ message: "Failed to add exception", error: String(err?.message || err) });
+  }
+};
+
+export const applyOrderCouponController = async (req: Request, res: Response) => {
+  try {
+    const { unitId, orderId } = req.params;
+    const { kind, value, code } = req.body || {};
+
+    if (!["percent", "absolute"].includes(String(kind))) {
+      return res.status(400).json({ message: "Invalid kind. Use 'percent' or 'absolute'." });
+    }
+    const v = n0(value);
+    if (!(Number.isFinite(v) && v > 0)) {
+      return res.status(400).json({ message: "Invalid value." });
+    }
+
+    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    // base para cálculo percentual: subtotal SEM itens de cupom já existentes
+    const base = computeSubtotalWithoutCoupons(order);
+
+    let amount = 0;
+    if (kind === "percent") {
+      const pct = Math.max(0, Math.min(100, v));
+      amount = (pct / 100) * base;
+    } else {
+      amount = Math.min(base, v);
+    }
+    if (amount <= 0) {
+      return res.status(400).json({ message: "Nothing to discount on current subtotal." });
+    }
+
+    // insere um "item negativo" representando o cupom/ajuste
+    const label = code ? `[CUPOM ${String(code).trim()}]` : "[AJUSTE GERENTE]";
+    order.items = order.items || [];
+    order.items.push({
+      name: label,
+      price: -amount,     // valor negativo
+      quantity: 1,
+      addons: [],
+      status: "added",
+      isOnPromotion: false,
+      originalPrice: 0,
+    } as any);
+
+    // opcional: também registra no meta.observations para auditoria
+    const obs = String(order?.meta?.observations || "");
+    const cupomObs = `${label} ${kind === "percent" ? `(${v}%)` : `(R$ ${amount.toFixed(2)})`}`;
+    const newObs = obs ? `${obs} | ${cupomObs}` : cupomObs;
+    order.meta = order.meta || {} as any;
+    order.meta && order.meta.observations == newObs;
+
+    await order.save(); // pre('save') recalcula totalAmount com o item negativo
+    return res.json(order.toObject());
+  } catch (err: any) {
+    return res.status(500).json({ message: "Failed to apply coupon", error: String(err?.message || err) });
   }
 };
