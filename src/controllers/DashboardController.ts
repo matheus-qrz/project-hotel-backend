@@ -13,93 +13,6 @@ import {
 import { resolveTimeWindow } from '../helpers/timeWindow';
 import { fillBuckets } from '../helpers/fillBuckets';
 
-async function calcAverageDeliveryMinutes(unitId: string) {
-  const unitObjId = new Types.ObjectId(unitId);
-
-  const [res] = await Order.aggregate([
-    { $match: { restaurantUnit: unitObjId, status: "completed" } },
-
-    // Extrai timestamps de processing e completed de forma resiliente
-    {
-      $addFields: {
-        tsProcessing: {
-          $ifNull: [
-            "$statusTimestamps.processing",
-            {
-              // tenta achar na history
-              $let: {
-                vars: {
-                  p: {
-                    $first: {
-                      $filter: {
-                        input: { $ifNull: ["$history", []] },
-                        as: "h",
-                        cond: { $eq: ["$$h.status", "processing"] },
-                      },
-                    },
-                  },
-                },
-                in: "$$p.at",
-              },
-            },
-          ],
-        },
-        tsCompleted: {
-          $ifNull: [
-            "$statusTimestamps.completed",
-            {
-              $let: {
-                vars: {
-                  c: {
-                    $first: {
-                      $filter: {
-                        input: { $ifNull: ["$history", []] },
-                        as: "h",
-                        cond: { $eq: ["$$h.status", "completed"] },
-                      },
-                    },
-                  },
-                },
-                in: "$$c.at",
-              },
-            },
-          ],
-        },
-      },
-    },
-
-    // fallback extra: se não houver processing, usa createdAt; se não houver completed, usa completedAt
-    {
-      $addFields: {
-        startAt: { $ifNull: ["$tsProcessing", "$createdAt"] },
-        endAt: { $ifNull: ["$tsCompleted", "$completedAt"] },
-      },
-    },
-
-    // filtra só quem tem start e end válidos e order end > start
-    {
-      $match: {
-        startAt: { $type: "date" },
-        endAt: { $type: "date" },
-        $expr: { $gt: ["$endAt", "$startAt"] },
-      },
-    },
-
-    // converte para minutos
-    {
-      $project: {
-        deltaMin: {
-          $divide: [{ $subtract: ["$endAt", "$startAt"] }, 1000 * 60],
-        },
-      },
-    },
-
-    { $group: { _id: null, averageDeliveryMinutes: { $avg: "$deltaMin" } } },
-  ]);
-
-  return Math.round(res?.averageDeliveryMinutes ?? 0);
-}
-
 // ------------------ FINANCIAL DASHBOARD ------------------
 export const getFinancialDashboardDataController = async (req: Request, res: Response) => {
   try {
@@ -558,7 +471,42 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     const summaryBase =
       agg?.summary?.[0] ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
-    const averageDeliveryMinutes = await calcAverageDeliveryMinutes(String(unitId));
+    const [avgRes] = await Order.aggregate([
+  { $match: { restaurant: new mongoose.Types.ObjectId(restaurantId), status: "completed" } },
+  {
+    $addFields: {
+      startAt: {
+        $ifNull: [
+          "$statusTimestamps.processing",
+          { $ifNull: ["$createdAt", null] }
+        ]
+      },
+      endAt: {
+        $ifNull: [
+          "$statusTimestamps.completed",
+          { $ifNull: ["$completedAt", null] }
+        ]
+      }
+    }
+  },
+  {
+    $match: {
+      startAt: { $type: "date" },
+      endAt: { $type: "date" },
+      $expr: { $gt: ["$endAt", "$startAt"] }
+    }
+  },
+  {
+    $project: {
+      deltaMin: {
+        $divide: [{ $subtract: ["$endAt", "$startAt"] }, 1000 * 60]
+      }
+    }
+  },
+  { $group: { _id: null, avgDelivery: { $avg: "$deltaMin" } } }
+]);
+
+const averageDeliveryMinutes = Math.round(avgRes?.avgDelivery ?? 0);
 
     // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
     const topOrders = (agg?.topOrders ?? []).map((x: any) => ({
