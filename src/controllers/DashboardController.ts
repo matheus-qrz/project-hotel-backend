@@ -417,41 +417,90 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
           ],
 
           // ===== Tempo médio: processing -> (completed|paid) =====
-          avgDelivery: [
-            { $match: { ...matchBase, status: "completed" } },
-            {
-              $project: {
-                startedAt: {
-                  $ifNull: [
-                    "$processingAt",
-                    { $ifNull: [
-                      { $let: { 
-                        vars: { hit: { $first: { $filter: { input: "$statusHistory", as: "s", cond: { $eq: ["$$s.status", "processing"] } } } } },
-                        in: "$$hit.at"
-                      }},
-                      "$createdAt"
-                    ] }
-                  ],
-                },
-                finishedAt: {
-                  $ifNull: [
-                    "$completedAt",
-                    { $ifNull: [
-                      { $let: {
-                        vars: { hit: { $first: { $filter: { input: "$statusHistory", as: "s", cond: { $eq: ["$$s.status", "completed"] } } } } },
-                        in: "$$hit.at"
-                      }},
-                      "$updatedAt"
-                    ] }
-                  ],
+         avgDelivery: [
+  {
+    $match: {
+      ...matchBase,
+      status: { $in: ["completed", "paid"] }, // inclui pedidos pagos
+      completedAt: { $type: "date" }, // garante data válida
+      processingAt: { $type: "date" }, // garante data válida
+    },
+  },
+  {
+    $project: {
+      startedAt: {
+        $ifNull: [
+          "$processingAt",
+          {
+            $ifNull: [
+              {
+                $let: {
+                  vars: {
+                    hit: {
+                      $first: {
+                        $filter: {
+                          input: "$statusHistory",
+                          as: "s",
+                          cond: { $eq: ["$$s.status", "processing"] },
+                        },
+                      },
+                    },
+                  },
+                  in: "$$hit.at",
                 },
               },
-            },
-            { $project: { diffMs: { $subtract: ["$finishedAt", "$startedAt"] } } },
-            { $match: { diffMs: { $gt: 0 } } },
-            { $group: { _id: null, avgMs: { $avg: "$diffMs" } } },
-            { $project: { _id: 0, avgMinutes: { $divide: ["$avgMs", 60000] } } },
-          ],
+              "$createdAt",
+            ],
+          },
+        ],
+      },
+      finishedAt: {
+        $ifNull: [
+          "$completedAt",
+          {
+            $ifNull: [
+              {
+                $let: {
+                  vars: {
+                    hit: {
+                      $first: {
+                        $filter: {
+                          input: "$statusHistory",
+                          as: "s",
+                          cond: { $eq: ["$$s.status", "completed"] },
+                        },
+                      },
+                    },
+                  },
+                  in: "$$hit.at",
+                },
+              },
+              "$updatedAt",
+            ],
+          },
+        ],
+      },
+    },
+  },
+  {
+    $project: {
+      diffMs: { $subtract: ["$finishedAt", "$startedAt"] },
+    },
+  },
+  { $match: { diffMs: { $gt: 0 } } },
+  {
+    $group: {
+      _id: null,
+      avgMs: { $avg: "$diffMs" },
+    },
+  },
+  {
+    $project: {
+      _id: 0,
+      avgMinutes: { $divide: ["$avgMs", 60000] },
+    },
+  },
+],
         },
       },
     ]);
