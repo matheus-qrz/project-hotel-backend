@@ -422,12 +422,10 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     $match: {
       ...matchBase,
       status: { $in: ["completed", "paid"] }, // inclui pedidos pagos
-      completedAt: { $type: "date" }, // garante data válida
-      processingAt: { $type: "date" }, // garante data válida
     },
   },
   {
-    $project: {
+ $project: {
       startedAt: {
         $ifNull: [
           "$processingAt",
@@ -439,7 +437,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
                     hit: {
                       $first: {
                         $filter: {
-                          input: "$statusHistory",
+                          input: { $ifNull: ["$statusHistory", []] },
                           as: "s",
                           cond: { $eq: ["$$s.status", "processing"] },
                         },
@@ -454,7 +452,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
           },
         ],
       },
-      finishedAt: {
+ finishedAt: {
         $ifNull: [
           "$completedAt",
           {
@@ -465,7 +463,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
                     hit: {
                       $first: {
                         $filter: {
-                          input: "$statusHistory",
+                          input: { $ifNull: ["$statusHistory", []] },
                           as: "s",
                           cond: { $eq: ["$$s.status", "completed"] },
                         },
@@ -482,25 +480,18 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       },
     },
   },
-  {
-    $project: {
-      diffMs: { $subtract: ["$finishedAt", "$startedAt"] },
-    },
-  },
-  { $match: { diffMs: { $gt: 0 } } },
-  {
-    $group: {
-      _id: null,
-      avgMs: { $avg: "$diffMs" },
-    },
-  },
-  {
-    $project: {
-      _id: 0,
-      avgMinutes: { $divide: ["$avgMs", 60000] },
-    },
-  },
-],
+          {
+            $match: {
+              startedAt: { $type: "date" },
+              finishedAt: { $type: "date" },
+              $expr: { $gt: ["$finishedAt", "$startedAt"] },
+            },
+          },
+            { $project: { diffMs: { $subtract: ["$finishedAt", "$startedAt"] } } },
+            { $match: { diffMs: { $gt: 0 } } },
+            { $group: { _id: null, avgMs: { $avg: "$diffMs" } } },
+            { $project: { _id: 0, avgMinutes: { $divide: ["$avgMs", 60000] } } },
+          ],
         },
       },
     ]);
@@ -555,7 +546,9 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
   { $group: { _id: null, avgDelivery: { $avg: "$deltaMin" } } }
 ]);
 
-const averageDeliveryMinutes = Math.round(avgRes?.avgDelivery ?? 0);
+    const averageDeliveryMinutes = Math.round(
+      agg?.[0]?.avgDelivery?.[0]?.avgMinutes ?? 0
+    );
 
     // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
     const topOrders = (agg?.topOrders ?? []).map((x: any) => ({
