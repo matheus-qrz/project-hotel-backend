@@ -5,6 +5,7 @@ export interface OrderSummary {
     paid: number;
     processing: number;
     cancelled: number;
+    averageDeliveryMinutes?: number;
 }
 
 export interface TopOrder {
