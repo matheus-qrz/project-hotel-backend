@@ -364,92 +364,87 @@ export const getAssignedAttendantController = async (req: Request, res: Response
     const tableNum = Number(tableId);
     if (!Number.isInteger(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
+    // ===== contexto: at (ISO) e tz (IANA) =====
     const atIso = String((req.query as any).at || new Date().toISOString());
     const tz = String((req.query as any).tz || "America/Sao_Paulo");
-
-    const toHHmmTZ = (d: Date, tz: string) => {
-    const p = new Intl.DateTimeFormat("pt-BR",{ timeZone: tz, hour:"2-digit", minute:"2-digit", hour12:false }).formatToParts(d);
-    const hh = p.find(x=>x.type==="hour")?.value ?? "00";
-    const mm = p.find(x=>x.type==="minute")?.value ?? "00";
-    return `${hh}:${mm}`;
-    };
-    const parseAnchor = (iso: string) => {
-      // âncoras 1970 devem ser lidas em UTC para preservar HH:mm gravado
-      const d = new Date(iso);
-      return { hh: d.getUTCHours(), mm: d.getUTCMinutes() };
-    };
-    const within = (now: string, start: string, end: string) => {
-      // janela cruzando meia-noite
-      return start <= end ? (now >= start && now < end) : (now >= start || now < end);
-    };
-
-    // 2) fallback: plano (range) considerando hora/dia atuais
     const at = new Date(atIso);
-    const dow = Number(new Intl.DateTimeFormat("en-US",{ timeZone: tz, weekday:"short"}).formatToParts(at)
-    .reduce((acc,p)=>p.type==="weekday"?p.value:acc,""));
-    const timeRef = nowRefTime();
 
-    const nowHHmm = toHHmmTZ(at, tz);
+    // HH:mm no fuso da unidade
+    const hhmmInTZ = (d: Date, tz: string) => {
+      const parts = new Intl.DateTimeFormat("pt-BR", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(d);
+      const hh = parts.find(p => p.type === "hour")?.value ?? "00";
+      const mm = parts.find(p => p.type === "minute")?.value ?? "00";
+      return `${hh}:${mm}`;
+    };
+    const nowHHmm = hhmmInTZ(at, tz);
 
-    const candidates = await RangeAssignmentModel.find({
+    // Lê âncoras 1970 como HH:mm em UTC (não desloca)
+    const hhmmFromAnchor = (iso: string) => {
+      const d = new Date(iso);
+      const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
+      return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+    };
+
+    // janela [start, end) cobrindo virada
+    const within = (nowHHmm: string, start: string, end: string) =>
+      start <= end ? (nowHHmm >= start && nowHHmm < end) : (nowHHmm >= start || nowHHmm < end);
+
+    // 1) candidatos por mesa + dia da semana
+    const dowShort = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(at);
+    const dowMap: Record<string, number> = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+    const dowNum = dowMap[dowShort] ?? at.getDay();
+
+    const ranges = await RangeAssignmentModel.find({
       restaurantUnit: unitId,
       startTable: { $lte: tableNum },
       endTable: { $gte: tableNum },
       isActive: { $ne: false },
-      $or: [ { daysOfWeek: { $size: 0 } }, { daysOfWeek: at.getDay() } ],
-    }).select("attendant attendantName startTable endTable startsAt endsAt updatedAt").lean();
+      $or: [{ daysOfWeek: { $exists: false } }, { daysOfWeek: { $size: 0 } }, { daysOfWeek: dowNum }],
+      startsAt: { $ne: null },
+      endsAt: { $ne: null },
+    })
+      .select("attendant attendantName startTable endTable startsAt endsAt updatedAt")
+      .lean();
 
-    const valid = candidates.filter(c => {
-      if (!c.startsAt || !c.endsAt) return false;
-      const s = parseAnchor(String(c.startsAt)); // UTC -> HH:mm
-      const e = parseAnchor(String(c.endsAt));
-      const pad = (n:number)=>n<10?`0${n}`:`${n}`;
-      const start = `${pad(s.hh)}:${pad(s.mm)}`;
-      const end   = `${pad(e.hh)}:${pad(e.mm)}`;
-      return within(nowHHmm, start, end);
-    });
+    // 2) filtra por horário atual (considera virada)
+    const valid = ranges
+      .map(r => {
+        const start = hhmmFromAnchor(String(r.startsAt));
+        const end   = hhmmFromAnchor(String(r.endsAt));
+        return within(nowHHmm, start, end) ? { r, start } : null;
+      })
+      .filter(Boolean) as Array<{ r: any; start: string }>;
 
-    if (!valid.length) {
-      return res.status(200).json({ source: "range", attendant: null, updatedAt: null });
-    }
+    // 3) melhor encaixe: menor faixa (mais específica), depois quem começou mais tarde
+    const best = valid
+      .sort((a, b) => {
+        const wa = a.r.endTable - a.r.startTable;
+        const wb = b.r.endTable - b.r.startTable;
+        if (wa !== wb) return wa - wb;
+        return a.start < b.start ? 1 : -1; // start mais tarde primeiro
+      })[0]?.r;
 
-    // melhor encaixe: menor faixa (mais específica), depois mais recente
-    valid.sort((a: any, b: any) => {
-      const wa = (a.endTable - a.startTable);
-      const wb = (b.endTable - b.startTable);
-      if (wa !== wb) return wa - wb;
-      const ua = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const ub = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return ub - ua;
-    });
-
-    const best = valid.sort((a,b) => {
-      const wa=(a.endTable-a.startTable), wb=(b.endTable-b.startTable);
-      if (wa!==wb) return wa-wb;
-      const ua=a.updatedAt?new Date(a.updatedAt).getTime():0;
-      const ub=b.updatedAt?new Date(b.updatedAt).getTime():0;
-      return ub-ua;
-    })[0];
-
+    // 4) override por TableAssignment APENAS se muito recente (ex.: ação manual do gerente)
     const active = await TableAssignmentModel
       .findOne({ restaurantUnit: unitId, tableId: tableNum, isActive: true })
-      .populate({ path: "attendant", select: "firstName lastName role" });
+      .populate({ path: "attendant", select: "firstName lastName avatar role" });
 
-    const recentOverrideHrs = 2; 
+    const recentOverrideHrs = 2; // ajuste se quiser
     const isRecent = active?.updatedAt
-      ? (Date.now() - new Date(active.updatedAt).getTime()) <= recentOverrideHrs*3600*1000
+      ? (Date.now() - new Date(active.updatedAt).getTime()) <= recentOverrideHrs * 3600_000
       : false;
 
     if (active && isRecent) {
-      const a:any = active.attendant;
+      const a: any = active.attendant;
       const name = a ? `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() : null;
       return res.status(200).json({
         source: "table",
         attendant: a ? { id: String(a._id), name, avatar: a.avatar ?? null } : null,
-        updatedAt: active.updatedAt?.toISOString() ?? null,
+        updatedAt: active.updatedAt ? active.updatedAt.toISOString() : null,
       });
     }
 
+    // 5) retorna a escala vigente
     if (best) {
       if (best.attendant) {
         const u = await UserModel.findById(best.attendant).select("firstName lastName avatar");
@@ -460,14 +455,17 @@ export const getAssignedAttendantController = async (req: Request, res: Response
           updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
         });
       }
-      return res.status(200).json({
-        source: "range",
-        attendant: best.attendantName ? { id: null as any, name: best.attendantName, avatar: null } : null,
-        updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
-      });
+      if (best.attendantName) {
+        return res.status(200).json({
+          source: "range",
+          attendant: { id: null as any, name: best.attendantName, avatar: null },
+          updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
+        });
+      }
     }
 
-    return res.status(200).json({ source: "range", attendant: null, updatedAt: null });
+    // 6) sem escala e sem override recente
+    return res.status(200).json({ source: "none", attendant: null, updatedAt: null });
   } catch (e) {
     console.error("getAssignedAttendantController error:", e);
     return res.status(500).json({ message: "Erro ao resolver atendente." });
