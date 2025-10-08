@@ -364,37 +364,50 @@ export const getAssignedAttendantController = async (req: Request, res: Response
     const tableNum = Number(tableId);
     if (!Number.isInteger(tableNum)) return res.status(400).json({ message: "tableId inválido." });
 
-    // 1) ativo por mesa (fonte da verdade em tempo real)
-    const active = await TableAssignmentModel
-      .findOne({ restaurantUnit: unitId, tableId: tableNum, isActive: true })
-      .populate({ path: "attendant", select: "firstName lastName avatar role" });
+    const atIso = String((req.query as any).at || new Date().toISOString());
+    const tz = String((req.query as any).tz || "America/Sao_Paulo");
 
-    if (active) {
-      const a: any = active.attendant;
-      const name = a ? `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() : null;
-      return res.status(200).json({
-        source: "table",
-        attendant: a ? { id: String(a._id), name, avatar: a.avatar ?? null } : null,
-        updatedAt: active.updatedAt ? active.updatedAt.toISOString() : null,
-      });
-    }
+    const toHHmmTZ = (d: Date, tz: string) => {
+    const p = new Intl.DateTimeFormat("pt-BR",{ timeZone: tz, hour:"2-digit", minute:"2-digit", hour12:false }).formatToParts(d);
+    const hh = p.find(x=>x.type==="hour")?.value ?? "00";
+    const mm = p.find(x=>x.type==="minute")?.value ?? "00";
+    return `${hh}:${mm}`;
+    };
+    const parseAnchor = (iso: string) => {
+      // âncoras 1970 devem ser lidas em UTC para preservar HH:mm gravado
+      const d = new Date(iso);
+      return { hh: d.getUTCHours(), mm: d.getUTCMinutes() };
+    };
+    const within = (now: string, start: string, end: string) => {
+      // janela cruzando meia-noite
+      return start <= end ? (now >= start && now < end) : (now >= start || now < end);
+    };
 
     // 2) fallback: plano (range) considerando hora/dia atuais
-    const now = new Date();
-    const dow = now.getDay(); // 0..6 (0=domingo)
+    const at = new Date(atIso);
+    const dow = Number(new Intl.DateTimeFormat("en-US",{ timeZone: tz, weekday:"short"}).formatToParts(at)
+    .reduce((acc,p)=>p.type==="weekday"?p.value:acc,""));
     const timeRef = nowRefTime();
+
+    const nowHHmm = toHHmmTZ(at, tz);
 
     const candidates = await RangeAssignmentModel.find({
       restaurantUnit: unitId,
       startTable: { $lte: tableNum },
       endTable: { $gte: tableNum },
       isActive: { $ne: false },
-      $or: [ { daysOfWeek: { $size: 0 } }, { daysOfWeek: dow } ],
-      startsAt: { $ne: null },
-      endsAt: { $ne: null },
+      $or: [ { daysOfWeek: { $size: 0 } }, { daysOfWeek: at.getDay() } ],
     }).select("attendant attendantName startTable endTable startsAt endsAt updatedAt").lean();
 
-    const valid = candidates.filter((c: any) => c.startsAt && c.endsAt && c.startsAt <= timeRef && timeRef <= c.endsAt);
+    const valid = candidates.filter(c => {
+      if (!c.startsAt || !c.endsAt) return false;
+      const s = parseAnchor(String(c.startsAt)); // UTC -> HH:mm
+      const e = parseAnchor(String(c.endsAt));
+      const pad = (n:number)=>n<10?`0${n}`:`${n}`;
+      const start = `${pad(s.hh)}:${pad(s.mm)}`;
+      const end   = `${pad(e.hh)}:${pad(e.mm)}`;
+      return within(nowHHmm, start, end);
+    });
 
     if (!valid.length) {
       return res.status(200).json({ source: "range", attendant: null, updatedAt: null });
@@ -410,23 +423,51 @@ export const getAssignedAttendantController = async (req: Request, res: Response
       return ub - ua;
     });
 
-    const best = valid[0];
+    const best = valid.sort((a,b) => {
+      const wa=(a.endTable-a.startTable), wb=(b.endTable-b.startTable);
+      if (wa!==wb) return wa-wb;
+      const ua=a.updatedAt?new Date(a.updatedAt).getTime():0;
+      const ub=b.updatedAt?new Date(b.updatedAt).getTime():0;
+      return ub-ua;
+    })[0];
 
-    if (best.attendant) {
-      const u = await UserModel.findById(best.attendant).select("firstName lastName avatar");
-      const name = u ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : (best.attendantName ?? null);
+    const active = await TableAssignmentModel
+      .findOne({ restaurantUnit: unitId, tableId: tableNum, isActive: true })
+      .populate({ path: "attendant", select: "firstName lastName role" });
+
+    const recentOverrideHrs = 2; 
+    const isRecent = active?.updatedAt
+      ? (Date.now() - new Date(active.updatedAt).getTime()) <= recentOverrideHrs*3600*1000
+      : false;
+
+    if (active && isRecent) {
+      const a:any = active.attendant;
+      const name = a ? `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() : null;
+      return res.status(200).json({
+        source: "table",
+        attendant: a ? { id: String(a._id), name, avatar: a.avatar ?? null } : null,
+        updatedAt: active.updatedAt?.toISOString() ?? null,
+      });
+    }
+
+    if (best) {
+      if (best.attendant) {
+        const u = await UserModel.findById(best.attendant).select("firstName lastName avatar");
+        const name = u ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() : (best.attendantName ?? null);
+        return res.status(200).json({
+          source: "range",
+          attendant: { id: String(best.attendant), name, avatar: u?.avatar ?? null },
+          updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
+        });
+      }
       return res.status(200).json({
         source: "range",
-        attendant: { id: String(best.attendant), name, avatar: u?.avatar ?? null },
+        attendant: best.attendantName ? { id: null as any, name: best.attendantName, avatar: null } : null,
         updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
       });
     }
 
-    return res.status(200).json({
-      source: "range",
-      attendant: best.attendantName ? { id: null as any, name: best.attendantName, avatar: null } : null,
-      updatedAt: best.updatedAt ? new Date(best.updatedAt).toISOString() : null,
-    });
+    return res.status(200).json({ source: "range", attendant: null, updatedAt: null });
   } catch (e) {
     console.error("getAssignedAttendantController error:", e);
     return res.status(500).json({ message: "Erro ao resolver atendente." });
