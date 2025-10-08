@@ -18,20 +18,33 @@ function tSafeEqHex(aHex: string, bHex: string) {
   return crypto.timingSafeEqual(a, b);
 }
 
+function asStringId(id: any): string | null {
+  if (!id) return null;
+  // aceita: ObjectId, {_id}, string
+  if (typeof id === "string") return id;
+  if (id instanceof mongoose.Types.ObjectId) return String(id);
+  if (typeof id === "object" && id._id) return String(id._id);
+  return null;
+}
+
 function normalizeCPF(v: string) {
   return v.replace(/\D/g, "");
 }
 
-export function issueJWT(user: any) {
+function issueJWT(user: any) {
+  const restaurantId = asStringId(user.restaurant);
+  const unitId = asStringId(user.restaurantUnit);
+
   const payload = {
-    sub: String(user._id),
-    role: user.role,
-    restaurantId: user.restaurant ? String(user.restaurant) : null,
-    unitId: user.restaurantUnit ? String(user.restaurantUnit) : null, // <- AQUI
+    sub: asStringId(user._id),
+    role: String(user.role || ""),
+    restaurantId,
+    unitId, // <- chave para o frontend
   };
 
-  const token = jwt.sign(payload, process.env.JWT_SECRET!, { expiresIn: "7d" });
-  return token;
+  // exp padrão 7d (ajuste se quiser)
+  const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
+  return { token, payload };
 }
 
 // Login para restaurante (admin)
@@ -67,12 +80,13 @@ export const loginAdminHandler = async (req: Request, res: Response) => {
         return res.status(401).json({ message: "Credenciais inválidas" });
       }
 
-      const token = issueJWT(user);
-
-      user.authentication.sessionToken = token;
+      const jwtResult = issueJWT(user);
+  
+      user.authentication.sessionToken = jwtResult.token;
       await user.save();
 
       // Incluir o restaurantId na resposta
+      const { token } = issueJWT(user);
       return res.status(200).json({
         message: "Login realizado com sucesso",
         user: {
@@ -161,8 +175,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const token = issueJWT(user);
-    user.authentication.sessionToken = token;
+    const { token, payload }= issueJWT(user);
     await user.save();
 
     const response: any = {
@@ -190,7 +203,19 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       }
     }
 
-    return res.status(200).json(response);
+    return res.status(200).json({
+      message: "Login realizado com sucesso",
+      user: {
+        _id: asStringId(user._id),
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        role: user.role,
+        restaurant: asStringId(user.restaurant),
+        restaurantUnit: payload.unitId, 
+      },
+      token,
+    });
   } catch (error: any) {
     console.error("[AUTH][login] error:", error);
     return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
