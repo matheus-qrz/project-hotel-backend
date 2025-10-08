@@ -2,14 +2,34 @@ import path from "path";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import swaggerUI from "swagger-ui-express";
-import swaggerJSDoc from "./swagger.json";
 import cookieParser from "cookie-parser";
 import router from "./routes/index";
+import mime from "mime";
 
 dotenv.config();
 
 const app = express();
+
+app.head("/uploads/*", (req, res) => {
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.status(200).end();
+});
+
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "uploads"), {
+    setHeaders: (res, filePath) => {
+      const type = mime.getType(filePath) || "application/octet-stream";
+      res.setHeader("Content-Type", type);
+      // ajuda _next/image e cache do browser
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      // alguns hosts/CDNs bloqueiam sem isso
+      res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+      // se seu frontend e backend estão em domínios diferentes:
+      res.setHeader("Access-Control-Allow-Origin", "*");
+    },
+  }),
+);
 
 const allowedOrigins = [
   "http://localhost:3000",
@@ -46,16 +66,6 @@ app.use(express.json({ limit: "200mb" }));
 app.use(express.urlencoded({ limit: "200mb", extended: true }));
 
 // app.use("/api-docs", swaggerUI.serve, swaggerUI.setup(swaggerJSDoc));
-app.use(
-  "/uploads",
-  express.static(path.join(process.cwd(), "uploads"), {
-    maxAge: "365d",
-    immutable: true,
-    setHeaders: (res) => {
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    },
-  }),
-);
 
 app.use("/", router());
 
