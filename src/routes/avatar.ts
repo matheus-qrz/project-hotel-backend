@@ -5,6 +5,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { uploadAvatar, removeAvatar, getAvatar } from "../controllers/AvatarController";
 import { isAuthenticated } from "../middlewares/auth";
+import { lookup, extension } from "mime-types";
 
 const router = express.Router();
 
@@ -18,7 +19,7 @@ const storage = multer.diskStorage({
   },
   filename: (_req, file, cb) => {
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname) || "";
+    const ext = extension(file.mimetype) || "bin";
     cb(null, `avatar-${uniqueSuffix}${ext}`);
   },
 });

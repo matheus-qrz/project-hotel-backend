@@ -4,7 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import router from "./routes/index";
-import mime from "mime";
+import { lookup, extension } from "mime-types";
 
 dotenv.config();
 
@@ -19,7 +19,7 @@ app.use(
   "/uploads",
   express.static(path.join(process.cwd(), "uploads"), {
     setHeaders: (res, filePath) => {
-      const type = mime.getType(filePath) || "application/octet-stream";
+      const type = lookup(filePath) || "application/octet-stream";
       res.setHeader("Content-Type", type);
       // ajuda _next/image e cache do browser
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
