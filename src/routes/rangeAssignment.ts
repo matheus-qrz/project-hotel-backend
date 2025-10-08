@@ -17,8 +17,6 @@ export default (rangeAssignRouter: Router) => {
    */
   rangeAssignRouter.get(
     "/units/:unitId/range-assignments",
-    isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]), 
     listRangeAssignments
   );
 
