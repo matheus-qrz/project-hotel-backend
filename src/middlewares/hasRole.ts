@@ -1,57 +1,36 @@
 // hasRole.ts
-
 import { Request, Response, NextFunction } from "express";
-import { get } from "lodash";
 
 type UserRole = 'ADMIN' | 'MANAGER' | 'ATTENDANT' | 'CLIENT';
 
-interface AuthenticatedUser {
-    role: UserRole;
-}
+export const hasRole = (required: UserRole | UserRole[]) => {
+  const requiredRoles = Array.isArray(required) ? required : [required];
 
-export const hasRole = (requiredRoles: UserRole | UserRole[]) => {
-    return async (
-        req: Request,
-        res: Response,
-        next: NextFunction
-    ) => {
-        try {
-            const identity = get(req, "identity");
+  return (req: Request, res: Response, next: NextFunction) => {
+    try {
+      // 1) pega do req.user (preferido), fallback para req.identity
+      const role: UserRole | undefined =
+        (req.user?.role as UserRole | undefined) ||
+        ((req as any).identity?.role as UserRole | undefined);
 
-            if (!identity) {
-                return res.status(403).json({
-                    message: "Acesso negado: usuário não autenticado"
-                });
-            }
+      // 401 quando não há usuário/role
+      if (!role) {
+        return res.status(401).json({ message: "Acesso negado: não autenticado" });
+      }
 
-            const user = identity as AuthenticatedUser;
+      // 403 quando não possui uma das roles necessárias
+      if (!requiredRoles.includes(role)) {
+        return res.status(403).json({
+          message: "Acesso negado: permissões insuficientes",
+          required: requiredRoles,
+          current: role,
+        });
+      }
 
-            if (!user || !user.role) {
-                return res.status(403).json({
-                    message: "Acesso negado: roles não encontradas"
-                });
-            }
-
-            // Converte requiredRoles para array se for string única
-            const roles = Array.isArray(requiredRoles) ? requiredRoles : [requiredRoles];
-
-            // Verifica se o usuário tem pelo menos uma das roles necessárias
-            const hasRequiredRole = roles.includes(user.role);
-
-            if (!hasRequiredRole) {
-                return res.status(403).json({
-                    message: "Acesso negado: permissões insuficientes",
-                    required: roles,
-                    current: user.role
-                });
-            }
-
-            next();
-        } catch (error) {
-            console.error('Erro na verificação de roles:', error);
-            return res.status(500).json({
-                message: "Erro interno ao verificar permissões"
-            });
-        }
-    };
+      return next();
+    } catch (err) {
+      console.error("Erro na verificação de roles:", err);
+      return res.status(500).json({ message: "Erro interno ao verificar permissões" });
+    }
+  };
 };
