@@ -178,43 +178,21 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     const { token, payload }= issueJWT(user);
     await user.save();
 
-    const response: any = {
-      token,
-      user: {
-        id: user._id.toString(),
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email ?? null,
-        cpf: user.cpf ?? null,
-        role: user.role,
-        restaurantId: user.restaurant ? String(user.restaurant) : null,
-        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
-      },
-    };
-
-    if (user.restaurant && mongoose.Types.ObjectId.isValid(user.restaurant)) {
-      const restaurant = await RestaurantModel.findById(user.restaurant);
-      if (restaurant) {
-        response.restaurantInfo = {
-          restaurantId: restaurant._id.toString(),
-          restaurantName: restaurant.name,
-          unitId: user.restaurantUnit?.toString() || null,
-        };
-      }
-    }
+    const unitId  = payload.unitId  ?? asStringId(user.restaurantUnit) ?? null;
+    const restaurantId = payload.restaurantId ?? asStringId(user.restaurant) ?? null;
 
     return res.status(200).json({
       message: "Login realizado com sucesso",
+      token,
       user: {
         _id: asStringId(user._id),
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
         role: user.role,
-        restaurant: asStringId(user.restaurant),
-        restaurantUnit: payload.unitId, 
+        restaurant: restaurantId,
+        restaurantUnit: unitId, 
       },
-      token,
     });
   } catch (error: any) {
     console.error("[AUTH][login] error:", error);
