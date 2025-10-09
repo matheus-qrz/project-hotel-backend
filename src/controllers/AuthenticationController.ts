@@ -39,13 +39,13 @@ function issueJWT(user: any) {
     sub: asStringId(user._id),
     role: String(user.role || ""),
     restaurantId,
-    unitId, // <- chave para o frontend
+    unitId,
   };
 
-  // exp padrão 7d (ajuste se quiser)
   const token = jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
   return { token, payload };
 }
+
 
 // Login para restaurante (admin)
 export const loginAdminHandler = async (req: Request, res: Response) => {
@@ -178,21 +178,18 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     const { token, payload }= issueJWT(user);
     await user.save();
 
-    const unitId  = payload.unitId  ?? asStringId(user.restaurantUnit) ?? null;
-    const restaurantId = payload.restaurantId ?? asStringId(user.restaurant) ?? null;
-
     return res.status(200).json({
       message: "Login realizado com sucesso",
-      token,
       user: {
         _id: asStringId(user._id),
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
         role: user.role,
-        restaurant: restaurantId,
-        restaurantUnit: unitId, 
+        restaurant: asStringId(user.restaurant),
+        restaurantUnit: payload.unitId, 
       },
+      token,
     });
   } catch (error: any) {
     console.error("[AUTH][login] error:", error);
