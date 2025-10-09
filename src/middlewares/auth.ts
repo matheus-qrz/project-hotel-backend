@@ -30,49 +30,36 @@ declare global {
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_change_in_production';
 
 // 1) Autenticação base: valida JWT, confere sessionToken no usuário e anexa dados essenciais ao req
-export const isAuthenticated = async (req: Request, res: Response, next: NextFunction) => {
+
+export const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ message: 'Token de autenticação não fornecido' });
+    const auth = req.headers.authorization || ''
+    const raw = auth.startsWith('Bearer ') ? auth.slice(7) : auth
+    const headerToken = raw?.replace(/^"+|"+$/g, '').trim()
+    const cookieToken = (req as any).cookies?.token // se usar cookie-parser
+    const token = headerToken || cookieToken
+
+    if (!token) {
+      return res.status(401).json({ message: 'Sessão inválida: token ausente.' })
     }
 
-    const token = authHeader.slice(7); // "Bearer ".length === 7
-    let decoded: JwtPayload;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    } catch (e: any) {
-      return res.status(401).json({ message: e?.message || 'Token inválido ou expirado' });
-    }
+    const payload = jwt.verify(token, JWT_SECRET) as any
 
-    // Sempre trate sub como ID de USUÁRIO
-    const user = await UserModel
-      .findById(decoded.sub)
-      .select('+authentication.sessionToken +role +restaurant +restaurantUnit');
-
-    if (!user) {
-      return res.status(401).json({ message: 'Usuário não encontrado' });
-    }
-    if (!user.authentication || user.authentication.sessionToken !== token) {
-      return res.status(401).json({ message: 'Sessão inválida' });
-    }
-
-    // Anexa o "essencial" para os outros guards
     req.user = {
-      id: user._id.toString(),
-      role: user.role || "",
-      restaurantId: user.restaurant ? user.restaurant.toString() : null,
-      unitId: user.restaurantUnit ? user.restaurantUnit.toString() : null,
-    };
-    req.isRestaurantAdmin = user.role === 'ADMIN';
-    req.identity = user; // mantém compatibilidade, se algo usar
+      id: payload.sub,
+      role: payload.role,
+      restaurantId: payload.restaurantId,
+      unitId: payload.unitId,
+    }
 
-    return next();
-  } catch (error) {
-    console.error('Erro de autenticação:', error);
-    return res.status(401).json({ message: 'Token inválido ou expirado' });
+    return next()
+  } catch (err: any) {
+    if (err?.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Sessão expirada.' })
+    }
+    return res.status(401).json({ message: 'Sessão inválida: token inválido.' })
   }
-};
+}
 
 // 2) Autorização por restaurante (Caminho A):
 //    - ADMIN passa direto
