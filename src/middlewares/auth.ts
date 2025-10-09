@@ -31,35 +31,38 @@ const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_change_in_productio
 
 // 1) Autenticação base: valida JWT, confere sessionToken no usuário e anexa dados essenciais ao req
 
-export const isAuthenticated = (req: Request, res: Response, next: NextFunction) => {
+export const isAuthenticated = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const auth = req.headers.authorization || ''
-    const raw = auth.startsWith('Bearer ') ? auth.slice(7) : auth
-    const headerToken = raw?.replace(/^"+|"+$/g, '').trim()
-    const cookieToken = (req as any).cookies?.token // se usar cookie-parser
-    const token = headerToken || cookieToken
-
-    if (!token) {
-      return res.status(401).json({ message: 'Sessão inválida: token ausente.' })
+    const authHeader = req.headers.authorization;
+    if (!authHeader?.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'Token de autenticação não fornecido' });
     }
 
-    const payload = jwt.verify(token, JWT_SECRET) as any
+    const token = authHeader.slice(7).replace(/^"+|"+$/g, '').trim();
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
+
+    const user = await UserModel.findById(decoded.sub)
+      .select('+authentication.sessionToken +role +restaurant +restaurantUnit');
+
+    if (!user) return res.status(401).json({ message: 'Usuário não encontrado' });
+    if (!user.authentication || user.authentication.sessionToken !== token) {
+      return res.status(401).json({ message: 'Sessão inválida' });
+    }
 
     req.user = {
-      id: payload.sub,
-      role: payload.role,
-      restaurantId: payload.restaurantId,
-      unitId: payload.unitId,
-    }
-
-    return next()
+      id: user._id.toString(),
+      role: user.role || '',
+      restaurantId: user.restaurant?.toString() || null,
+      unitId: user.restaurantUnit?.toString() || null,
+    };
+    next();
   } catch (err: any) {
-    if (err?.name === 'TokenExpiredError') {
-      return res.status(401).json({ message: 'Sessão expirada.' })
-    }
-    return res.status(401).json({ message: 'Sessão inválida: token inválido.' })
+    const msg = err.name === 'TokenExpiredError'
+      ? 'Sessão expirada'
+      : 'Sessão inválida: token inválido';
+    return res.status(401).json({ message: msg });
   }
-}
+};
 
 // 2) Autorização por restaurante (Caminho A):
 //    - ADMIN passa direto
