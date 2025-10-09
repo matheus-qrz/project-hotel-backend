@@ -176,6 +176,9 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     }
 
     const { token, payload }= issueJWT(user);
+    await UserModel.findByIdAndUpdate(user._id, {
+      "authentication.sessionToken": token
+    });
     await user.save();
 
     return res.status(200).json({
