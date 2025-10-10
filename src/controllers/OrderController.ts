@@ -617,53 +617,27 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 };
 
 // Listar pedidos de convidado específico
-// Listar pedidos de convidado específico
 export const getGuestOrdersController = async (req: Request, res: Response) => {
   try {
-    // path params
-    const restaurantUnitIdFromPath = (req.params as any).restaurantUnitId || (req.params as any).unitId;
-    const tableIdFromPath = (req.params as any).tableId;
-    const guestIdFromPath = (req.params as any).guestId;
-
-    // query (fallback opcional)
-    const restaurantIdFromQuery = (req.query as any).restaurantId;
-    const unitIdFromQuery = (req.query as any).unitId;
-    const tableIdFromQuery = (req.query as any).tableId;
-    const guestIdFromQuery = (req.query as any).guestId;
-
-    // normalização
-    const unitId  = String(restaurantUnitIdFromPath ?? unitIdFromQuery ?? "");
-    const tableId = Number(tableIdFromPath ?? tableIdFromQuery ?? NaN);
-    const guestId = String(guestIdFromPath ?? guestIdFromQuery ?? "");
+    const unitId  = String((req.params as any).restaurantUnitId ?? (req.query as any).unitId ?? "");
+    const tableId = Number((req.params as any).tableId ?? (req.query as any).tableId ?? NaN);
+    const guestId = String((req.params as any).guestId ?? (req.query as any).guestId ?? "");
 
     if (!guestId || !Number.isFinite(tableId)) {
       return res.status(400).json({ message: "guestId e tableId são obrigatórios." });
     }
 
-    const query: any = {
-      'guestInfo.id': guestId,
-      'meta.tableId': Number(tableId),
-    };
-    if (unitId) query.restaurantUnit = unitId;
+    const query: any = { "guestInfo.id": guestId, "meta.tableId": tableId }; 
+    if (unitId) query.restaurantUnit = unitId;                                
 
-    // opcional: se quiser também escopo por restaurant (matriz) quando vier por query
-    if (restaurantIdFromQuery) query.restaurant = String(restaurantIdFromQuery);
-
-    const orders = await OrderModel.find(query)
-      .sort({ createdAt: -1 })
-      .populate("items.product")
-      .populate("guestInfo");
-
-    // Se quiser explicitar "vazio":
-    // if (!orders.length) return res.status(204).send();
-
+    const orders = await OrderModel.find(query).sort({ createdAt: -1 }).lean(); 
+    if (!orders.length) return res.status(204).send();
     return res.status(200).json(orders);
   } catch (err) {
     console.error("Erro ao buscar pedidos do convidado:", err);
     return res.status(500).json({ message: "Erro ao buscar pedidos." });
   }
 };
-
 
 // Cancelar pedido como um todo
 export const cancelOrderController = async (req: Request, res: Response) => {
