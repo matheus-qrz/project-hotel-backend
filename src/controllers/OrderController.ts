@@ -617,23 +617,47 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 };
 
 // Listar pedidos de convidado específico
+// Listar pedidos de convidado específico
 export const getGuestOrdersController = async (req: Request, res: Response) => {
   try {
-    const { restaurantId, unitId, tableId, guestId } = req.query;
+    // path params
+    const restaurantUnitIdFromPath = (req.params as any).restaurantUnitId || (req.params as any).unitId;
+    const tableIdFromPath = (req.params as any).tableId;
+    const guestIdFromPath = (req.params as any).guestId;
 
-    if (!guestId || !tableId) {
+    // query (fallback opcional)
+    const restaurantIdFromQuery = (req.query as any).restaurantId;
+    const unitIdFromQuery = (req.query as any).unitId;
+    const tableIdFromQuery = (req.query as any).tableId;
+    const guestIdFromQuery = (req.query as any).guestId;
+
+    // normalização
+    const unitId  = String(restaurantUnitIdFromPath ?? unitIdFromQuery ?? "");
+    const tableId = Number(tableIdFromPath ?? tableIdFromQuery ?? NaN);
+    const guestId = String(guestIdFromPath ?? guestIdFromQuery ?? "");
+
+    if (!guestId || !Number.isFinite(tableId)) {
       return res.status(400).json({ message: "guestId e tableId são obrigatórios." });
     }
 
-    const query: any = { tableId, guestId };
+    const query: any = {
+      guestId,
+      tableId,
+    };
 
-    if (restaurantId) query.restaurant = restaurantId;
+    // escopo por unidade (ajuste o nome do campo conforme seu schema: unit / restaurantUnit)
     if (unitId) query.unit = unitId;
+
+    // opcional: se quiser também escopo por restaurant (matriz) quando vier por query
+    if (restaurantIdFromQuery) query.restaurant = String(restaurantIdFromQuery);
 
     const orders = await OrderModel.find(query)
       .sort({ createdAt: -1 })
       .populate("items.product")
       .populate("guestInfo");
+
+    // Se quiser explicitar "vazio":
+    // if (!orders.length) return res.status(204).send();
 
     return res.status(200).json(orders);
   } catch (err) {
