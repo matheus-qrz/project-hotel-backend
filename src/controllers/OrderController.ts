@@ -618,33 +618,30 @@ export const getTableOrdersController = async (req: Request, res: Response) => {
 
 // Listar pedidos de convidado específico
 export const getGuestOrdersController = async (req: Request, res: Response) => {
-   const { tableId, guestId } = req.params as { tableId: string; guestId: string };
-  const { activeOnly } = (req.query || {}) as { activeOnly?: string };
-
   try {
-    const tableNum = Number(tableId);
-    if (Number.isNaN(tableNum)) return res.status(400).json({ message: "tableId inválido." });
+    const { restaurantId, unitId, tableId, guestId } = req.query;
 
-    const filter: any = {
-      'meta.tableId': tableNum,
-      'guestInfo.id': guestId
-    };
-
-    if (activeOnly) {
-      filter.isPaid = false;
-      filter.status = { $in: ['processing', 'payment_requested'] };
+    if (!guestId || !tableId) {
+      return res.status(400).json({ message: "guestId e tableId são obrigatórios." });
     }
 
-    const hdr = req.headers['x-session-id'];
-    if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
+    const query: any = { tableId, guestId };
 
-    const orders = await OrderModel.find(filter).sort({ createdAt: -1 });
-    return res.json(orders);
-  } catch (e) {
-    console.error('Erro ao listar pedidos do guest:', e);
-    return res.status(500).json({ message: 'Erro ao listar pedidos do guest.' });
+    if (restaurantId) query.restaurant = restaurantId;
+    if (unitId) query.unit = unitId;
+
+    const orders = await OrderModel.find(query)
+      .sort({ createdAt: -1 })
+      .populate("items.product")
+      .populate("guestInfo");
+
+    return res.status(200).json(orders);
+  } catch (err) {
+    console.error("Erro ao buscar pedidos do convidado:", err);
+    return res.status(500).json({ message: "Erro ao buscar pedidos." });
   }
 };
+
 
 // Cancelar pedido como um todo
 export const cancelOrderController = async (req: Request, res: Response) => {
