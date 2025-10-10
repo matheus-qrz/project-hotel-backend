@@ -641,11 +641,9 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
     }
 
     const query: any = {
-      guestId,
-      tableId,
+      'guestInfo.id': guestId,
+      'meta.tableId': Number(tableId),
     };
-
-    // escopo por unidade (ajuste o nome do campo conforme seu schema: unit / restaurantUnit)
     if (unitId) query.restaurantUnit = unitId;
 
     // opcional: se quiser também escopo por restaurant (matriz) quando vier por query
