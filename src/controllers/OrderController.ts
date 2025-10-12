@@ -435,7 +435,6 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
   try {
     const { orderId } = req.params as { orderId: string };
     const { status } = req.body as { status: OrderStatusType };
-
     if (!status) {
       return res.status(400).json({ message: "Status não fornecido." });
     }
@@ -443,10 +442,11 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
     const order = await OrderModel.findById(orderId);
     if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
     
-    const userId = req.user?.id; // do token
-    const isManager = req.user?.role === "MANAGER";
+    const userId = req.user?.id; 
+    const role = String(req.user?.role || "");
+    const isManagerOrAttendant = role === "MANAGER" || role === "ATTENDANT";
     
-    if (!isManager) {
+    if (!isManagerOrAttendant) {
       // Se o pedido tem dono e não é o usuário -> 403
       if (order?.assignedAttendantId && String(order.assignedAttendantId) !== String(userId)) {
         return res.status(403).json({ message: "Você não está atribuído a este pedido." });
