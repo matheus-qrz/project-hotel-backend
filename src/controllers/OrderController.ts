@@ -745,6 +745,9 @@ export const removeOrderItemController = async (req: Request, res: Response) => 
 export const updateOrderItemController = async (req: Request, res: Response) => {
   const { tableId, orderId, itemId } = req.params as any;
   const { guestId, quantity, status, servedAt } = (req.body || {}) as any;
+  
+  const role = String(req.user?.role || "");
+  const isManagerOrAttendant = role === "MANAGER" || role === "ATTENDANT";
 
   try {
     const tableNum = Number(tableId);
@@ -761,6 +764,7 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
 
     const currentUserId = String(req.user?.id ?? "");
 
+    if (!isManagerOrAttendant) {
       // 1) Se tem dono e não é o usuário -> 403
       if (doc.assignedAttendantId && String(doc.assignedAttendantId) !== currentUserId) {
         return res.status(403).json({ message: "Você não está atribuído a este pedido." });
@@ -776,8 +780,8 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
           return res.status(403).json({ message: "Pedido fora do seu range/horário." });
         }
       }
+    }
 
-    // ---------- filtro de atualização ----------
     const baseFilter: any = {
       _id: orderId,
       "meta.tableId": tableNum,
