@@ -22,8 +22,6 @@ export default (restaurantUnitRouter: Router) => {
   // Para múltiplas roles
   restaurantUnitRouter.get(
     "/units/:unitId",
-    isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
     getRestaurantUnitByIdController
   );
 
