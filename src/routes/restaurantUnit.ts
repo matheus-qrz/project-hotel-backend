@@ -8,8 +8,8 @@ import {
   addAttendantToUnitController,
   removeAttendantFromUnitController
 } from "../controllers/restaurantUnitController";
-import { hasRole, isAuthenticated } from "../middlewares/index";
 import { getRestaurantUnitOrdersController } from "../controllers/OrderController";
+import { hasRole, isAuthenticated } from "../middlewares/index";
 
 export default (restaurantUnitRouter: Router) => {
   restaurantUnitRouter.post(

@@ -7,18 +7,15 @@ import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
-import { isAttendantAssigned } from "../helpers/assignments";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
 import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
 import { computeSubtotalWithoutCoupons, n0 } from "../helpers/coupon";
-// import { io } from "../realtime";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
 
-    // o body manda restaurantUnitId; no banco usamos restaurantUnit
     const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
     const restaurantUnit = unitIdFromBody || restaurantId;
 
@@ -61,16 +58,14 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     }));
 
     // ---------- PROCURAR PEDIDO EXISTENTE DESSA SESSÃO ----------
-    // importante: incluir 'completed' como elegível para receber novos itens
     const candidates = await OrderModel.find({
       sessionId,
       restaurantUnit,
       "guestInfo.id": guestInfo.id,
       isPaid: false,
-      status: { $nin: ["paid", "cancelled"] }, // <- aceita processing, payment_requested e completed
+      status: { $nin: ["paid", "cancelled"] }, 
     }).lean();
 
-    // escolhe o da mesma mesa (tolerando string/number)
     const existing =
       candidates.find(
         (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
@@ -85,7 +80,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
           $inc: { totalAmount: Number(totalAmount) || 0 },
           $set: {
             updatedAt: now,
-            status: "processing", // volta o card para "Em preparo"
+            status: "processing",
             "meta.orderType":
               meta?.orderType ?? existing.meta?.orderType ?? "local",
             "meta.observations":
@@ -96,62 +91,75 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         }
       );
 
-      // 🔹 NOVO: se ainda não tem atendente, resolve agora e salva
       const updatedDoc = await OrderModel.findById(existing._id);
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
+        const tz =
+          req.body?.tz ||
+          (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
+            ?.timezone ||
+          "America/Sao_Paulo";
+
         await applyAssignmentToOrder({
           order: updatedDoc,
-          unitId: String(restaurantUnit),                     // usar o unitId efetivo
-          tableId: Number(meta.tableId),                      // garantir número
+          unitId: String(restaurantUnit),
+          tableId: Number(meta.tableId),
           preferredAttendantId: assignedAttendantId,
           preferredAttendantName: assignedAttendantName,
+          now: new Date(),
+          tz,               
         });
+
         await updatedDoc.save();
       }
 
-      const updated = await OrderModel.findById(existing._id);
-      res.setHeader("x-session-id", sessionId);
-      return res.status(200).json(updated);
-    }
+    } else {
+      // ---------- CRIAR NOVO PEDIDO ----------
+      const doc = new OrderModel({
+        restaurant: restaurantId || undefined,
+        restaurantUnit,
+        guestInfo: {
+          id: guestInfo.id,
+          name: guestInfo.name ?? "",
+          joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+        },
+        items: itemsWithStatus,
+        status,
+        processingAt: status === 'processing' ? now : null,
+        statusHistory: [{ status, at: status === "processing" ? now : now }],
+        isPaid: false,
+        sessionId,
+        meta: {
+          tableId: Number(meta.tableId),
+          orderType: meta?.orderType ?? "local",
+          observations: meta?.observations ?? "",
+          splitCount: Number(meta?.splitCount) || 1,
+          orderCreatedAt: now,
+        },
+        totalAmount: Number(totalAmount) || 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      
+      const tz =
+        req.body?.tz ||
+        (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
+          ?.timezone ||
+        "America/Sao_Paulo";
 
-    // ---------- CRIAR NOVO PEDIDO ----------
-    const doc = new OrderModel({
-      restaurant: restaurantId || undefined,
-      restaurantUnit,
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name ?? "",
-        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
-      },
-      items: itemsWithStatus,
-      status,
-      processingAt: status === 'processing' ? now : null,
-      statusHistory: [{ status, at: status === "processing" ? now : now }],
-      isPaid: false,
-      sessionId, // sempre grava o sessionId
-      meta: {
+      await applyAssignmentToOrder({
+        order: doc,
+        unitId: String(restaurantUnit),
         tableId: Number(meta.tableId),
-        orderType: meta?.orderType ?? "local",
-        observations: meta?.observations ?? "",
-        splitCount: Number(meta?.splitCount) || 1,
-        orderCreatedAt: now,
-      },
-      totalAmount: Number(totalAmount) || 0,
-      createdAt: now,
-      updatedAt: now,
-    });
+        preferredAttendantId: assignedAttendantId,
+        preferredAttendantName: assignedAttendantName,
+        now: new Date(), 
+        tz,               
+      });
 
-    await applyAssignmentToOrder({
-      order: doc,
-      unitId: String(restaurantUnit),
-      tableId: Number(meta.tableId),
-      preferredAttendantId: assignedAttendantId,
-      preferredAttendantName: assignedAttendantName,
-    });
-
-    await doc.save();
-    res.setHeader("x-session-id", sessionId);
-    return res.status(201).json(doc);
+      await doc.save();
+      res.setHeader("x-session-id", sessionId);
+      return res.status(201).json(doc);
+    }
   } catch (e) {
     console.error("Erro ao iniciar pedido:", e);
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
