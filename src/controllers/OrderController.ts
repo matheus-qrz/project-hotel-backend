@@ -71,32 +71,35 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
       ) || null;
 
- if (existing) {
-      // ---------- acumula no MESMO documento e traz o pedido de volta para "processing" ----------
+    if (existing) {
+      const now = new Date();
+
       await OrderModel.updateOne(
         { _id: existing._id },
         {
-          $push: { items: { $each: itemsWithStatus } },
+          $push: {
+            items: { $each: itemsWithStatus },
+            // opcional: registrar que voltou para processing
+            statusHistory: { status: "processing", at: now },
+          },
           $inc: { totalAmount: Number(totalAmount) || 0 },
           $set: {
             updatedAt: now,
             status: "processing",
-            "meta.orderType":
-              meta?.orderType ?? existing.meta?.orderType ?? "local",
-            "meta.observations":
-              meta?.observations ?? existing.meta?.observations ?? "",
-            "meta.splitCount":
-              Number(meta?.splitCount) || existing.meta?.splitCount || 1,
+            "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
+            "meta.observations": meta?.observations ?? existing.meta?.observations ?? "",
+            "meta.splitCount": Number(meta?.splitCount) || existing.meta?.splitCount || 1,
           },
         }
       );
 
-      const updatedDoc = await OrderModel.findById(existing._id);
+      // re-carrega para aplicar possível re-atribuição de garçom
+      let updatedDoc = await OrderModel.findById(existing._id);
+
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
         const tz =
           req.body?.tz ||
-          (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
-            ?.timezone ||
+          (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
           "America/Sao_Paulo";
 
         await applyAssignmentToOrder({
@@ -106,11 +109,14 @@ export const initiateOrderController = async (req: Request, res: Response) => {
           preferredAttendantId: assignedAttendantId,
           preferredAttendantName: assignedAttendantName,
           now: new Date(),
-          tz,               
+          tz,
         });
 
         await updatedDoc.save();
       }
+
+      // ✅ FALTAVA ISSO
+      return res.status(200).json(updatedDoc);
 
     } else {
       // ---------- CRIAR NOVO PEDIDO ----------
@@ -1071,13 +1077,11 @@ export async function getTableStatus(req: Request, res: Response) {
       return res.status(400).json({ message: "unitId/tableId inválidos" });
     }
 
-    // Busca SOMENTE pedidos da mesa informada
     const orders = await OrderModel.find(
       {
         restaurantUnit: unitId,
         "meta.tableId": tableId,
       },
-      // Projeta só o necessário
       { status: 1, isPaid: 1, meta: 1, createdAt: 1, updatedAt: 1 },
     ).lean();
 
