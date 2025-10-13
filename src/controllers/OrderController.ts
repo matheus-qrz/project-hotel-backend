@@ -822,6 +822,9 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
           $unset["items.$.cancelledAt"] = "";
         } else if (normalized === "cancelled") {
           $set["items.$.cancelledAt"] = now;
+        } else if (normalized === "processing") {
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
         }
       }
     }
