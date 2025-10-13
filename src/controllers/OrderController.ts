@@ -764,7 +764,6 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     // Confirma pedido + mesa antes de gates
     const doc = await OrderModel.findOne(
       { _id: orderId, "meta.tableId": tableNum },
-      { assignedAttendantId: 1, assignedAttendantName: 1, restaurantUnit: 1, "meta.tableId": 1 }
     );
     if (!doc) return res.status(404).json({ message: "Pedido não encontrado." });
 
