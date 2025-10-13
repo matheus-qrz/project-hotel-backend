@@ -20,6 +20,7 @@ import {
   removeOrderItemController,
   addOrderItemExceptionController,
   applyOrderCouponController,
+  getTableStatus,
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
@@ -132,4 +133,9 @@ orderRouter.post(
   hasRole(["MANAGER"]),
   applyOrderCouponController,
 );
+
+orderRouter.get(
+  "/restaurant/:unitId/tables/:tableId/status",
+  getTableStatus
+)
 };

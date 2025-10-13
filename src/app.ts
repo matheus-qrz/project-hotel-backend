@@ -59,7 +59,6 @@ const corsOptions: cors.CorsOptions = {
 app.use(cors(corsOptions));
 // responde preflight para TODAS as rotas
 app.options("*", cors(corsOptions));
-/** -------------------------------------- */
 
 app.use(cookieParser());
 app.use(express.json({ limit: "200mb" }));

@@ -1061,3 +1061,45 @@ export const applyOrderCouponController = async (req: Request, res: Response) =>
     return res.status(500).json({ message: "Failed to apply coupon", error: String(err?.message || err) });
   }
 };
+
+export async function getTableStatus(req: Request, res: Response) {
+  try {
+    const unitId = String(req.params.unitId);
+    const tableId = Number(req.params.tableId);
+
+    if (!unitId || !Number.isFinite(tableId)) {
+      return res.status(400).json({ message: "unitId/tableId inválidos" });
+    }
+
+    // Busca SOMENTE pedidos da mesa informada
+    const orders = await OrderModel.find(
+      {
+        restaurantUnit: unitId,
+        "meta.tableId": tableId,
+      },
+      // Projeta só o necessário
+      { status: 1, isPaid: 1, meta: 1, createdAt: 1, updatedAt: 1 },
+    ).lean();
+
+    let hasPayment = false;
+    let hasOpen = false;
+
+    for (const o of orders) {
+      const s = String(o.status || "").toLowerCase();
+      const isPaid = o.isPaid === true || s === "paid";
+
+      const hasPayReq =
+        s === "payment_requested" ||
+        (!!o?.meta?.paymentRequestedAt && !isPaid);
+
+      if (hasPayReq) hasPayment = true;
+      if (!isPaid && (s === "processing" || s === "completed")) hasOpen = true;
+    }
+
+    const status = hasPayment ? "payment_requested" : hasOpen ? "occupied" : "free";
+    return res.json({ status, tableId, unitId });
+  } catch (e: any) {
+    console.error("getTableStatus error:", e);
+    return res.status(500).json({ message: "Erro ao obter status da mesa" });
+  }
+}
