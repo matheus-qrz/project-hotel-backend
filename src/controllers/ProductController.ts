@@ -1,17 +1,18 @@
-import express from "express";
+import { Request, Response} from "express";
 import {
   createProduct,
   deleteProduct,
   getProductById,
   getProductByName,
   getProductsByRestaurant,
+  ProductModel,
   updateProduct
 } from "../models/Products";
 import { parseDataURL } from "../utils/parseDataURL";
 import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 
-async function handleIncomingImage(req: express.Request) {
+async function handleIncomingImage(req: Request) {
   // 1) arquivo multipart
   if (req.file?.buffer) {
     return await processAndSaveProductImage(req.file.buffer, "products");
@@ -29,8 +30,8 @@ async function handleIncomingImage(req: express.Request) {
 }
 
 export const createFoodController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id: restaurantId } = req.params;
@@ -116,8 +117,8 @@ export const createFoodController = async (
 };
 
 export const getAllFoodsController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id: restaurantId } = req.params;
@@ -147,8 +148,8 @@ export const getAllFoodsController = async (
 };
 
 export const getFoodByIdController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params;
@@ -166,8 +167,8 @@ export const getFoodByIdController = async (
 };
 
 export const updateFoodController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params;
@@ -231,8 +232,8 @@ export const updateFoodController = async (
 };
 
 export const deleteFoodController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params;
@@ -251,8 +252,8 @@ export const deleteFoodController = async (
 };
 
 export const createMultipleProductsController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { products } = req.body;
@@ -295,8 +296,8 @@ export const createMultipleProductsController = async (
 
 // Controlador para criar um combo
 export const createComboController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { restaurantId } = req.params;
@@ -326,8 +327,8 @@ export const createComboController = async (
 
 // Controlador para atualizar um combo
 export const updateComboController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params;
@@ -349,8 +350,8 @@ export const updateComboController = async (
 };
 
 export const getAllAdditionalsController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id: restaurantId } = req.params;
@@ -365,8 +366,8 @@ export const getAllAdditionalsController = async (
 
 // Adicionar adicional a um produto
 export const addAdditionalToProductController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params; // ID do produto
@@ -393,8 +394,8 @@ export const addAdditionalToProductController = async (
 
 // Remover adicional de um produto
 export const removeAdditionalFromProductController = async (
-  req: express.Request,
-  res: express.Response
+  req: Request,
+  res: Response
 ) => {
   try {
     const { id } = req.params; // ID do produto
@@ -418,5 +419,105 @@ export const removeAdditionalFromProductController = async (
   } catch (error) {
     console.error("Erro ao remover adicional:", error);
     return res.status(500).json({ message: "Erro ao remover adicional" });
+  }
+};
+
+export const setProductPromotionController = async (req: Request, res: Response) => {
+  try {
+    const { id: unitId, productId } = req.params;
+    const {
+      discountPercentage = null,
+      promotionalPrice = null,
+      promotionStartDate = null,
+      promotionEndDate = null,
+      promotionLabel = null,
+    } = req.body || {};
+
+    // Sanitização simples
+    const update: any = {
+      discountPercentage: discountPercentage ?? null,
+      promotionalPrice: promotionalPrice ?? null,
+      promotionStartDate: promotionStartDate ? new Date(promotionStartDate) : null,
+      promotionEndDate: promotionEndDate ? new Date(promotionEndDate) : null,
+      promotionLabel: promotionLabel ?? null,
+    };
+
+    const product = await ProductModel.findOneAndUpdate(
+      { _id: productId, restaurant: unitId },
+      update,
+      { new: true }
+    );
+
+    if (!product) return res.status(404).json({ message: "Produto não encontrado" });
+
+    const json = product.toJSON();
+    return res.status(200).json({
+      ...json,
+      finalPrice: product.getFinalPrice(),
+      isOnPromotion: product.isPromotionActive(),
+    });
+  } catch (e) {
+    console.error("Erro setProductPromotionController", e);
+    return res.status(500).json({ message: "Erro ao definir promoção" });
+  }
+};
+
+export const clearProductPromotionController = async (req: Request, res: Response) => {
+  try {
+    const { id: unitId, productId } = req.params;
+    const product = await ProductModel.findOneAndUpdate(
+      { _id: productId, restaurant: unitId },
+      {
+        $set: {
+          discountPercentage: null,
+          promotionalPrice: null,
+          promotionStartDate: null,
+          promotionEndDate: null,
+          promotionLabel: null,
+        },
+      },
+      { new: true }
+    );
+    if (!product) return res.status(404).json({ message: "Produto não encontrado" });
+    const json = product.toJSON();
+    return res.status(200).json({
+      ...json,
+      finalPrice: product.getFinalPrice(),
+      isOnPromotion: product.isPromotionActive(),
+    });
+  } catch (e) {
+    console.error("Erro clearProductPromotionController", e);
+    return res.status(500).json({ message: "Erro ao remover promoção" });
+  }
+};
+
+export const listActivePromotionsController = async (req: Request, res: Response) => {
+  try {
+    const { id: unitId } = req.params;
+    const now = new Date();
+
+    const products = await ProductModel.find({
+      restaurant: unitId,
+      $or: [
+        { promotionalPrice: { $ne: null } },
+        { discountPercentage: { $ne: null } },
+      ],
+    }).select(
+      "_id name price image description discountPercentage promotionalPrice " +
+      "promotionStartDate promotionEndDate promotionLabel"
+    );
+
+    const result = products
+      .map(p => ({
+        ...p.toJSON(),
+        isOnPromotion: p.isPromotionActive(now),
+        finalPrice: p.getFinalPrice(now),
+      }))
+      .filter(p => p.isOnPromotion);
+
+    return res.status(200).json(result);
+  } catch (e) {
+    console.error("Erro listActivePromotionsController", e);
+    return res.status(500).json({ message: "Erro ao listar promoções" });
   }
 };

@@ -24,34 +24,37 @@ export interface IAccompaniment {
 export interface IProduct extends Document {
   restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
   category: string;
-  image: string;            // URL pública (mantém compatibilidade)
-  imageBlur?: string;       // <<< LQIP (base64) para placeholder
-  imageWidth?: number;      // opcional (pode ajudar no frontend)
-  imageHeight?: number;     // opcional
+  image: string;            
+  imageBlur?: string;       
+  imageWidth?: number;      
+  imageHeight?: number;     
   name: string;
   quantity: number;
   price: number;
   costPrice: number;
   description: string;
   isAvailable: boolean;
+  isCombo?: boolean; 
+  comboOptions?: ComboOption[]; 
+  isAdditional?: boolean; 
+  hasAddons?: boolean; 
+  additionalOptions?: IAdditional[];
+  accompaniments?: IAccompaniment;
   isOnPromotion: boolean;
   promotionalPrice?: number;
-  discountPercentage?: number;
-  promotionStartDate?: Date;
-  promotionEndDate?: Date;
-  isCombo?: boolean; // Indica se é um combo
-  comboOptions?: ComboOption[]; // Opções de combo
-  isAdditional?: boolean; // Indica se é um adicional
-  hasAddons?: boolean; // Indica se o produto tem adicionais
-  additionalOptions?: IAdditional[]; // Lista de adicionais
-  accompaniments?: IAccompaniment; // Acompanhamentos
+  discountPercentage?: number | null;
+  promotionStartDate?: Date | null;
+  promotionEndDate?: Date | null;
+  promotionLabel?: string | null;
   promotionalMetrics?: {
     viewCount: number;
     conversionCount: number;
     marketingCost: number;
     acquisitionCost: number;
-    costPrice: number; // Custo do produto   
+    costPrice: number; 
   }
+  getFinalPrice(now?: Date): number;
+  isPromotionActive(now?: Date): boolean;
 };
 
 const productSchema = new Schema<IProduct>({
@@ -127,25 +130,20 @@ const productSchema = new Schema<IProduct>({
       isAvailable: { type: Boolean, default: true }
     }
   ],
-  promotionalPrice: {
-    type: Number
-  },
-  discountPercentage: {
-    type: Number
-  },
-  promotionStartDate: {
-    type: Date
-  },
-  promotionEndDate: {
-    type: Date
-  },
+  discountPercentage: { type: Number, default: null },   
+  promotionalPrice: { type: Number, default: null },     
+  promotionStartDate: { type: Date, default: null },
+  promotionEndDate: { type: Date, default: null },
+  promotionLabel: { type: String, default: null },
   promotionalMetrics: {
     viewCount: { type: Number, default: 0 },
     conversionCount: { type: Number, default: 0 },
     marketingCost: { type: Number, default: 0 },
     acquisitionCost: { type: Number, default: 0 },
     costPrice: { type: Number, default: 0 }
-  }
+  },
+ }, 
+ { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } 
 });
 
 // Middleware para calcular preço promocional automaticamente quando o percentual de desconto for definido
@@ -154,6 +152,18 @@ productSchema.pre('save', function (next) {
     this.promotionalPrice = this.price - (this.price * (this.discountPercentage / 100));
   }
   next();
+});
+
+// Virtual derivado
+productSchema.virtual("isOnPromotion").get(function (this: IProduct) {
+  const now = new Date();
+  const hasWindow =
+    (!this.promotionStartDate || this.promotionStartDate <= now) &&
+    (!this.promotionEndDate || this.promotionEndDate >= now);
+  const hasDiscount =
+    (typeof this.discountPercentage === "number" && this.discountPercentage > 0) ||
+    (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0);
+  return Boolean(hasWindow && hasDiscount);
 });
 
 // Middleware para verificar se a promoção expirou (pode ser chamado por um job agendado)
@@ -170,17 +180,39 @@ productSchema.methods.checkPromotionValidity = function () {
   return Promise.resolve(this);
 };
 
+productSchema.methods.isPromotionActive = function (this: IProduct, now = new Date()) {
+  const hasWindow =
+    (!this.promotionStartDate || this.promotionStartDate <= now) &&
+    (!this.promotionEndDate || this.promotionEndDate >= now);
+  const hasDiscount =
+    (typeof this.discountPercentage === "number" && this.discountPercentage > 0) ||
+    (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0);
+  return Boolean(hasWindow && hasDiscount);
+};
+
+productSchema.methods.getFinalPrice = function (this: IProduct, now = new Date()) {
+  if (this.isPromotionActive(now)) {
+    if (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0) {
+      return Number(this.promotionalPrice.toFixed(2));
+    }
+    if (typeof this.discountPercentage === "number" && this.discountPercentage > 0) {
+      const pct = Math.min(100, Math.max(0, this.discountPercentage));
+      return Number((this.price * (1 - pct / 100)).toFixed(2));
+    }
+  }
+  return Number(this.price.toFixed(2));
+};
+
 export const ProductModel = mongoose.model<IProduct>("Product", productSchema);
 
 // Métodos
-
 // Obter todos os produtos
 export const getProducts = () => ProductModel.find();
 
 // Obter produtos de um restaurante específico
 export const getProductsByRestaurant = (restaurantId: string) =>
   ProductModel.find({ restaurant: restaurantId })
-    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate isCombo additionalOptions accompaniments description discountPercentage isAvailable');
+    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate promotionLabel isCombo additionalOptions accompaniments description discountPercentage isAvailable');
 
 // Obter produtos em promoção de um restaurante específico
 export const getPromotionalProducts = (restaurantId: string) =>

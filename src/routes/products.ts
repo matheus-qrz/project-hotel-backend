@@ -1,12 +1,15 @@
 // routes/products.ts (ajustado)
 import { Router } from "express";
 import {
+  clearProductPromotionController,
   createComboController,
   createFoodController,
   createMultipleProductsController,
   deleteFoodController,
   getAllFoodsController,
   getFoodByIdController,
+  listActivePromotionsController,
+  setProductPromotionController,
   updateComboController,
   updateFoodController,
 } from "../controllers/ProductController";
@@ -81,5 +84,27 @@ export default (productsRouter: Router) => {
     hasRole(["ADMIN","MANAGER"]),
     upload.single("file"),
     importProductsController
+  );
+
+  productsRouter.patch(
+    "/restaurant/:id/products/:productId/promotion",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    setProductPromotionController
+  );
+
+  productsRouter.delete(
+    "/restaurant/:id/products/:productId/promotion",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    clearProductPromotionController
+  );
+
+  // Listar promoções ativas
+  productsRouter.get(
+    "/restaurant/:id/promotions/active",
+    isAuthenticated,
+    hasRole(["ADMIN", "MANAGER"]),
+    listActivePromotionsController
   );
 };
