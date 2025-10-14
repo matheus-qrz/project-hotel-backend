@@ -407,7 +407,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
 
           // ===== Itens mais pedidos (compatível com seu schema) =====
           topOrders: [
-            { $match: { ...matchBase, status: { $ne: "cancelled" } } },
+            { $match: { ...matchBase, status: { $ne: "cancelled" } } }, // <— corrigido
             { $unwind: "$items" },
             { $match: { $or: [ { "items.status": { $exists: false } }, { "items.status": { $ne: "cancelled" } } ] } },
             { $group: { _id: "$items.name", value: { $sum: { $ifNull: ["$items.quantity", 1] } } } },
@@ -417,81 +417,50 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
           ],
 
           // ===== Tempo médio: processing -> (completed|paid) =====
-         avgDelivery: [
-  {
-    $match: {
-      ...matchBase,
-      status: { $in: ["completed", "paid"] }, // inclui pedidos pagos
-    },
-  },
-  {
- $project: {
-      startedAt: {
-        $ifNull: [
-          "$processingAt",
-          {
-            $ifNull: [
-              {
-                $let: {
-                  vars: {
-                    hit: {
-                      $first: {
-                        $filter: {
-                          input: { $ifNull: ["$statusHistory", []] },
-                          as: "s",
-                          cond: { $eq: ["$$s.status", "processing"] },
-                        },
-                      },
-                    },
-                  },
-                  in: "$$hit.at",
+          avgDelivery: [
+            { $match: { ...matchBase, status: { $in: ["completed", "paid"] } } }, // <— corrigido
+            {
+              $project: {
+                startedAt: {
+                  $ifNull: [
+                    "$processingAt",
+                    { $ifNull: [
+                        { $let: {
+                            vars: { hit: { $first: {
+                              $filter: { input: { $ifNull: ["$statusHistory", []] }, as: "s", cond: { $eq: ["$$s.status", "processing"] } }
+                            } } },
+                            in: "$$hit.at"
+                        }},
+                        "$createdAt"
+                    ] }
+                  ]
                 },
-              },
-              "$createdAt",
-            ],
-          },
-        ],
-      },
- finishedAt: {
-        $ifNull: [
-          "$completedAt",
-          {
-            $ifNull: [
-              {
-                $let: {
-                  vars: {
-                    hit: {
-                      $first: {
-                        $filter: {
-                          input: { $ifNull: ["$statusHistory", []] },
-                          as: "s",
-                          cond: { $eq: ["$$s.status", "completed"] },
-                        },
-                      },
-                    },
-                  },
-                  in: "$$hit.at",
+                finishedAt: {
+                  $ifNull: [
+                    "$completedAt",
+                    { $ifNull: [
+                        { $let: {
+                            vars: { hit: { $first: {
+                              $filter: { input: { $ifNull: ["$statusHistory", []] }, as: "s", cond: { $eq: ["$$s.status", "completed"] } }
+                            } } },
+                            in: "$$hit.at"
+                        }},
+                        "$updatedAt"
+                    ] }
+                  ]
                 },
-              },
-              "$updatedAt",
-            ],
-          },
-        ],
-      },
-    },
-  },
-          {
-            $match: {
-              startedAt: { $type: "date" },
-              finishedAt: { $type: "date" },
-              $expr: { $gt: ["$finishedAt", "$startedAt"] },
+              }
             },
-          },
+            { $match: {
+                startedAt: { $type: "date" },
+                finishedAt: { $type: "date" },
+                $expr: { $gt: ["$finishedAt", "$startedAt"] }
+            }},
             { $project: { diffMs: { $subtract: ["$finishedAt", "$startedAt"] } } },
             { $match: { diffMs: { $gt: 0 } } },
             { $group: { _id: null, avgMs: { $avg: "$diffMs" } } },
             { $project: { _id: 0, avgMinutes: { $divide: ["$avgMs", 60000] } } },
-          ],
+          ]
         },
       },
     ]);
@@ -512,42 +481,42 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       agg?.summary?.[0] ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
     const [avgRes] = await Order.aggregate([
-  { $match: { restaurant: new mongoose.Types.ObjectId(restaurantId), status: "completed" } },
-  {
-    $addFields: {
-      startAt: {
-        $ifNull: [
-          "$statusTimestamps.processing",
-          { $ifNull: ["$createdAt", null] }
-        ]
+      { $match: { restaurant: new mongoose.Types.ObjectId(restaurantId), status: "completed" } },
+      {
+        $addFields: {
+          startAt: {
+            $ifNull: [
+              "$statusTimestamps.processing",
+              { $ifNull: ["$createdAt", null] }
+            ]
+          },
+          endAt: {
+            $ifNull: [
+              "$statusTimestamps.completed",
+              { $ifNull: ["$completedAt", null] }
+            ]
+          }
+        }
       },
-      endAt: {
-        $ifNull: [
-          "$statusTimestamps.completed",
-          { $ifNull: ["$completedAt", null] }
-        ]
-      }
-    }
-  },
-  {
-    $match: {
-      startAt: { $type: "date" },
-      endAt: { $type: "date" },
-      $expr: { $gt: ["$endAt", "$startAt"] }
-    }
-  },
-  {
-    $project: {
-      deltaMin: {
-        $divide: [{ $subtract: ["$endAt", "$startAt"] }, 1000 * 60]
-      }
-    }
-  },
-  { $group: { _id: null, avgDelivery: { $avg: "$deltaMin" } } }
-]);
+      {
+        $match: {
+          startAt: { $type: "date" },
+          endAt: { $type: "date" },
+          $expr: { $gt: ["$endAt", "$startAt"] }
+        }
+      },
+      {
+        $project: {
+          deltaMin: {
+            $divide: [{ $subtract: ["$endAt", "$startAt"] }, 1000 * 60]
+          }
+        }
+      },
+      { $group: { _id: null, avgDelivery: { $avg: "$deltaMin" } } }
+    ]);
 
     const averageDeliveryMinutes = Math.round(
-      agg?.[0]?.avgDelivery?.[0]?.avgMinutes ?? 0
+      agg?.avgDelivery?.[0]?.avgMinutes ?? 0   // <— sem agg?.[0]
     );
 
     // topOrders no formato [{ name, value }] (mantém compatibilidade com o front)
