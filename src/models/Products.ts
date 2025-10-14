@@ -146,6 +146,34 @@ const productSchema = new Schema<IProduct>({
  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } 
 });
 
+// --- helpers locais (toque mínimo) ---
+function isPromotionActiveDoc(doc: any, now = new Date()) {
+  const hasDisc =
+    typeof doc?.discountPercentage === "number" && doc.discountPercentage > 0;
+  const hasPromoPrice =
+    typeof doc?.promotionalPrice === "number" && doc.promotionalPrice > 0;
+
+  const inWindow =
+    (!doc?.promotionStartDate || new Date(doc.promotionStartDate) <= now) &&
+    (!doc?.promotionEndDate || new Date(doc.promotionEndDate) >= now);
+
+  return (hasDisc || hasPromoPrice) && inWindow;
+}
+
+function finalPriceDoc(doc: any, now = new Date()) {
+  if (isPromotionActiveDoc(doc, now)) {
+    if (typeof doc?.promotionalPrice === "number" && doc.promotionalPrice > 0) {
+      return Number(Number(doc.promotionalPrice).toFixed(2));
+    }
+    if (typeof doc?.discountPercentage === "number" && doc.discountPercentage > 0) {
+      const pct = Math.min(100, Math.max(0, doc.discountPercentage));
+      return Number((Number(doc.price) * (1 - pct / 100)).toFixed(2));
+    }
+  }
+  return Number(Number(doc.price).toFixed(2));
+}
+
+
 // Middleware para calcular preço promocional automaticamente quando o percentual de desconto for definido
 productSchema.pre('save', function (next) {
   if (this.isOnPromotion && this.discountPercentage && this.price) {
@@ -168,28 +196,22 @@ productSchema.methods.checkPromotionValidity = function () {
   return Promise.resolve(this);
 };
 
-productSchema.methods.isPromotionActive = function (this: IProduct, now = new Date()) {
-  const hasWindow =
-    (!this.promotionStartDate || this.promotionStartDate <= now) &&
-    (!this.promotionEndDate || this.promotionEndDate >= now);
-  const hasDiscount =
-    (typeof this.discountPercentage === "number" && this.discountPercentage > 0) ||
-    (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0);
-  return Boolean(hasWindow && hasDiscount);
+productSchema.methods.isPromotionActive = function (now = new Date()) {
+  return isPromotionActiveDoc(this, now);
 };
 
-productSchema.methods.getFinalPrice = function (this: IProduct, now = new Date()) {
-  if (this.isPromotionActive(now)) {
-    if (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0) {
-      return Number(this.promotionalPrice.toFixed(2));
-    }
-    if (typeof this.discountPercentage === "number" && this.discountPercentage > 0) {
-      const pct = Math.min(100, Math.max(0, this.discountPercentage));
-      return Number((this.price * (1 - pct / 100)).toFixed(2));
-    }
-  }
-  return Number(this.price.toFixed(2));
+productSchema.methods.getFinalPrice = function (now = new Date()) {
+  return finalPriceDoc(this, now);
 };
+
+productSchema.set("toJSON", {
+  virtuals: false, 
+  transform(doc: any, ret: any) {
+    ret.isOnPromotion = doc.isPromotionActive();   
+    ret.finalPrice = doc.getFinalPrice();           
+    return ret;
+  },
+});
 
 export const ProductModel = mongoose.model<IProduct>("Product", productSchema);
 
