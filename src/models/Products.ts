@@ -154,18 +154,6 @@ productSchema.pre('save', function (next) {
   next();
 });
 
-// Virtual derivado
-productSchema.virtual("isOnPromotion").get(function (this: IProduct) {
-  const now = new Date();
-  const hasWindow =
-    (!this.promotionStartDate || this.promotionStartDate <= now) &&
-    (!this.promotionEndDate || this.promotionEndDate >= now);
-  const hasDiscount =
-    (typeof this.discountPercentage === "number" && this.discountPercentage > 0) ||
-    (typeof this.promotionalPrice === "number" && this.promotionalPrice > 0);
-  return Boolean(hasWindow && hasDiscount);
-});
-
 // Middleware para verificar se a promoção expirou (pode ser chamado por um job agendado)
 productSchema.methods.checkPromotionValidity = function () {
   const now = new Date();
