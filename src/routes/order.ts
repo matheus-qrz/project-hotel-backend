@@ -73,7 +73,6 @@ export default (orderRouter: Router) => {
     getGuestOrdersController
   );
 
-  // --- Updates ---
   orderRouter.patch(
     "/restaurant/:restaurantUnitId/order/:orderId/status",
     isAuthenticated,
@@ -83,8 +82,6 @@ export default (orderRouter: Router) => {
 
   orderRouter.patch(
     "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId",
-    isAuthenticated,
-    hasRole(["MANAGER", "ATTENDANT"]),
     updateOrderItemController
   );
 
@@ -100,12 +97,9 @@ export default (orderRouter: Router) => {
 
   orderRouter.delete(
     "/restaurant/:restaurantUnitId/order/:orderId",
-    isAuthenticated,
-    hasRole(["MANAGER", "ATTENDANT"]),
     deleteOrderController
   );
 
-  // --- Reassign (idempotente) ---
   orderRouter.post(
     "/restaurant/:restaurantUnitId/orders/reassign",
     isAuthenticated,
@@ -114,28 +108,24 @@ export default (orderRouter: Router) => {
   );
 
   orderRouter.delete(
-  "/units/:unitId/orders/:orderId/items/:itemId",
-  isAuthenticated,
-  hasRole(["MANAGER"]),
-  removeOrderItemController,
-);
+    "/units/:unitId/orders/:orderId/items/:itemId",
+    removeOrderItemController,
+  );
 
-orderRouter.patch(
-  "/units/:unitId/orders/:orderId/items/:itemId/exception",
-  isAuthenticated,
-  hasRole(["MANAGER"]),
-  addOrderItemExceptionController,
-);
+  orderRouter.patch(
+    "/units/:unitId/orders/:orderId/items/:itemId/exception",
+    isAuthenticated,
+    hasRole(["MANAGER"]),
+    addOrderItemExceptionController,
+  );
 
-orderRouter.post(
-  "/units/:unitId/orders/:orderId/coupons",
-  isAuthenticated,
-  hasRole(["MANAGER"]),
-  applyOrderCouponController,
-);
+  orderRouter.post(
+    "/units/:unitId/orders/:orderId/coupons",
+    applyOrderCouponController,
+  );
 
-orderRouter.get(
-  "/restaurant/:unitId/tables/:tableId/status",
-  getTableStatus
-)
+  orderRouter.get(
+    "/restaurant/:unitId/tables/:tableId/status",
+    getTableStatus
+  )
 };
