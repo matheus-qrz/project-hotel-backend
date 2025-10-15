@@ -4,7 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import router from "./routes/index";
-import { lookup, extension } from "mime-types";
+import { lookup } from "mime-types";
 
 dotenv.config();
 

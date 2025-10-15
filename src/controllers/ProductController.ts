@@ -11,6 +11,7 @@ import {
 import { parseDataURL } from "../utils/parseDataURL";
 import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
+import { Types } from "mongoose";
 
 async function handleIncomingImage(req: Request) {
   // 1) arquivo multipart
@@ -165,6 +166,132 @@ export const getFoodByIdController = async (
     return res.status(500).json({ message: "Erro ao buscar produto" });
   }
 };
+
+export async function listProductsController(req: Request, res: Response) {
+  try {
+    const { restaurantId, unitId } = req.query as { restaurantId: string; unitId?: string };
+    const now = new Date();
+
+    const pipeline: any[] = [
+      { $match: { restaurant: new Types.ObjectId(restaurantId) } },
+      {
+        $lookup: {
+          from: "promotions",
+          let: {
+            prodId: "$_id",
+            prodCategory: "$category",
+            restId: new Types.ObjectId(restaurantId),
+            unitIdParam: unitId ? new Types.ObjectId(unitId) : null,
+            now: now
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$restaurant", "$$restId"] },
+                    { $lte: ["$startDate", "$$now"] },
+                    { $gte: ["$endDate", "$$now"] },
+                    {
+                      $or: [
+                        // 1) produto
+                        { $and: [ { $eq: ["$scope","product"] },  { $eq: ["$product","$$prodId"] } ] },
+
+                        // 2) categoria + unidade
+                        { $and: [
+                          { $eq: ["$scope","category"] },
+                          { $eq: ["$category","$$prodCategory"] },
+                          { $ne: ["$$unitIdParam", null] },
+                          { $eq: ["$unit","$$unitIdParam"] },
+                        ]},
+
+                        // 3) categoria + restaurante
+                        { $and: [
+                          { $eq: ["$scope","category"] },
+                          { $eq: ["$category","$$prodCategory"] },
+                          { $eq: ["$unit", null] },
+                        ]},
+
+                        // 4) unidade (todas categorias)
+                        { $and: [
+                          { $eq: ["$scope","unit"] },
+                          { $ne: ["$$unitIdParam", null] },
+                          { $eq: ["$unit","$$unitIdParam"] },
+                        ]},
+
+                        // 5) restaurante (global)
+                        { $and: [
+                          { $eq: ["$scope","restaurant"] },
+                          { $eq: ["$unit", null] },
+                        ]},
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+            {
+              $addFields: {
+                _priority: {
+                  $switch: {
+                    branches: [
+                      { case: { $eq: ["$scope","product"] }, then: 1 },
+                      { case: { $and: [ { $eq: ["$scope","category"] }, { $ne: ["$unit", null] } ] }, then: 2 },
+                      { case: { $and: [ { $eq: ["$scope","category"] }, { $eq: ["$unit", null] } ] }, then: 3 },
+                      { case: { $eq: ["$scope","unit"] }, then: 4 },
+                      { case: { $eq: ["$scope","restaurant"] }, then: 5 },
+                    ],
+                    default: 99
+                  }
+                }
+              }
+            },
+            { $sort: { _priority: 1, createdAt: -1 } },
+          ],
+          as: "_promos",
+        },
+      },
+      { $addFields: { effectivePromotion: { $first: "$_promos" } } },
+      {
+        $addFields: {
+          isOnPromotion: { $cond: [ { $ifNull: ["$effectivePromotion", false] }, true, false ] },
+          discountPercentage: "$effectivePromotion.discountPercentage",
+          promotionalPrice: {
+            $cond: [
+              { $ifNull: ["$effectivePromotion.promotionalPrice", false] },
+              "$effectivePromotion.promotionalPrice",
+              {
+                $cond: [
+                  { $ifNull: ["$effectivePromotion.discountPercentage", false] },
+                  {
+                    $round: [
+                      {
+                        $multiply: [
+                          "$price",
+                          { $subtract: [1, { $divide: ["$effectivePromotion.discountPercentage", 100] }] }
+                        ]
+                      },
+                      2
+                    ]
+                  },
+                  null
+                ]
+              }
+            ]
+          },
+          promotionStartDate: "$effectivePromotion.startDate",
+          promotionEndDate: "$effectivePromotion.endDate",
+        }
+      },
+      { $project: { _promos: 0, effectivePromotion: 0 } }
+    ];
+
+    const data = await ProductModel.aggregate(pipeline);
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(400).json({ message: err.message || "Erro ao listar produtos" });
+  }
+}
 
 export const updateFoodController = async (
   req: Request,
