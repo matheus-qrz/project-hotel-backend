@@ -263,7 +263,7 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
       { _id: { $in: orderIds } },
       {
         $set: {
-          status: OrderStatus.COMPLETED,
+          status: OrderStatus.PAID,
           isPaid: true,
           paidAt: now,
           'meta.paymentMethod': paymentMethod,
@@ -409,7 +409,6 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
     res.status(500).json({ message: "Erro ao buscar pedidos", error });
   }
 };
-
 
 // Controlador para obter um pedido específico
 export const getOrderByIdController = async (req: Request, res: Response) => {
@@ -641,7 +640,9 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "guestId e tableId são obrigatórios." });
     }
 
-    const query: any = { "guestInfo.id": guestId, "meta.tableId": tableId }; 
+    const openStatuses = ["processing", "completed", "payment_requested"];
+
+    const query: any = { "guestInfo.id": guestId, "meta.tableId": tableId, status: { $in: openStatuses }}; 
     if (unitId) query.restaurantUnit = unitId;                                
 
     const orders = await OrderModel.find(query).sort({ createdAt: -1 }).lean(); 
