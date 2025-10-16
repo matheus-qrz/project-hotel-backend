@@ -1,4 +1,6 @@
 import { Request, Response} from "express";
+import fs from "fs/promises";
+import path from "path";
 import {
   createProduct,
   deleteProduct,
@@ -8,7 +10,7 @@ import {
   ProductModel,
   updateProduct
 } from "../models/Products";
-import { parseDataURL } from "../utils/parseDataURL";
+import { extFromMime, parseDataURL } from "../utils/parseDataURL";
 import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 import { Types } from "mongoose";
@@ -303,12 +305,13 @@ export const updateFoodController = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Produto não encontrado" });
     }
 
-    // Helpers de normalização (multipart envia strings)
+    // helpers
     const toNum = (v: any) => {
       if (typeof v === "number") return v;
       if (typeof v !== "string") return undefined;
-      const s = v.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
-      const n = Number(s);
+      const s = v.replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "");
+      const withDot = s.replace(",", ".");
+      const n = Number(withDot);
       return Number.isFinite(n) ? n : undefined;
     };
     const toBool = (v: any) => {
@@ -322,75 +325,122 @@ export const updateFoodController = async (req: Request, res: Response) => {
       return isNaN(d.getTime()) ? undefined : d;
     };
 
-    // 2) dados vindos do body (strings em multipart)
-    const b = req.body || {};
-    // Se additionalOptions vier como string (JSON), parseia
-    let additionalOptions = b.additionalOptions;
-    if (typeof additionalOptions === "string") {
-      try { additionalOptions = JSON.parse(additionalOptions); } catch { /* ignora */ }
-    }
-
-    // Se veio arquivo, converte path do disco para caminho público (/uploads/...)
-    let imageFromFile: string | undefined;
-    if ((req as any).file) {
-      const f = (req as any).file as { path?: string; filename?: string; destination?: string };
-      // tenta extrair a parte após "/uploads"
-      const p = f?.path?.replace(/\\/g, "/") || "";
-      const idx = p.indexOf("/uploads/");
-      imageFromFile = idx >= 0 ? p.slice(idx) : undefined;
-      // fallback simples (depende do seu multer)
-      if (!imageFromFile && f?.filename) imageFromFile = `/uploads/products/${f.filename}`;
-    }
-
-    // 3) montar patch (sem sobrescrever com undefined)
-    const isOnPromotion = toBool(b.isOnPromotion) ?? false;
-    const price = toNum(b.price) ?? existingProduct.price; // mantém o atual se não veio
-    const discountPercentage = isOnPromotion ? toNum(b.discountPercentage) : undefined;
-    const promotionalPriceRaw = isOnPromotion ? toNum(b.promotionalPrice) : undefined;
-
-    let calculatedPromotionalPrice =
-      isOnPromotion && !promotionalPriceRaw && discountPercentage
-        ? price - price * (discountPercentage / 100)
-        : promotionalPriceRaw;
-
-    const updatedData: any = {
-      name: b.name?.trim(),
-      category: b.category?.trim(),
-      price,
-      description: b.description?.trim(),
-      // se veio arquivo, prioriza; senão, se b.image veio, usa; do contrário mantém o existente
-      image: imageFromFile ?? (b.image || undefined),
-      isAvailable: toBool(b.isAvailable),
-      isOnPromotion,
-      isAdditional: toBool(b.isAdditional),
+    // 2) ler body (strings em multipart)
+    const {
+      name,
+      category,
+      description,
+      image: imageFromBody,
+      discountPercentage: discStr,
+      promotionalPrice: promoStr,
+      promotionStartDate: startStr,
+      promotionEndDate: endStr,
       additionalOptions,
-      // bloco de promoção
-      ...(isOnPromotion
-        ? {
-            discountPercentage,
-            promotionalPrice: calculatedPromotionalPrice,
-            promotionStartDate: toDate(b.promotionStartDate),
-            promotionEndDate: toDate(b.promotionEndDate),
-          }
-        : {
-            discountPercentage: null,
-            promotionalPrice: null,
-            promotionStartDate: null,
-            promotionEndDate: null,
-          }),
+    } = req.body as any;
+
+    const price = toNum((req.body as any).price);
+    const costPrice = toNum((req.body as any).costPrice);
+    const quantity =
+      (req.body as any).quantity !== undefined
+        ? Number((req.body as any).quantity)
+        : undefined;
+    const isAvailable = toBool((req.body as any).isAvailable);
+    const isOnPromotion = toBool((req.body as any).isOnPromotion) ?? false;
+
+    // 3) imagem (só altera se vier arquivo OU imagem no body)
+    let imagePatch: string | undefined;
+
+    if ((req as any).file) {
+      const f = (req as any).file as { path?: string; filename?: string };
+      const p = (f?.path || "").replace(/\\/g, "/");
+      const idx = p.indexOf("/uploads/");
+      imagePatch = idx >= 0 ? p.slice(idx) : undefined;
+      if (!imagePatch && f?.filename) imagePatch = `/uploads/products/${f.filename}`;
+    } else if (typeof (req.body as any).image === "string") {
+      const raw = (req.body as any).image;
+
+      if (raw.startsWith("data:image/")) {
+        // --- CASO DATA URL ---
+        const parsed = parseDataURL(raw);
+        if (parsed) {
+          const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
+          // sugiro salvar na pasta do próprio produto
+          const productDir = path.join(UPLOADS_DIR, "products", String(id));
+          await fs.mkdir(productDir, { recursive: true });
+
+          const ext = extFromMime(parsed.mime);
+          const fileName = `original.${ext}`;
+          const absPath = path.join(productDir, fileName);
+          await fs.writeFile(absPath, parsed.buffer);
+
+          // caminho público que o front consome
+          imagePatch = `/uploads/products/${id}/${fileName}`;
+        }
+      } else if (raw.startsWith("/uploads/")) {
+        // veio um path público válido
+        imagePatch = raw;
+      }
+    }
+
+    // 4) promoção (recalcula caso necessário)
+    const discountPercentage =
+      isOnPromotion ? toNum(discStr) : undefined;
+    const promotionalPriceInput =
+      isOnPromotion ? toNum(promoStr) : undefined;
+    const basePrice = price ?? existingProduct.price;
+
+    let promotionalPrice =
+      isOnPromotion && !promotionalPriceInput && discountPercentage
+        ? basePrice - basePrice * (discountPercentage / 100)
+        : promotionalPriceInput;
+
+    const promotionStartDate = isOnPromotion ? toDate(startStr) : undefined;
+    const promotionEndDate = isOnPromotion ? toDate(endStr) : undefined;
+
+    // 5) montar patch sem sobrescrever com undefined
+    const updatedData: any = {
+      name: name?.trim(),
+      category: category?.trim(),
+      description: description?.trim(),
+      isAvailable,
+      isOnPromotion: isOnPromotion || false,
+      additionalOptions,
     };
 
-    // remove chaves undefined/"" para não sobrescrever indevidamente
+    if (imagePatch !== undefined) updatedData.image = imagePatch;
+
+    if (price !== undefined) updatedData.price = price;
+    if (costPrice !== undefined) updatedData.costPrice = costPrice;
+    if (quantity !== undefined && !Number.isNaN(quantity)) {
+      updatedData.quantity = quantity;
+    }
+    if (imagePatch !== undefined) updatedData.image = imagePatch;
+
+    if (isOnPromotion) {
+      updatedData.discountPercentage = discountPercentage;
+      updatedData.promotionalPrice = promotionalPrice ?? null;
+      updatedData.promotionStartDate = promotionStartDate ?? null;
+      updatedData.promotionEndDate = promotionEndDate ?? null;
+    } else {
+      updatedData.discountPercentage = null;
+      updatedData.promotionalPrice = null;
+      updatedData.promotionStartDate = null;
+      updatedData.promotionEndDate = null;
+    }
+
+    // remove vazios
     Object.keys(updatedData).forEach((k) => {
-      if (updatedData[k] === undefined || updatedData[k] === "") delete updatedData[k];
+      if (updatedData[k] === undefined || updatedData[k] === "") {
+        delete updatedData[k];
+      }
     });
 
-    // 4) aplica update
+    // 6) aplicar update
     const updatedProduct = await updateProduct(id, updatedData);
     return res.status(200).json(updatedProduct);
-  } catch (error: any) {
+  } catch (error) {
     console.error("Erro ao atualizar produto:", error);
-    return res.status(500).json({ message: error?.message || "Erro ao atualizar produto" });
+    return res.status(500).json({ message: "Erro ao atualizar produto" });
   }
 };
 
