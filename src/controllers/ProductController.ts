@@ -305,15 +305,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Produto não encontrado" });
     }
 
-    // helpers
-    const toNum = (v: any) => {
-      if (typeof v === "number") return v;
-      if (typeof v !== "string") return undefined;
-      const s = v.replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(?:\D|$))/g, "");
-      const withDot = s.replace(",", ".");
-      const n = Number(withDot);
-      return Number.isFinite(n) ? n : undefined;
-    };
     const toBool = (v: any) => {
       if (typeof v === "boolean") return v;
       if (typeof v === "string") return v.toLowerCase() === "true";
@@ -338,8 +329,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
       additionalOptions,
     } = req.body as any;
 
-    const price = toNum((req.body as any).price);
-    const costPrice = toNum((req.body as any).costPrice);
     const quantity =
       (req.body as any).quantity !== undefined
         ? Number((req.body as any).quantity)
@@ -384,10 +373,10 @@ export const updateFoodController = async (req: Request, res: Response) => {
 
     // 4) promoção (recalcula caso necessário)
     const discountPercentage =
-      isOnPromotion ? toNum(discStr) : undefined;
+      isOnPromotion ? discStr : undefined;
     const promotionalPriceInput =
-      isOnPromotion ? toNum(promoStr) : undefined;
-    const basePrice = price ?? existingProduct.price;
+      isOnPromotion ? promoStr : undefined;
+    const basePrice = req.body.price ?? existingProduct.price;
 
     let promotionalPrice =
       isOnPromotion && !promotionalPriceInput && discountPercentage
@@ -418,8 +407,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
 
     if (imagePatch !== undefined) updatedData.image = imagePatch;
 
-    if (price !== undefined) updatedData.price = price;
-    if (costPrice !== undefined) updatedData.costPrice = costPrice;
     if (quantity !== undefined && !Number.isNaN(quantity)) {
       updatedData.quantity = quantity;
     }
