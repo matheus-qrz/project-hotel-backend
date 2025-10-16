@@ -299,7 +299,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    // 1) produto existe?
     const existingProduct = await getProductById(id);
     if (!existingProduct) {
       return res.status(404).json({ message: "Produto não encontrado" });
@@ -316,7 +315,34 @@ export const updateFoodController = async (req: Request, res: Response) => {
       return isNaN(d.getTime()) ? undefined : d;
     };
 
-    // 2) ler body (strings em multipart)
+    // >>>>>>> ADIÇÃO: parser simples para dinheiro
+    const parseMoney = (v: any): number | undefined => {
+      if (v === null || v === undefined) return undefined;
+      if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+
+      const raw = String(v).trim();
+      if (!raw) return undefined;
+
+      // tem separador decimal explícito
+      if (/[.,]/.test(raw)) {
+        const s = raw
+          .replace(/[^\d.,-]/g, "")                // mantém só dígitos , . e sinal
+          .replace(/\.(?=\d{3}(?:\.|,|$))/g, "")   // remove pontos de milhar
+          .replace(",", ".");
+        const n = Number(s);
+        return Number.isFinite(n) ? n : undefined;
+      }
+
+      // só dígitos: últimos 2 são centavos
+      const digits = raw.replace(/\D/g, "");
+      if (!digits) return undefined;
+      const inteiro = digits.slice(0, -2) || "0";
+      const frac = digits.slice(-2).padStart(2, "0");
+      const n = Number(`${inteiro}.${frac}`);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    // <<<<<<<
+
     const {
       name,
       category,
@@ -333,12 +359,12 @@ export const updateFoodController = async (req: Request, res: Response) => {
       (req.body as any).quantity !== undefined
         ? Number((req.body as any).quantity)
         : undefined;
+
     const isAvailable = toBool((req.body as any).isAvailable);
     const isOnPromotion = toBool((req.body as any).isOnPromotion) ?? false;
 
-    // 3) imagem (só altera se vier arquivo OU imagem no body)
+    // IMAGEM
     let imagePatch: string | undefined;
-
     if ((req as any).file) {
       const f = (req as any).file as { path?: string; filename?: string };
       const p = (f?.path || "").replace(/\\/g, "/");
@@ -347,13 +373,10 @@ export const updateFoodController = async (req: Request, res: Response) => {
       if (!imagePatch && f?.filename) imagePatch = `/uploads/products/${f.filename}`;
     } else if (typeof (req.body as any).image === "string") {
       const raw = (req.body as any).image;
-
       if (raw.startsWith("data:image/")) {
-        // --- CASO DATA URL ---
         const parsed = parseDataURL(raw);
         if (parsed) {
           const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
-          // sugiro salvar na pasta do próprio produto
           const productDir = path.join(UPLOADS_DIR, "products", String(id));
           await fs.mkdir(productDir, { recursive: true });
 
@@ -362,39 +385,32 @@ export const updateFoodController = async (req: Request, res: Response) => {
           const absPath = path.join(productDir, fileName);
           await fs.writeFile(absPath, parsed.buffer);
 
-          // caminho público que o front consome
           imagePatch = `/uploads/products/${id}/${fileName}`;
         }
       } else if (raw.startsWith("/uploads/")) {
-        // veio um path público válido
         imagePatch = raw;
       }
     }
 
-    // 4) promoção (recalcula caso necessário)
+    // PROMOÇÃO
     const discountPercentage =
-      isOnPromotion ? discStr : undefined;
+      isOnPromotion ? Number(discStr ?? "") : undefined;
+
+    const basePriceParsed =
+      parseMoney((req.body as any).price) ?? existingProduct.price;
+
     const promotionalPriceInput =
-      isOnPromotion ? promoStr : undefined;
-    const basePrice = req.body.price ?? existingProduct.price;
+      isOnPromotion ? parseMoney(promoStr) : undefined;
 
     let promotionalPrice =
-      isOnPromotion && !promotionalPriceInput && discountPercentage
-        ? basePrice - basePrice * (discountPercentage / 100)
+      isOnPromotion && promotionalPriceInput == null && discountPercentage != null
+        ? basePriceParsed - basePriceParsed * (discountPercentage / 100)
         : promotionalPriceInput;
 
     const promotionStartDate = isOnPromotion ? toDate(startStr) : undefined;
     const promotionEndDate = isOnPromotion ? toDate(endStr) : undefined;
 
-    let imageFromUpload: string | undefined;
-    if ((req as any).file) {
-      const f = (req as any).file as { path?: string; filename?: string };
-      const p = (f?.path || "").replace(/\\/g, "/");
-      const ix = p.indexOf("/uploads/");
-      imageFromUpload = ix >= 0 ? p.slice(ix) : (f?.filename ? `/uploads/products/${id}/${f.filename}` : undefined);
-    }
-
-    // 5) montar patch sem sobrescrever com undefined
+    // montar patch
     const updatedData: any = {
       name: name?.trim(),
       category: category?.trim(),
@@ -402,19 +418,33 @@ export const updateFoodController = async (req: Request, res: Response) => {
       isAvailable,
       isOnPromotion: isOnPromotion || false,
       additionalOptions,
-      image: imageFromUpload ?? image ?? undefined
     };
 
-    if (imagePatch !== undefined) updatedData.image = imagePatch;
+    // preço e custo (AGORA parseados corretamente)
+    const priceParsed = parseMoney((req.body as any).price);
+    if (priceParsed !== undefined) updatedData.price = priceParsed;
+
+    const costParsed = parseMoney((req.body as any).costPrice);
+    if (costParsed !== undefined) updatedData.costPrice = costParsed;
 
     if (quantity !== undefined && !Number.isNaN(quantity)) {
       updatedData.quantity = quantity;
     }
-    if (imagePatch !== undefined) updatedData.image = imagePatch;
+
+    if (imagePatch !== undefined) {
+      updatedData.image = imagePatch;
+    } else if (typeof image === "string" && image.startsWith("/uploads/")) {
+      // mantém o path válido que veio do body se não houve novo upload/dataURL
+      updatedData.image = image;
+    }
 
     if (isOnPromotion) {
-      updatedData.discountPercentage = discountPercentage;
-      updatedData.promotionalPrice = promotionalPrice ?? null;
+      updatedData.discountPercentage =
+        Number.isFinite(discountPercentage!) ? discountPercentage : null;
+      updatedData.promotionalPrice =
+        promotionalPrice != null && Number.isFinite(promotionalPrice)
+          ? promotionalPrice
+          : null;
       updatedData.promotionStartDate = promotionStartDate ?? null;
       updatedData.promotionEndDate = promotionEndDate ?? null;
     } else {
@@ -431,7 +461,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
       }
     });
 
-    // 6) aplicar update
     const updatedProduct = await updateProduct(id, updatedData);
     return res.status(200).json(updatedProduct);
   } catch (error) {
@@ -439,6 +468,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Erro ao atualizar produto" });
   }
 };
+
 
 export const deleteFoodController = async (
   req: Request,
