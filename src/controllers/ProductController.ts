@@ -330,7 +330,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
       name,
       category,
       description,
-      image: imageFromBody,
+      image,
       discountPercentage: discStr,
       promotionalPrice: promoStr,
       promotionStartDate: startStr,
@@ -397,6 +397,14 @@ export const updateFoodController = async (req: Request, res: Response) => {
     const promotionStartDate = isOnPromotion ? toDate(startStr) : undefined;
     const promotionEndDate = isOnPromotion ? toDate(endStr) : undefined;
 
+    let imageFromUpload: string | undefined;
+    if ((req as any).file) {
+      const f = (req as any).file as { path?: string; filename?: string };
+      const p = (f?.path || "").replace(/\\/g, "/");
+      const ix = p.indexOf("/uploads/");
+      imageFromUpload = ix >= 0 ? p.slice(ix) : (f?.filename ? `/uploads/products/${id}/${f.filename}` : undefined);
+    }
+
     // 5) montar patch sem sobrescrever com undefined
     const updatedData: any = {
       name: name?.trim(),
@@ -405,6 +413,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
       isAvailable,
       isOnPromotion: isOnPromotion || false,
       additionalOptions,
+      image: imageFromUpload ?? image ?? undefined
     };
 
     if (imagePatch !== undefined) updatedData.image = imagePatch;
