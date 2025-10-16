@@ -10,10 +10,17 @@ dotenv.config();
 
 const app = express();
 
-app.head("/uploads/*", (req, res) => {
-  res.set("Cache-Control", "public, max-age=31536000, immutable");
-  res.status(200).end();
-});
+const STATIC_UPLOADS =
+  process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
+
+app.use(
+  "/uploads",
+  express.static(STATIC_UPLOADS, {
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    },
+  })
+);
 
 app.use(
   "/uploads",

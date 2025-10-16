@@ -293,68 +293,104 @@ export async function listProductsController(req: Request, res: Response) {
   }
 }
 
-export const updateFoodController = async (
-  req: Request,
-  res: Response
-) => {
+export const updateFoodController = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const {
-      name,
-      category,
-      price,
-      description,
-      image,
-      isAvailable,
-      isOnPromotion,
-      discountPercentage,
-      promotionalPrice,
-      promotionStartDate,
-      promotionEndDate,
-      isAdditional,
-      additionalOptions
-    } = req.body;
 
-    // Verificar se o produto existe
+    // 1) produto existe?
     const existingProduct = await getProductById(id);
     if (!existingProduct) {
       return res.status(404).json({ message: "Produto não encontrado" });
     }
 
-    // Cálculo do preço promocional se fornecido desconto
-    let calculatedPromotionalPrice = promotionalPrice;
-    if (isOnPromotion && discountPercentage && !promotionalPrice) {
-      calculatedPromotionalPrice = price - (price * (discountPercentage / 100));
-    }
-
-    const updatedData = {
-      name,
-      category,
-      price,
-      description,
-      image,
-      isAvailable,
-      isOnPromotion: isOnPromotion || false,
-      ...(isOnPromotion ? {
-        discountPercentage,
-        promotionalPrice: calculatedPromotionalPrice,
-        promotionStartDate,
-        promotionEndDate
-      } : {
-        discountPercentage: null,
-        promotionalPrice: null,
-        promotionStartDate: null,
-        promotionEndDate: null
-      }),
-      isAdditional: isAdditional || false,
-      additionalOptions
+    // Helpers de normalização (multipart envia strings)
+    const toNum = (v: any) => {
+      if (typeof v === "number") return v;
+      if (typeof v !== "string") return undefined;
+      const s = v.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+      const n = Number(s);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const toBool = (v: any) => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") return v.toLowerCase() === "true";
+      return undefined;
+    };
+    const toDate = (v: any) => {
+      if (!v) return undefined;
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? undefined : d;
     };
 
+    // 2) dados vindos do body (strings em multipart)
+    const b = req.body || {};
+    // Se additionalOptions vier como string (JSON), parseia
+    let additionalOptions = b.additionalOptions;
+    if (typeof additionalOptions === "string") {
+      try { additionalOptions = JSON.parse(additionalOptions); } catch { /* ignora */ }
+    }
+
+    // Se veio arquivo, converte path do disco para caminho público (/uploads/...)
+    let imageFromFile: string | undefined;
+    if ((req as any).file) {
+      const f = (req as any).file as { path?: string; filename?: string; destination?: string };
+      // tenta extrair a parte após "/uploads"
+      const p = f?.path?.replace(/\\/g, "/") || "";
+      const idx = p.indexOf("/uploads/");
+      imageFromFile = idx >= 0 ? p.slice(idx) : undefined;
+      // fallback simples (depende do seu multer)
+      if (!imageFromFile && f?.filename) imageFromFile = `/uploads/products/${f.filename}`;
+    }
+
+    // 3) montar patch (sem sobrescrever com undefined)
+    const isOnPromotion = toBool(b.isOnPromotion) ?? false;
+    const price = toNum(b.price) ?? existingProduct.price; // mantém o atual se não veio
+    const discountPercentage = isOnPromotion ? toNum(b.discountPercentage) : undefined;
+    const promotionalPriceRaw = isOnPromotion ? toNum(b.promotionalPrice) : undefined;
+
+    let calculatedPromotionalPrice =
+      isOnPromotion && !promotionalPriceRaw && discountPercentage
+        ? price - price * (discountPercentage / 100)
+        : promotionalPriceRaw;
+
+    const updatedData: any = {
+      name: b.name?.trim(),
+      category: b.category?.trim(),
+      price,
+      description: b.description?.trim(),
+      // se veio arquivo, prioriza; senão, se b.image veio, usa; do contrário mantém o existente
+      image: imageFromFile ?? (b.image || undefined),
+      isAvailable: toBool(b.isAvailable),
+      isOnPromotion,
+      isAdditional: toBool(b.isAdditional),
+      additionalOptions,
+      // bloco de promoção
+      ...(isOnPromotion
+        ? {
+            discountPercentage,
+            promotionalPrice: calculatedPromotionalPrice,
+            promotionStartDate: toDate(b.promotionStartDate),
+            promotionEndDate: toDate(b.promotionEndDate),
+          }
+        : {
+            discountPercentage: null,
+            promotionalPrice: null,
+            promotionStartDate: null,
+            promotionEndDate: null,
+          }),
+    };
+
+    // remove chaves undefined/"" para não sobrescrever indevidamente
+    Object.keys(updatedData).forEach((k) => {
+      if (updatedData[k] === undefined || updatedData[k] === "") delete updatedData[k];
+    });
+
+    // 4) aplica update
     const updatedProduct = await updateProduct(id, updatedData);
     return res.status(200).json(updatedProduct);
-  } catch (error) {
+  } catch (error: any) {
     console.error("Erro ao atualizar produto:", error);
-    return res.status(500).json({ message: "Erro ao atualizar produto" });
+    return res.status(500).json({ message: error?.message || "Erro ao atualizar produto" });
   }
 };
 

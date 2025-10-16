@@ -51,7 +51,8 @@ export default (productsRouter: Router) => {
   productsRouter.patch(
     "/restaurant/:id/products/:id/update",
     isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
+    hasRole(['ADMIN' ,'MANAGER']),                           
+    upload.single("image"),         
     updateFoodController
   );
 
