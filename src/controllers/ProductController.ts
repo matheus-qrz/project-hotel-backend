@@ -365,29 +365,35 @@ export const updateFoodController = async (req: Request, res: Response) => {
 
     // IMAGEM
     let imagePatch: string | undefined;
-    if ((req as any).file) {
-      const f = (req as any).file as { path?: string; filename?: string };
-      const p = (f?.path || "").replace(/\\/g, "/");
-      const idx = p.indexOf("/uploads/");
-      imagePatch = idx >= 0 ? p.slice(idx) : undefined;
-      if (!imagePatch && f?.filename) imagePatch = `/uploads/products/${f.filename}`;
-    } else if (typeof (req.body as any).image === "string") {
+    let imageBlurPatch: string | undefined;
+    let imageWidthPatch: number | undefined;
+    let imageHeightPatch: number | undefined;
+
+    const imgOut = await (async function handleIncomingImage(req: Request) {
+      // 1) arquivo multipart (multer + memoryStorage)
+      if (req.file?.buffer) {
+        return await processAndSaveProductImage(req.file.buffer, "products");
+      }
+      // 2) data URL enviada no body
       const raw = (req.body as any).image;
-      if (raw.startsWith("data:image/")) {
+      if (typeof raw === "string" && raw.startsWith("data:image/")) {
         const parsed = parseDataURL(raw);
         if (parsed) {
-          const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(process.cwd(), "uploads");
-          const productDir = path.join(UPLOADS_DIR, "products", String(id));
-          await fs.mkdir(productDir, { recursive: true });
-
-          const ext = extFromMime(parsed.mime);
-          const fileName = `original.${ext}`;
-          const absPath = path.join(productDir, fileName);
-          await fs.writeFile(absPath, parsed.buffer);
-
-          imagePatch = `/uploads/products/${id}/${fileName}`;
+          return await processAndSaveProductImage(parsed.buffer, "products");
         }
-      } else if (raw.startsWith("/uploads/")) {
+      }
+      return null;
+    })(req);
+
+    if (imgOut) {
+      imagePatch       = imgOut.url;         // ex.: "/uploads/products/abc123/original.jpg"
+      imageBlurPatch   = imgOut.blurDataURL; // base64
+      imageWidthPatch  = imgOut.width;
+      imageHeightPatch = imgOut.height;
+    } else if (typeof (req.body as any).image === "string") {
+      // mantém compatibilidade se já vier URL pronta
+      const raw = (req.body as any).image;
+      if (raw.startsWith("/uploads/") || raw.startsWith("http")) {
         imagePatch = raw;
       }
     }
@@ -433,9 +439,12 @@ export const updateFoodController = async (req: Request, res: Response) => {
 
     if (imagePatch !== undefined) {
       updatedData.image = imagePatch;
+      // se você guarda esses campos no model, atualiza também:
+      if (imageBlurPatch !== undefined)   updatedData.imageBlur   = imageBlurPatch;
+      if (imageWidthPatch !== undefined)  updatedData.imageWidth  = imageWidthPatch;
+      if (imageHeightPatch !== undefined) updatedData.imageHeight = imageHeightPatch;
     } else if (typeof image === "string" && image.startsWith("/uploads/")) {
-      // mantém o path válido que veio do body se não houve novo upload/dataURL
-      updatedData.image = image;
+      updatedData.image = image; // mantém a atual se veio path válido no body
     }
 
     if (isOnPromotion) {
