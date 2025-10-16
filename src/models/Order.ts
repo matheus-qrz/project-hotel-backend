@@ -13,6 +13,9 @@ export interface IOrdermeta {
   processedBy?: mongoose.Schema.Types.ObjectId;
   splitCount?: number;
   sessionGroup: String;
+  helpRequestedAt?: string | null;  
+  helpResolvedAt?: string | null;    
+  helpResolvedById?: string | null;  
 }
 
 export interface IOrderItem {
@@ -184,7 +187,10 @@ const orderSchema = new Schema(
         type: Number,
         default: 1,
         min: 1
-      }
+      },
+      helpRequestedAt: { type: Date, required: false },
+      helpResolvedAt: { type: Date, required: false },
+      helpResolvedById: { type: String, required: false },
     },
     financialMetrics: {
       costPrice: { type: Number, required: false },
