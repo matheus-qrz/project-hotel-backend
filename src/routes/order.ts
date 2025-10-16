@@ -21,6 +21,7 @@ import {
   addOrderItemExceptionController,
   applyOrderCouponController,
   getTableStatus,
+  requestHelpController,
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
@@ -129,5 +130,10 @@ export default (orderRouter: Router) => {
   orderRouter.get(
     "/restaurant/:unitId/tables/:tableId/status",
     getTableStatus
+  )
+
+  orderRouter.post(
+    "/units/:unitId/orders/:orderId/help-request",
+    requestHelpController
   )
 };

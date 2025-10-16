@@ -1128,3 +1128,24 @@ export async function getTableStatus(req: Request, res: Response) {
     return res.status(500).json({ message: "Erro ao obter status da mesa" });
   }
 }
+
+export async function requestHelpController(req: Request, res: Response) {
+  const { unitId, orderId } = req.params;
+  const userRole = String(req.user?.role || ""); 
+
+  // 1) validação básica
+  const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+  if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
+
+  // 2) grava o sinal (idempotente por minuto)
+  const now = new Date();
+  const last = order.meta && order.meta.helpRequestedAt ? new Date(order.meta.helpRequestedAt) : null;
+  if (!last || now.getTime() - last.getTime() > 60_000) {
+    order.meta && order.meta.helpRequestedAt === now.toISOString();
+    order.meta && order.meta.helpResolvedAt === null;
+    order.meta && order.meta.helpResolvedById === null;
+    await order.save();
+  }
+
+  return res.json({ ok: true, helpRequestedAt: order.meta && order.meta.helpRequestedAt });
+}
