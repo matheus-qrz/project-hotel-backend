@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose, { Types } from "mongoose";
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import { OrderModel } from "../models/Order";
@@ -751,30 +751,35 @@ export const removeOrderItemController = async (req: Request, res: Response) => 
 export const updateOrderItemController = async (req: Request, res: Response) => {
   const { tableId, orderId, itemId } = req.params as any;
   const { guestId, quantity, status, servedAt } = (req.body || {}) as any;
-  
+
   const role = String(req.user?.role || "");
   const isManagerOrAttendant = role === "MANAGER" || role === "ATTENDANT";
 
   try {
+    // 0) validações de ids
+    if (!Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "orderId inválido." });
+    }
+    if (!Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ message: "itemId inválido." });
+    }
+
     const tableNum = Number(tableId);
     if (Number.isNaN(tableNum)) {
       return res.status(400).json({ message: "tableId inválido." });
     }
 
-    // Confirma pedido + mesa antes de gates
-    const doc = await OrderModel.findOne(
-      { _id: orderId, "meta.tableId": tableNum },
-    );
+    // 1) Confirma pedido + mesa
+    const doc = await OrderModel.findOne({ _id: orderId, "meta.tableId": tableNum });
     if (!doc) return res.status(404).json({ message: "Pedido não encontrado." });
 
     const currentUserId = String(req.user?.id ?? "");
 
+    // 2) Gates (manager/attendant passa; demais checam range)
     if (!isManagerOrAttendant) {
-      // 1) Se tem dono e não é o usuário -> 403
       if (doc.assignedAttendantId && String(doc.assignedAttendantId) !== currentUserId) {
         return res.status(403).json({ message: "Você não está atribuído a este pedido." });
       }
-      // 2) Se não tem dono, checa range/horário do atendente
       if (!doc.assignedAttendantId) {
         const canOperate = await isTableInCurrentRange({
           unitId: String(doc.restaurantUnit),
@@ -787,12 +792,13 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       }
     }
 
+    // 3) Filtro base robusto com ObjectId no subdocumento
     const baseFilter: any = {
-      _id: orderId,
+      _id: new Types.ObjectId(orderId),
       "meta.tableId": tableNum,
       isPaid: false,
       status: { $in: ["processing", "payment_requested"] },
-      "items._id": itemId,
+      "items._id": new Types.ObjectId(itemId),
     };
     if (guestId) baseFilter["guestInfo.id"] = guestId;
 
@@ -801,28 +807,43 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     const $unset: any = {};
     const $currentDate: any = { "items.$.updatedAt": true };
 
+    // 4) quantity
     if (typeof quantity === "number") {
       if (quantity <= 0) {
         $set["items.$.quantity"] = 0;
         $set["items.$.status"] = "cancelled";
         $set["items.$.cancelledAt"] = now;
+        $unset["items.$.completedAt"] = "";
       } else {
         $set["items.$.quantity"] = quantity;
-        // se quiser marcar como reduced/added aqui, mantenha sua lógica
       }
     }
 
+    // 5) status (inclui 'added' → mantém processing e só atualiza timestamps)
     if (typeof status === "string") {
       const normalized = status.toLowerCase();
-      if (["processing", "completed", "cancelled", "reduced"].includes(normalized)) {
-        $set["items.$.status"] = normalized;
+      if (["processing", "completed", "cancelled", "reduced", "added"].includes(normalized)) {
         if (normalized === "completed") {
           const ts = servedAt ? new Date(servedAt) : now;
+          $set["items.$.status"] = "completed";
           $set["items.$.completedAt"] = ts;
           $unset["items.$.cancelledAt"] = "";
         } else if (normalized === "cancelled") {
+          $set["items.$.status"] = "cancelled";
           $set["items.$.cancelledAt"] = now;
-        } else if (normalized === "processing") {
+          $unset["items.$.completedAt"] = "";
+        } else if (normalized === "reduced") {
+          $set["items.$.status"] = "reduced";
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
+        } else if (normalized === "added") {
+          // mantém como 'processing' mas registra atualização
+          $set["items.$.status"] = "processing";
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
+        } else {
+          // processing explícito
+          $set["items.$.status"] = "processing";
           $unset["items.$.completedAt"] = "";
           $unset["items.$.cancelledAt"] = "";
         }
@@ -841,11 +862,9 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       return res.status(404).json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
     }
 
-    // recomputa totals com segurança
+    // 6) Recompute tolerante a erro
     let recomputed = null;
-    try { recomputed = await recomputeAndReturn(orderId); } catch (e) {
-      console.warn("recomputeAndReturn falhou (update item):", e);
-    }
+    try { recomputed = await recomputeAndReturn(String(updated._id)); } catch {}
 
     return res.json(recomputed ?? updated);
   } catch (e) {

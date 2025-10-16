@@ -82,6 +82,8 @@ export default (orderRouter: Router) => {
 
   orderRouter.patch(
     "/restaurant/:restaurantUnitId/:tableId/order/:orderId/items/:itemId",
+    isAuthenticated,
+    hasRole(["MANAGER", "ATTENDANT"]),
     updateOrderItemController
   );
 
