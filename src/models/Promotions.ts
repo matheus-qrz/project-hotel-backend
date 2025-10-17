@@ -14,7 +14,7 @@ export interface Promotion {
   scope: PromotionScope;
 
   // alvos
-  product?: Types.ObjectId | null;
+  productId?: Types.ObjectId | null;
   category?: string | null;
 
   // valores
@@ -35,7 +35,7 @@ const PromotionSchema = new Schema<Promotion>(
     unit:       { type: Schema.Types.ObjectId, ref: "RestaurantUnit", default: null },
     scope:      { type: String, enum: ["restaurant","unit","category","product"], required: true },
 
-    product:    { type: Schema.Types.ObjectId, ref: "Product", default: null },
+    productId:    { type: Schema.Types.ObjectId, ref: "Product", default: null },
     category:   { type: String, default: null },
 
     discountPercentage: { type: Number, default: null },

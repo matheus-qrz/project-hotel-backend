@@ -24,16 +24,26 @@ export async function createPromotion(req: Request, res: Response) {
       endDate,
     } = req.body;
 
+    const pct   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
+    const price = promotionalPrice  == null || promotionalPrice  === '' ? undefined : Number(promotionalPrice);
+
+    if (!!pct === !!price) {
+      return res.status(400).json({ message: "Informe apenas discountPercentage OU promotionalPrice." });
+    }
+    if (scope === 'product' && !productId) {
+      return res.status(400).json({ message: "productId é obrigatório quando scope='product'." });
+    }
+
     assertPayload(scope, req.body);
 
     const promo = await PromotionModel.create({
       restaurant: new Types.ObjectId(restaurantId),
       unit: unitId ? new Types.ObjectId(unitId) : null,
       scope,
-      product: productId ? new Types.ObjectId(productId) : null,
-      category: category ?? null,
-      discountPercentage: discountPercentage ?? null,
-      promotionalPrice: promotionalPrice ?? null,
+      productId:  scope === 'product' ? productId : undefined,
+      category: scope === 'category' ? category  : undefined,
+      discountPercentage: pct ?? null,
+      promotionalPrice: price,
       startDate: new Date(startDate),
       endDate: new Date(endDate),
       createdBy: (req as any).user?._id ?? null,

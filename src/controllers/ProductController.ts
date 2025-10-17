@@ -10,10 +10,11 @@ import {
   ProductModel,
   updateProduct
 } from "../models/Products";
-import { extFromMime, parseDataURL } from "../utils/parseDataURL";
+import { parseDataURL } from "../utils/parseDataURL";
 import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 import { Types } from "mongoose";
+import { PromotionModel } from "../models/Promotions";
 
 async function handleIncomingImage(req: Request) {
   // 1) arquivo multipart
@@ -741,31 +742,73 @@ export const clearProductPromotionController = async (req: Request, res: Respons
 
 export const listActivePromotionsController = async (req: Request, res: Response) => {
   try {
-    const { id: unitId } = req.params;
+    const { restaurantId, id: unitId } = req.params; // id = unitId na sua rota
     const now = new Date();
 
-    const products = await ProductModel.find({
-      restaurant: unitId,
-      $or: [
-        { promotionalPrice: { $ne: null } },
-        { discountPercentage: { $ne: null } },
-      ],
-    }).select(
-      "_id name price image description discountPercentage promotionalPrice " +
-      "promotionStartDate promotionEndDate promotionLabel"
+    // 1) Buscar promoções ativas por produto
+    const promoFilter: any = {
+      restaurant: restaurantId,
+      scope: 'product',
+      startDate: { $lte: now },
+      endDate:   { $gte: now },
+    };
+
+    // se a sua Promotion tem o campo "active", mantenha
+    if ('active' in PromotionModel.schema.paths) {
+      promoFilter.active = true;
+    }
+
+    // se sua promoção aceita escopo por unidade: unit === null (todas) OU unit === unitId
+    if ('unit' in PromotionModel.schema.paths && unitId) {
+      promoFilter.$or = [{ unit: null }, { unit: unitId }];
+    }
+
+    const promos = await PromotionModel.find(
+      promoFilter,
+      { productId: 1, discountPercentage: 1, promotionalPrice: 1 }
+    ).lean();
+
+    const productIds = promos.map(p => p.productId).filter(Boolean);
+    if (productIds.length === 0) {
+      return res.status(200).json([]); // nada ativo
+    }
+
+    // 2) Buscar os produtos afetados
+    const products = await ProductModel.find(
+      { _id: { $in: productIds }, restaurant: restaurantId },
+      { _id: 1, name: 1, price: 1, image: 1, description: 1 }
+    ).lean();
+
+    // 3) Indexar promo por productId para calcular preços finais
+    const promoByProduct = new Map(
+      promos.map(p => [String(p.productId), p])
     );
 
-    const result = products
-      .map(p => ({
-        ...p.toJSON(),
-        isOnPromotion: p.isPromotionActive(now),
-        finalPrice: p.getFinalPrice(now),
-      }))
-      .filter(p => p.isOnPromotion);
+    const result = products.map(p => {
+      const promo = promoByProduct.get(String(p._id));
+      const pct   = promo?.discountPercentage;
+      const fixed = promo?.promotionalPrice;
+
+      let finalPrice = p.price;
+      if (typeof fixed === 'number' && !Number.isNaN(fixed)) {
+        finalPrice = fixed;
+      } else if (typeof pct === 'number' && pct > 0) {
+        finalPrice = Number((p.price * (1 - pct / 100)).toFixed(2));
+      }
+
+      return {
+        ...p,
+        isOnPromotion: true,
+        finalPrice,
+        // opcional: devolva dados da promoção para o front usar
+        discountPercentage: pct ?? null,
+        promotionalPrice: fixed ?? null,
+      };
+    });
 
     return res.status(200).json(result);
   } catch (e) {
-    console.error("Erro listActivePromotionsController", e);
-    return res.status(500).json({ message: "Erro ao listar promoções" });
+    console.error('Erro listActivePromotionsController', e);
+    return res.status(500).json({ message: 'Erro ao listar promoções' });
   }
 };
