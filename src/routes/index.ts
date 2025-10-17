@@ -10,6 +10,8 @@ import employee from "./employee";
 import dashboard from "./dashboard";
 import rangeAssignment from "./rangeAssignment";
 import tableAssignment from "./tableAssignment";
+import promotions from "./promotions";
+import coupon from "./coupon";
 
 export default (): Router => {
   const router = Router();
@@ -25,6 +27,8 @@ export default (): Router => {
   requests(router);
   rangeAssignment(router);
   tableAssignment(router);
+  promotions(router);
+  coupon(router);
 
   return router;
 };
