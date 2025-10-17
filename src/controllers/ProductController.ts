@@ -743,62 +743,100 @@ export const clearProductPromotionController = async (req: Request, res: Respons
 // GET /restaurant/:restaurantId/products/promotional
 export const listPromotionalProducts = async (req: Request, res: Response) => {
   try {
-    const { restaurantId } = req.params;
+    const { restaurantId } = req.params as { restaurantId: string };
+    const { unitId } = req.query as { unitId?: string };
     const now = new Date();
 
-    // 1) buscar promos ativas por produto
-    const promos = await PromotionModel.find(
-      {
-        restaurant: restaurantId,
-        scope: 'product',
-        startDate: { $lte: now },
-        endDate: { $gte: now },
-        active: true,
-      },
-    ).lean();
+    // monta filtro de unidade
+    const unitFilter: any = {};
+    if (unitId === "null") unitFilter.unit = null;
+    else if (unitId)       unitFilter.unit = new Types.ObjectId(unitId);
 
-    const productIds = promos.map(p => p.productId).filter(Boolean);
-    if (productIds.length === 0) return res.status(200).json([]);
+    // 1) Buscar promoções ativas (produto + categoria)
+    const promos = await PromotionModel.find({
+      restaurant: new Types.ObjectId(restaurantId),
+      startDate: { $lte: now },
+      endDate:   { $gte: now },
+      ...unitFilter,
+      scope: { $in: ["product", "category"] },
+    }).lean();
 
-    // 2) buscar os produtos
+    if (!promos.length) return res.status(200).json([]);
+
+    // 2) Coletar productIds de promos por produto
+    const productScopePromos = promos.filter(p => p.scope === "product" && p.productId);
+    const productIds = productScopePromos.map(p => p.productId).filter(Boolean);
+
+    // 3) Coletar categorias de promos por categoria
+    const categoryScopePromos = promos.filter(p => p.scope === "category" && p.category);
+    const categories = [...new Set(categoryScopePromos.map(p => p.category).filter(Boolean))];
+
+    // 4) Buscar produtos afetados (por id OU por categoria)
+    const or: any[] = [];
+    if (productIds.length) or.push({ _id: { $in: productIds } });
+    if (categories.length) or.push({ category: { $in: categories } });
+
+    if (!or.length) return res.status(200).json([]);
+
     const products = await ProductModel.find(
-      { _id: { $in: productIds }, restaurant: restaurantId },
-      { _id: 1, name: 1, price: 1, image: 1, description: 1, category: 1 }
+      {
+        restaurant: new Types.ObjectId(restaurantId),
+        $or: or,
+      }
     ).lean();
 
-    // 3) indexar promo por productId e hidratar para a UI atual
-    const promosByProduct = new Map(
-      promos.map(p => [String(p.productId), p])
-    );
+    // 5) Indexar promos
+    const promoByProduct = new Map<string, any>();
+    for (const p of productScopePromos) {
+      promoByProduct.set(String(p.productId), p);
+    }
+    const promoByCategory = new Map<string, any>();
+    for (const p of categoryScopePromos) {
+      // se houver mais de uma por categoria, preferimos a mais recente
+      const key = String(p.category);
+      if (!promoByCategory.has(key) || p.createdAt > promoByCategory.get(key).createdAt) {
+        promoByCategory.set(key, p);
+      }
+    }
 
-    const result = products.map(p => {
-      const promo = promosByProduct.get(String(p._id));
-      const pct   = promo?.discountPercentage;
-      const fixed = promo?.promotionalPrice;
+    const numberish = (v: any) => (typeof v === "number" ? v :
+                                   typeof v === "string" ? Number(v.replace(",", ".")) : NaN);
 
-      let finalPrice = p.price;
-      if (typeof fixed === 'number' && Number.isFinite(fixed)) {
+    // 6) Montar resultado (produto > categoria)
+    const result = products.map(prod => {
+      const prodKey = String(prod._id);
+      const pPromo  = promoByProduct.get(prodKey);
+      const cPromo  = promoByCategory.get(String(prod.category));
+
+      const chosen  = pPromo ?? cPromo ?? null;
+      if (!chosen) return prod; // não está realmente em promoção
+
+      const pct   = numberish(chosen.discountPercentage);
+      const fixed = numberish(chosen.promotionalPrice);
+
+      const price = numberish(prod.price);
+      let finalPrice = price;
+
+      if (Number.isFinite(fixed)) {
         finalPrice = fixed;
-      } else if (typeof pct === 'number' && pct > 0) {
-        finalPrice = Number((p.price * (1 - pct / 100)).toFixed(2));
+      } else if (Number.isFinite(pct) && pct > 0 && Number.isFinite(price)) {
+        finalPrice = Math.round(price * (1 - pct / 100) * 100) / 100;
       }
 
       return {
-        ...p,
-        // campos esperados hoje pelas UIs:
+        ...prod,
         isOnPromotion: true,
-        discountPercentage: pct ?? null,
-        promotionalPrice: fixed ?? null,
-        promotionStartDate: promo?.startDate ?? null,
-        promotionEndDate: promo?.endDate ?? null,
+        discountPercentage: Number.isFinite(pct) ? pct : null,
+        promotionalPrice: Number.isFinite(fixed) ? fixed : null,
+        promotionStartDate: chosen.startDate ?? null,
+        promotionEndDate:   chosen.endDate ?? null,
         finalPrice,
       };
-    });
+    }).filter(p => (p as any).isOnPromotion); // manter só os que realmente ficaram em promoção
 
-    res.status(200).json(result);
+    return res.status(200).json(result);
   } catch (e) {
-    console.error('listPromotionalProducts error', e);
-    res.status(500).json({ message: 'Erro ao buscar produto' });
+    console.error("listPromotionalProducts error:", e);
+    return res.status(500).json({ message: "Erro ao buscar produto" });
   }
 };
-

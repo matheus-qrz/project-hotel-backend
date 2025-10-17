@@ -14,8 +14,8 @@ export async function createPromotion(req: Request, res: Response) {
   try {
     const {
       restaurantId,
-      unitId,           
-      scope,            
+      unitId,
+      scope,
       productId,
       category,
       discountPercentage,
@@ -24,8 +24,11 @@ export async function createPromotion(req: Request, res: Response) {
       endDate,
     } = req.body;
 
-    const pct   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
-    const price = promotionalPrice  == null || promotionalPrice  === '' ? undefined : Number(promotionalPrice);
+    // números saneados
+    const pctRaw   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
+    const priceRaw = promotionalPrice  == null || promotionalPrice  === '' ? undefined : Number(promotionalPrice);
+    const pct   = pctRaw != null && Number.isFinite(pctRaw) ? Math.max(0, Math.min(100, pctRaw)) : undefined;
+    const price = priceRaw != null && Number.isFinite(priceRaw) ? Math.max(0, priceRaw) : undefined;
 
     if (!!pct === !!price) {
       return res.status(400).json({ message: "Informe apenas discountPercentage OU promotionalPrice." });
@@ -34,18 +37,28 @@ export async function createPromotion(req: Request, res: Response) {
       return res.status(400).json({ message: "productId é obrigatório quando scope='product'." });
     }
 
+    // datas válidas
+    const sDate = new Date(startDate);
+    const eDate = new Date(endDate);
+    if (!(sDate instanceof Date && !isNaN(+sDate)) || !(eDate instanceof Date && !isNaN(+eDate))) {
+      return res.status(400).json({ message: "Datas inválidas" });
+    }
+    if (eDate <= sDate) {
+      return res.status(400).json({ message: "endDate deve ser maior que startDate" });
+    }
+
     assertPayload(scope, req.body);
 
     const promo = await PromotionModel.create({
       restaurant: new Types.ObjectId(restaurantId),
       unit: unitId ? new Types.ObjectId(unitId) : null,
       scope,
-      productId:  scope === 'product' ? productId : undefined,
-      category: scope === 'category' ? category  : undefined,
+      productId:  scope === 'product' ? new Types.ObjectId(productId) : undefined,
+      category:   scope === 'category' ? category : undefined,
       discountPercentage: pct ?? null,
-      promotionalPrice: price,
-      startDate: new Date(startDate),
-      endDate: new Date(endDate),
+      promotionalPrice: price ?? null,
+      startDate: sDate,
+      endDate: eDate,
       createdBy: (req as any).user?._id ?? null,
     });
 
@@ -54,6 +67,7 @@ export async function createPromotion(req: Request, res: Response) {
     return res.status(400).json({ message: err.message || "Erro ao criar promoção" });
   }
 }
+
 
 export async function listPromotions(req: Request, res: Response) {
   try {
@@ -65,7 +79,7 @@ export async function listPromotions(req: Request, res: Response) {
     else if (unitId) q.unit = new Types.ObjectId(unitId);
     if (scope) q.scope = scope;
     if (category) q.category = category;
-    if (productId) q.product = new Types.ObjectId(productId);
+    if (productId) q.productId = new Types.ObjectId(productId);
     if (active === "true") {
       q.startDate = { $lte: now };
       q.endDate = { $gte: now };
