@@ -15,9 +15,11 @@ export interface Promotion {
 
   // alvos
   productId?: Types.ObjectId | null;
+  productName?: string | null;
   category?: string | null;
 
   // valores
+  originalPrice?: string | null;
   discountPercentage?: number | null;  
   promotionalPrice?: number | null;     
   // janela
@@ -36,8 +38,10 @@ const PromotionSchema = new Schema<Promotion>(
     scope:      { type: String, enum: ["restaurant","unit","category","product"], required: true },
 
     productId:    { type: Schema.Types.ObjectId, ref: "Product", default: null },
+    productName:  { type: String, ref: "Product", default: null },
     category:   { type: String, default: null },
 
+    originalPrice: { type: Number, ref:"Product", default: null  },
     discountPercentage: { type: Number, default: null },
     promotionalPrice:   { type: Number, default: null },
 

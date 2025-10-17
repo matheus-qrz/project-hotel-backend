@@ -17,7 +17,9 @@ export async function createPromotion(req: Request, res: Response) {
       unitId,
       scope,
       productId,
+      productName,
       category,
+      price,
       discountPercentage,
       promotionalPrice,
       startDate,
@@ -28,9 +30,9 @@ export async function createPromotion(req: Request, res: Response) {
     const pctRaw   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
     const priceRaw = promotionalPrice  == null || promotionalPrice  === '' ? undefined : Number(promotionalPrice);
     const pct   = pctRaw != null && Number.isFinite(pctRaw) ? Math.max(0, Math.min(100, pctRaw)) : undefined;
-    const price = priceRaw != null && Number.isFinite(priceRaw) ? Math.max(0, priceRaw) : undefined;
+    const promotionalPriceIs = priceRaw != null && Number.isFinite(priceRaw) ? Math.max(0, priceRaw) : undefined;
 
-    if (!!pct === !!price) {
+    if (!!pct === !!promotionalPriceIs) {
       return res.status(400).json({ message: "Informe apenas discountPercentage OU promotionalPrice." });
     }
     if (scope === 'product' && !productId) {
@@ -49,14 +51,19 @@ export async function createPromotion(req: Request, res: Response) {
 
     assertPayload(scope, req.body);
 
-    const promo = await PromotionModel.create({
+  const promo = await PromotionModel.create({
       restaurant: new Types.ObjectId(restaurantId),
       unit: unitId ? new Types.ObjectId(unitId) : null,
       scope,
-      productId:  scope === 'product' ? new Types.ObjectId(productId) : undefined,
-      category:   scope === 'category' ? category : undefined,
+      productId: new Types.ObjectId(productId),
+      // snapshots (novos campos opcionais no schema):
+      productName: productName,
+      category,
+      originalPrice: price,
+
+      // se for categoria (scope='category'), continue usando `category` normalmente
       discountPercentage: pct ?? null,
-      promotionalPrice: price ?? null,
+      promotionalPrice: promotionalPriceIs ?? null,
       startDate: sDate,
       endDate: eDate,
       createdBy: (req as any).user?._id ?? null,
