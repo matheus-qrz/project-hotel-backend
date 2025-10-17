@@ -740,55 +740,44 @@ export const clearProductPromotionController = async (req: Request, res: Respons
   }
 };
 
-export const listActivePromotionsController = async (req: Request, res: Response) => {
+// GET /restaurant/:restaurantId/products/promotional
+export const listPromotionalProducts = async (req: Request, res: Response) => {
   try {
-    const { restaurantId, id: unitId } = req.params; // id = unitId na sua rota
+    const { restaurantId } = req.params;
     const now = new Date();
 
-    // 1) Promoções ativas para produto
-    const filter: any = {
-      restaurant: restaurantId,
-      scope: 'product',
-      startDate: { $lte: now },
-      endDate:   { $gte: now },
-    };
-
-    // se existir a flag "active" no schema:
-    if ('active' in (PromotionModel.schema.paths as any)) {
-      filter.active = true;
-    }
-
-    // se o schema tiver "unit": considerar promoções de unidade específica OU de toda a rede (unit null)
-    if ('unit' in (PromotionModel.schema.paths as any) && unitId) {
-      filter.$or = [{ unit: null }, { unit: unitId }];
-    }
-
+    // 1) buscar promos ativas por produto
     const promos = await PromotionModel.find(
-      filter,
-      { productId: 1, discountPercentage: 1, promotionalPrice: 1, startDate: 1, endDate: 1 }
+      {
+        restaurant: restaurantId,
+        scope: 'product',
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+        active: true,
+      },
     ).lean();
 
     const productIds = promos.map(p => p.productId).filter(Boolean);
     if (productIds.length === 0) return res.status(200).json([]);
 
-    // 2) Buscar os produtos impactados
+    // 2) buscar os produtos
     const products = await ProductModel.find(
       { _id: { $in: productIds }, restaurant: restaurantId },
       { _id: 1, name: 1, price: 1, image: 1, description: 1, category: 1 }
     ).lean();
 
-    // 3) Indexar promo por productId e calcular preço final
-    const promoByProduct = new Map<string, any>(
+    // 3) indexar promo por productId e hidratar para a UI atual
+    const promosByProduct = new Map(
       promos.map(p => [String(p.productId), p])
     );
 
     const result = products.map(p => {
-      const promo = promoByProduct.get(String(p._id));
+      const promo = promosByProduct.get(String(p._id));
       const pct   = promo?.discountPercentage;
       const fixed = promo?.promotionalPrice;
 
       let finalPrice = p.price;
-      if (typeof fixed === 'number' && !Number.isNaN(fixed)) {
+      if (typeof fixed === 'number' && Number.isFinite(fixed)) {
         finalPrice = fixed;
       } else if (typeof pct === 'number' && pct > 0) {
         finalPrice = Number((p.price * (1 - pct / 100)).toFixed(2));
@@ -796,20 +785,20 @@ export const listActivePromotionsController = async (req: Request, res: Response
 
       return {
         ...p,
+        // campos esperados hoje pelas UIs:
         isOnPromotion: true,
-        finalPrice,
-        // útil para UI:
         discountPercentage: pct ?? null,
-        promotionalPrice : fixed ?? null,
+        promotionalPrice: fixed ?? null,
         promotionStartDate: promo?.startDate ?? null,
-        promotionEndDate  : promo?.endDate ?? null,
+        promotionEndDate: promo?.endDate ?? null,
+        finalPrice,
       };
     });
 
-    return res.status(200).json(result);
+    res.status(200).json(result);
   } catch (e) {
-    console.error('Erro listActivePromotionsController', e);
-    return res.status(500).json({ message: 'Erro ao listar promoções' });
+    console.error('listPromotionalProducts error', e);
+    res.status(500).json({ message: 'Erro ao buscar produto' });
   }
 };
 
