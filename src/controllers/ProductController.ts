@@ -745,42 +745,40 @@ export const listActivePromotionsController = async (req: Request, res: Response
     const { restaurantId, id: unitId } = req.params; // id = unitId na sua rota
     const now = new Date();
 
-    // 1) Buscar promoções ativas por produto
-    const promoFilter: any = {
+    // 1) Promoções ativas para produto
+    const filter: any = {
       restaurant: restaurantId,
       scope: 'product',
       startDate: { $lte: now },
       endDate:   { $gte: now },
     };
 
-    // se a sua Promotion tem o campo "active", mantenha
-    if ('active' in PromotionModel.schema.paths) {
-      promoFilter.active = true;
+    // se existir a flag "active" no schema:
+    if ('active' in (PromotionModel.schema.paths as any)) {
+      filter.active = true;
     }
 
-    // se sua promoção aceita escopo por unidade: unit === null (todas) OU unit === unitId
-    if ('unit' in PromotionModel.schema.paths && unitId) {
-      promoFilter.$or = [{ unit: null }, { unit: unitId }];
+    // se o schema tiver "unit": considerar promoções de unidade específica OU de toda a rede (unit null)
+    if ('unit' in (PromotionModel.schema.paths as any) && unitId) {
+      filter.$or = [{ unit: null }, { unit: unitId }];
     }
 
     const promos = await PromotionModel.find(
-      promoFilter,
-      { productId: 1, discountPercentage: 1, promotionalPrice: 1 }
+      filter,
+      { productId: 1, discountPercentage: 1, promotionalPrice: 1, startDate: 1, endDate: 1 }
     ).lean();
 
     const productIds = promos.map(p => p.productId).filter(Boolean);
-    if (productIds.length === 0) {
-      return res.status(200).json([]); // nada ativo
-    }
+    if (productIds.length === 0) return res.status(200).json([]);
 
-    // 2) Buscar os produtos afetados
+    // 2) Buscar os produtos impactados
     const products = await ProductModel.find(
       { _id: { $in: productIds }, restaurant: restaurantId },
-      { _id: 1, name: 1, price: 1, image: 1, description: 1 }
+      { _id: 1, name: 1, price: 1, image: 1, description: 1, category: 1 }
     ).lean();
 
-    // 3) Indexar promo por productId para calcular preços finais
-    const promoByProduct = new Map(
+    // 3) Indexar promo por productId e calcular preço final
+    const promoByProduct = new Map<string, any>(
       promos.map(p => [String(p.productId), p])
     );
 
@@ -800,9 +798,11 @@ export const listActivePromotionsController = async (req: Request, res: Response
         ...p,
         isOnPromotion: true,
         finalPrice,
-        // opcional: devolva dados da promoção para o front usar
+        // útil para UI:
         discountPercentage: pct ?? null,
-        promotionalPrice: fixed ?? null,
+        promotionalPrice : fixed ?? null,
+        promotionStartDate: promo?.startDate ?? null,
+        promotionEndDate  : promo?.endDate ?? null,
       };
     });
 
@@ -812,3 +812,4 @@ export const listActivePromotionsController = async (req: Request, res: Response
     return res.status(500).json({ message: 'Erro ao listar promoções' });
   }
 };
+
