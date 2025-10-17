@@ -8,7 +8,7 @@ import {
   deleteFoodController,
   getAllFoodsController,
   getFoodByIdController,
-  listActivePromotionsController,
+  listPromotionalProducts,
   setProductPromotionController,
   updateComboController,
   updateFoodController,
@@ -106,6 +106,6 @@ export default (productsRouter: Router) => {
     "/restaurant/:id/promotions/active",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
-    listActivePromotionsController
+    listPromotionalProducts
   );
 };
