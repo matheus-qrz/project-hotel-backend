@@ -781,8 +781,9 @@ export const listPromotionalProducts = async (req: Request, res: Response) => {
     const products = await ProductModel.find(
       {
         restaurant: new Types.ObjectId(restaurantId),
-        $or: or,
-      }
+        $or: or, // por _id (productIds) ou category (categories)
+      },
+      { _id: 1, name: 1, price: 1, image: 1, description: 1, category: 1 }
     ).lean();
 
     // 5) Indexar promos
@@ -807,6 +808,7 @@ export const listPromotionalProducts = async (req: Request, res: Response) => {
       const prodKey = String(prod._id);
       const pPromo  = promoByProduct.get(prodKey);
       const cPromo  = promoByCategory.get(String(prod.category));
+      const priceNum = Number((prod as any).price);
 
       const chosen  = pPromo ?? cPromo ?? null;
       if (!chosen) return prod; // não está realmente em promoção
@@ -826,6 +828,8 @@ export const listPromotionalProducts = async (req: Request, res: Response) => {
       return {
         ...prod,
         isOnPromotion: true,
+        productName: prod.name,
+        originalPrice: priceNum,
         discountPercentage: Number.isFinite(pct) ? pct : null,
         promotionalPrice: Number.isFinite(fixed) ? fixed : null,
         promotionStartDate: chosen.startDate ?? null,

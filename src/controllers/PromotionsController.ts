@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { PromotionModel } from "../models/Promotions";
+import { ProductModel } from "../models/Products";
 
 function assertPayload(scope: string, body: any) {
   if (scope === "product" && !body.productId) throw new Error("productId é obrigatório para scope=product");
@@ -15,16 +16,34 @@ export async function createPromotion(req: Request, res: Response) {
     const {
       restaurantId,
       unitId,
-      scope,
-      productId,
-      productName,
-      category,
-      price,
+      scope,              // 'product' | 'category'
+      productId,          // obrigatório se scope='product'
+      category,           // obrigatório se scope='category'
       discountPercentage,
       promotionalPrice,
       startDate,
       endDate,
-    } = req.body;
+    } = req.body as {
+      restaurantId: string;
+      unitId?: string | null;
+      scope: 'product' | 'category';
+      productId?: string;
+      category?: string;
+      discountPercentage?: number | string | null;
+      promotionalPrice?: number | string | null;
+      startDate: string | Date;
+      endDate: string | Date;
+    };
+
+        // datas válidas
+    const sDate = new Date(startDate);
+    const eDate = new Date(endDate);
+    if (!(sDate instanceof Date && !isNaN(+sDate)) || !(eDate instanceof Date && !isNaN(+eDate))) {
+      return res.status(400).json({ message: "Datas inválidas" });
+    }
+    if (eDate <= sDate) {
+      return res.status(400).json({ message: "endDate deve ser maior que startDate" });
+    }
 
     // números saneados
     const pctRaw   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
@@ -39,35 +58,50 @@ export async function createPromotion(req: Request, res: Response) {
       return res.status(400).json({ message: "productId é obrigatório quando scope='product'." });
     }
 
-    // datas válidas
-    const sDate = new Date(startDate);
-    const eDate = new Date(endDate);
-    if (!(sDate instanceof Date && !isNaN(+sDate)) || !(eDate instanceof Date && !isNaN(+eDate))) {
-      return res.status(400).json({ message: "Datas inválidas" });
-    }
-    if (eDate <= sDate) {
-      return res.status(400).json({ message: "endDate deve ser maior que startDate" });
-    }
-
     assertPayload(scope, req.body);
 
-  const promo = await PromotionModel.create({
-      restaurant: new Types.ObjectId(restaurantId),
-      unit: unitId ? new Types.ObjectId(unitId) : null,
-      scope,
-      productId: new Types.ObjectId(productId),
-      // snapshots (novos campos opcionais no schema):
-      productName: productName,
-      category,
-      originalPrice: price,
+    let snapshot: {
+      productName?: string;
+      productCategory?: string;
+      originalPrice?: number;
+    } = {};
 
-      // se for categoria (scope='category'), continue usando `category` normalmente
-      discountPercentage: pct ?? null,
-      promotionalPrice: promotionalPriceIs ?? null,
-      startDate: sDate,
-      endDate: eDate,
-      createdBy: (req as any).user?._id ?? null,
-    });
+    let productIdObj: Types.ObjectId | undefined = undefined;
+
+    if (scope === 'product') {
+      productIdObj = new Types.ObjectId(productId!);
+      const prod = await ProductModel
+        .findById(productIdObj)
+        .select({ name: 1, category: 1, price: 1 })
+        .lean();
+
+      if (!prod) return res.status(404).json({ message: "Produto não encontrado para a promoção." });
+
+      const priceNum = typeof prod.price === 'number' ? prod.price : Number(prod.price);
+      snapshot = {
+        productName: prod.name,
+        productCategory: (prod as any).category,
+        originalPrice: Number.isFinite(priceNum) ? priceNum : undefined,
+      };
+    }
+
+    const promo = await PromotionModel.create({
+        restaurant: new Types.ObjectId(restaurantId),
+        unit: unitId ? new Types.ObjectId(unitId) : null,
+        scope,
+        productId: scope === 'product' ? productIdObj : undefined,
+        category:  scope === 'category' ? category : undefined,
+        // snapshots (novos campos opcionais no schema):
+        ...snapshot,
+
+        // se for categoria (scope='category'), continue usando `category` normalmente
+        discountPercentage: pct ?? null,
+        promotionalPrice: promotionalPriceIs ?? null,
+
+        startDate: sDate,
+        endDate: eDate,
+        createdBy: (req as any).user?._id ?? null,
+      });
 
     return res.status(201).json(promo);
   } catch (err: any) {
@@ -75,29 +109,77 @@ export async function createPromotion(req: Request, res: Response) {
   }
 }
 
-
 export async function listPromotions(req: Request, res: Response) {
   try {
-    const { restaurantId, unitId, scope, category, productId, active } = req.query as any;
+    const {
+      restaurantId,
+      unitId,
+      scope,
+      category,
+      productId,
+      active,
+    } = req.query as Record<string, string | undefined>;
 
-    const now = new Date();
-    const q: any = { restaurant: new Types.ObjectId(restaurantId) };
-    if (unitId === "null") q.unit = null;
-    else if (unitId) q.unit = new Types.ObjectId(unitId);
-    if (scope) q.scope = scope;
-    if (category) q.category = category;
-    if (productId) q.productId = new Types.ObjectId(productId);
-    if (active === "true") {
-      q.startDate = { $lte: now };
-      q.endDate = { $gte: now };
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
     }
 
-    const promos = await PromotionModel.find(q).sort({ createdAt: -1 }).lean();
+    const now = new Date();
+    const q: any = {
+      restaurant: Types.ObjectId.isValid(restaurantId)
+        ? new Types.ObjectId(restaurantId)
+        : restaurantId,
+    };
+
+    if (scope) q.scope = scope;
+    if (category) q.category = category;
+
+    // (a) sempre use o nome correto do campo:
+    if (productId && Types.ObjectId.isValid(productId)) {
+      q.productId = new Types.ObjectId(productId);   // NUNCA q.product
+    }
+
+    // (b) unitId: "null" => null; id válido => ObjectId; inválido => ignora
+    if (unitId === "null") q.unit = null;
+    else if (unitId && Types.ObjectId.isValid(unitId)) q.unit = new Types.ObjectId(unitId);
+
+    // (c) active=true => filtra por janela de datas (modelo não usa 'active' boolean)
+    if (active === "true") {
+      q.startDate = { $lte: now };
+      q.endDate   = { $gte: now };
+    }
+
+    // projeção opcional para evitar payload gigante
+    const projection = {
+      restaurant: 1,
+      unit: 1,
+      scope: 1,
+      productId: 1,
+      category: 1,
+      discountPercentage: 1,
+      promotionalPrice: 1,
+      startDate: 1,
+      endDate: 1,
+      createdBy: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      // snapshots (se existirem) 
+      productName: 1,
+      productCategory: 1,
+      originalPrice: 1,
+    };
+
+    const promos = await PromotionModel
+      .find(q, projection)
+      .sort({ createdAt: -1 })
+      .lean();
+
     return res.json(promos);
   } catch (err: any) {
-    return res.status(400).json({ message: err.message || "Erro ao listar promoções" });
+    return res.status(400).json({ message: err?.message || "Erro ao listar promoções" });
   }
 }
+
 
 export async function deactivatePromotion(req: Request, res: Response) {
   try {
