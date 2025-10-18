@@ -43,13 +43,13 @@ export default (productsRouter: Router) => {
 
   // Obter produto específico por ID
   productsRouter.get(
-    "/restaurant/:id/products/:id",
+    "/restaurant/:restaurantId/products/:id([0-9a-fA-F]{24})",
     getFoodByIdController
   );
 
   // Atualizar produto
   productsRouter.patch(
-    "/restaurant/:id/products/:id/update",
+    "/restaurant/:restaurantId/products/:id([0-9a-fA-F]{24})/update",
     isAuthenticated,
     hasRole(['ADMIN' ,'MANAGER']),                           
     upload.single("image"),         
@@ -58,7 +58,7 @@ export default (productsRouter: Router) => {
 
   // Excluir produto
   productsRouter.delete(
-    "/restaurant/:id/products/:id/delete",
+    "/restaurant/:restaurantId/products/:id([0-9a-fA-F]{24})",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     deleteFoodController
