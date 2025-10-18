@@ -159,6 +159,10 @@ export const getFoodByIdController = async (
     const { id } = req.params;
     const product = await getProductById(id);
 
+    if (!Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "ID inválido" });
+    }
+
     if (!product) {
       return res.status(404).json({ message: "Produto não encontrado" });
     }
