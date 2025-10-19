@@ -180,6 +180,173 @@ export async function listPromotions(req: Request, res: Response) {
   }
 }
 
+// Adicione junto às demais exports do controller
+
+export async function updatePromotion(req: Request, res: Response) {
+  try {
+    const { promotionId } = req.params;
+
+    if (!promotionId) {
+      return res.status(400).json({ message: "promotionId é obrigatório" });
+    }
+
+    // Busca a promoção atual para garantir existência e obter scope/refs atuais
+    const current = await PromotionModel.findById(promotionId);
+    if (!current) {
+      return res.status(404).json({ message: "Promoção não encontrada" });
+    }
+
+    // Lê body no mesmo formato aceito na criação (mas todos opcionais)
+    const {
+      restaurantId,
+      unitId,
+      scope,              // opcional; se vier, validamos com assertPayload
+      productId,          // se scope='product'
+      category,           // se scope='category'
+      discountPercentage,
+      promotionalPrice,
+      startDate,
+      endDate,
+    } = req.body as {
+      restaurantId?: string;                 // manter coerente (opcional)
+      unitId?: string | null;
+      scope?: 'product' | 'category' | 'unit' | 'restaurant';
+      productId?: string;
+      category?: string | null;
+      discountPercentage?: number | string | null;
+      promotionalPrice?: number | string | null;
+      startDate?: string | Date;
+      endDate?: string | Date;
+    };
+
+    // --------- Datas (opcionais): se vierem, devem ser válidas e end > start ----------
+    let sDate: Date | undefined = undefined;
+    let eDate: Date | undefined = undefined;
+    if (startDate !== undefined) sDate = new Date(startDate);
+    if (endDate   !== undefined) eDate = new Date(endDate);
+
+    if (sDate && !(sDate instanceof Date && !isNaN(+sDate))) {
+      return res.status(400).json({ message: "startDate inválida" });
+    }
+    if (eDate && !(eDate instanceof Date && !isNaN(+eDate))) {
+      return res.status(400).json({ message: "endDate inválida" });
+    }
+    if (sDate && eDate && eDate <= sDate) {
+      return res.status(400).json({ message: "endDate deve ser maior que startDate" });
+    }
+
+    // --------- Numbers (opcionais) + regra XOR ---------
+    const pctRaw   = discountPercentage == null || discountPercentage === '' ? undefined : Number(discountPercentage);
+    const priceRaw = promotionalPrice  == null || promotionalPrice  === '' ? undefined : Number(promotionalPrice);
+
+    const pct = pctRaw != null && Number.isFinite(pctRaw)
+      ? Math.max(0, Math.min(100, pctRaw))
+      : undefined;
+
+    const promotionalPriceIs = priceRaw != null && Number.isFinite(priceRaw)
+      ? Math.max(0, priceRaw)
+      : undefined;
+
+    // Se usuário está tentando alterar valores, a restrição XOR é aplicada
+    if ((pct !== undefined) && (promotionalPriceIs !== undefined)) {
+      return res.status(400).json({ message: "Informe apenas discountPercentage OU promotionalPrice." });
+    }
+
+    // --------- Scope / payload coerentes ---------
+    const newScope = scope ?? current.scope;
+    // valida campos obrigatórios para o escopo informado (mantém seu padrão)
+    // (reaproveita a mesma regra usada no create)
+    if (newScope === "product" && (productId === undefined && current.productId == null)) {
+      return res.status(400).json({ message: "productId é obrigatório para scope='product'." });
+    }
+    if (newScope === "category" && (category === undefined && current.category == null)) {
+      return res.status(400).json({ message: "category é obrigatório para scope='category'." });
+    }
+
+    // Se quiser impedir mudar totalmente o "scope", bastaria checar:
+    // if (scope && scope !== current.scope) return res.status(400).json({ message: "Não é permitido alterar o scope da promoção." });
+
+    // --------- Monta $set incremental ---------
+    const $set: any = {};
+    if (restaurantId) {
+      $set.restaurant = Types.ObjectId.isValid(restaurantId)
+        ? new Types.ObjectId(restaurantId)
+        : restaurantId;
+    }
+
+    if (unitId !== undefined) {
+      // "null" (string) não é esperado no body; aceitamos null real ou ObjectId válido
+      $set.unit = unitId === null
+        ? null
+        : (Types.ObjectId.isValid(unitId) ? new Types.ObjectId(unitId) : undefined);
+    }
+
+    if (scope) $set.scope = newScope;
+
+    // Atualização de alvo conforme escopo
+    // PRODUCT: aceita trocar productId e refaz snapshots
+    if (newScope === "product") {
+      let productIdObj = current.productId;
+
+      if (productId) {
+        if (!Types.ObjectId.isValid(productId)) {
+          return res.status(400).json({ message: "productId inválido" });
+        }
+        productIdObj = new Types.ObjectId(productId);
+      }
+
+      // Se o productId mudou OU não havia snapshot, refaça snapshot
+      if (productId || current.productName == null || current.originalPrice == null) {
+        const prod = await ProductModel
+          .findById(productIdObj)
+          .select({ name: 1, category: 1, price: 1 })
+          .lean();
+
+        if (!prod) return res.status(404).json({ message: "Produto não encontrado para a promoção." });
+
+        const priceNum = typeof (prod as any).price === 'number'
+          ? (prod as any).price
+          : Number((prod as any).price);
+
+        $set.productId = productIdObj;
+        $set.productName = prod.name;
+        $set.productCategory = (prod as any).category;
+        $set.originalPrice = Number.isFinite(priceNum) ? priceNum : undefined;
+      }
+    }
+
+    // CATEGORY: aceita trocar category
+    if (newScope === "category" && category !== undefined) {
+      $set.category = category;
+    }
+
+    // Desconto / Preço direto: aplica XOR desativando o outro campo
+    if (pct !== undefined) {
+      $set.discountPercentage = pct;
+      $set.promotionalPrice = null;
+    } else if (promotionalPriceIs !== undefined) {
+      $set.promotionalPrice = promotionalPriceIs;
+      $set.discountPercentage = null;
+    }
+
+    if (sDate) $set.startDate = sDate;
+    if (eDate) $set.endDate   = eDate;
+
+    // Segurança: não gravar propriedades undefined
+    Object.keys($set).forEach((k) => $set[k] === undefined && delete $set[k]);
+
+    const updated = await PromotionModel.findByIdAndUpdate(
+      promotionId,
+      { $set },
+      { new: true }
+    );
+
+    return res.json(updated);
+  } catch (err: any) {
+    return res.status(400).json({ message: err?.message || "Erro ao atualizar promoção" });
+  }
+}
+
 
 export async function deactivatePromotion(req: Request, res: Response) {
   try {
