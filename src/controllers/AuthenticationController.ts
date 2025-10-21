@@ -331,6 +331,14 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       "authentication.sessionToken": token
     });
 
+    let tokenExpiry: number | null = null;
+    try {
+      const decoded = jwt.decode(token) as jwt.JwtPayload | null;
+      if (decoded?.exp) tokenExpiry = decoded.exp * 1000;
+    } catch {
+      tokenExpiry = null;
+    }
+
     return res.status(201).json({
       message: "Restaurante, usuário admin e unidade criados com sucesso",
       user: {
@@ -349,6 +357,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
         name: savedUnit.name,
       },
       token,
+      tokenExpiry,
     });
   } catch (error: any) {
     console.error("Erro ao registrar restaurante:", error);
