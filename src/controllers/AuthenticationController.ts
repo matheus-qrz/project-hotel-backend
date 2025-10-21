@@ -47,69 +47,6 @@ function issueJWT(user: any) {
   return { token, payload };
 }
 
-
-// Login para restaurante (admin)
-export const loginAdminHandler = async (req: Request, res: Response) => {
-  try {
-    const { email, password } = req.body;
-    console.log("Request body:", req.body);
-
-    if (!email || !password) {
-      console.log("Campos obrigatórios faltando");
-      return res
-        .status(400)
-        .json({ message: "E-mail e senha são obrigatórios" });
-    }
-
-    console.log("Buscando usuário ADMIN com email:", email);
-    // Incluir o campo restaurant na busca
-    const user = await UserModel.findOne({
-      email,
-      role: "ADMIN"
-    }).select('+authentication.password +authentication.salt +restaurant');
-    console.log("Usuário encontrado:", user ? "Sim" : "Não");
-
-    if (user) {
-      console.log("Verificando credenciais do usuário ADMIN");
-      if (!user.authentication || !user.authentication.salt) {
-        return res.status(401).json({ message: "Credenciais inválidas" });
-      }
-
-      const expectedHash = authentication(user.authentication.salt, password);
-
-      if (expectedHash !== user.authentication.password) {
-        return res.status(401).json({ message: "Credenciais inválidas" });
-      }
-
-      const jwtResult = issueJWT(user);
-  
-      user.authentication.sessionToken = jwtResult.token;
-      await user.save();
-
-      // Incluir o restaurantId na resposta
-      const { token } = issueJWT(user);
-      return res.status(200).json({
-        message: "Login realizado com sucesso",
-        user: {
-          _id: user._id,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          email: user.email,
-          role: "ADMIN",
-          restaurantId: user.restaurant // ID do restaurante vinculado ao usuário
-        },
-        token,
-      });
-    }
-
-  } catch (error: any) {
-    console.error("Erro ao realizar login de administrador:", error);
-    return res
-      .status(500)
-      .json({ message: "Erro interno do servidor", error: error.message });
-  }
-};
-
 // login
 export const loginHandler = async (req: Request, res: Response): Promise<Response> => {
   try {
@@ -170,7 +107,6 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         console.warn("[AUTH][login] password mismatch", {
           userId: user._id.toString(),
           email: user.email,
-          // log seguro: só prefixo p/ não vazar hash completo
           expectedPrefix: expected.slice(0, 8),
           storedPrefix: stored.slice(0, 8),
         });
@@ -178,17 +114,17 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-      const token = jwt.sign(
-    {
-      sub: String(user._id),
-      role: user.role,
-      restaurantId: restaurantId ?? null,
-      restaurantName: restaurantName ?? null,
-      unitId: unitId ?? null,
-    },
-    process.env.JWT_SECRET!,
-    { expiresIn: "7d" }
-  );
+    const token = jwt.sign(
+      {
+        sub: String(user._id),
+        role: user.role,
+        restaurantId: restaurantId ?? null,
+        restaurantName: restaurantName ?? null,
+        unitId: unitId ?? null,
+      },
+      process.env.JWT_SECRET!,
+      { expiresIn: "7d" }
+    );
 
     await UserModel.findByIdAndUpdate(user._id, {
       "authentication.sessionToken": token
@@ -200,6 +136,9 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       user: { _id: String(user._id), role: user.role },
       restaurant: restaurantId ? { _id: restaurantId, name: restaurantName } : null,
       unit: unitId ? { _id: unitId } : null,
+      restaurantId: restaurantId ?? null,
+      restaurantName: restaurantName ?? null,
+      unitId: unitId ?? null,
       token,
     });
   } catch (error: any) {
