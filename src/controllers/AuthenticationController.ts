@@ -7,6 +7,7 @@ import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { authentication } from "../helpers";
 import { generateHash, generateSalt } from "../utils/generateSalt";
 import mongoose from "mongoose";
+import { resolveRestaurantForUser } from "../utils/resolveRestaurant";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_in_production";
 const DEBUG = process.env.DEBUG_AUTH === "1";
@@ -155,6 +156,8 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
+    const { restaurantId, restaurantName, unitId } = await resolveRestaurantForUser(user);
+
     const salt = String(user.authentication.salt);
     const stored = String(user.authentication.password).toLowerCase();
 
@@ -175,7 +178,18 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const { token, payload }= issueJWT(user);
+      const token = jwt.sign(
+    {
+      sub: String(user._id),
+      role: user.role,
+      restaurantId: restaurantId ?? null,
+      restaurantName: restaurantName ?? null,
+      unitId: unitId ?? null,
+    },
+    process.env.JWT_SECRET!,
+    { expiresIn: "7d" }
+  );
+
     await UserModel.findByIdAndUpdate(user._id, {
       "authentication.sessionToken": token
     });
@@ -183,15 +197,9 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
 
     return res.status(200).json({
       message: "Login realizado com sucesso",
-      user: {
-        _id: asStringId(user._id),
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        restaurant: asStringId(user.restaurant),
-        restaurantUnit: payload.unitId, 
-      },
+      user: { _id: String(user._id), role: user.role },
+      restaurant: restaurantId ? { _id: restaurantId, name: restaurantName } : null,
+      unit: unitId ? { _id: unitId } : null,
       token,
     });
   } catch (error: any) {
