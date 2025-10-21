@@ -104,8 +104,6 @@ export default (productsRouter: Router) => {
   // Listar promoções ativas
   productsRouter.get(
     "/restaurant/:restaurantId/products/promotional",
-    isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
     listPromotionalProducts
   );
 };

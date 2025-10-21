@@ -180,8 +180,6 @@ export async function listPromotions(req: Request, res: Response) {
   }
 }
 
-// Adicione junto às demais exports do controller
-
 export async function updatePromotion(req: Request, res: Response) {
   try {
     const { promotionId } = req.params;
@@ -346,7 +344,6 @@ export async function updatePromotion(req: Request, res: Response) {
     return res.status(400).json({ message: err?.message || "Erro ao atualizar promoção" });
   }
 }
-
 
 export async function deactivatePromotion(req: Request, res: Response) {
   try {
