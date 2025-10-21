@@ -336,9 +336,18 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       unitId?: string;
     };
 
-    const matchBase: any = {};
-    if (scope === "restaurant" && restaurantId) matchBase.restaurantId = restaurantId;
-    if (scope === "unit" && unitId) matchBase.unitId = unitId;
+    let matchBase: any = {};
+        if (scope === 'unit' && unitId) {
+          matchBase.restaurantUnit = new mongoose.Types.ObjectId(String(unitId));
+        } else if (scope === 'restaurant' && restaurantId) {
+          const targetId = new mongoose.Types.ObjectId(String(restaurantId));
+          const units = await RestaurantUnit.find({ restaurant: targetId })
+            .select('_id').lean();
+          const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
+          matchBase.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
+        } else {
+          return res.status(400).json({ message: 'Parâmetros inválidos' });
+        }
 
     // --- parâmetros de "hoje" (já usados no summary.todayTotal) ---
     const tz = (req.query?.tz as string) || "America/Sao_Paulo";
@@ -362,7 +371,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     sixMonthsAgo.setHours(0, 0, 0, 0);
 
     // filtro para "não cancelados"
-    const notCancelled = { ...matchBase, status: { $ne: "cancelled" } };
+     const notCancelled = { ...matchBase, status: { $ne: 'cancelled' } };
 
     const [agg] = await Order.aggregate([
       { $match: matchBase },
@@ -396,8 +405,6 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
             },
             { $project: { _id: 0 } },
           ],
-
-          // últimos 6 meses (mantém seu trecho atual se preferir)
           ordersByMonth: [
             { $match: { createdAt: { $gte: sixMonthsAgo } } },
             { $group: { _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } }, value: { $sum: 1 } } },
@@ -407,7 +414,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
 
           // ===== Itens mais pedidos (compatível com seu schema) =====
           topOrders: [
-            { $match: { ...matchBase, status: { $ne: "cancelled" } } }, // <— corrigido
+            { $match: { ...matchBase, status: { $ne: 'cancelled' } } }, 
             { $unwind: "$items" },
             { $match: { $or: [ { "items.status": { $exists: false } }, { "items.status": { $ne: "cancelled" } } ] } },
             { $group: { _id: "$items.name", value: { $sum: { $ifNull: ["$items.quantity", 1] } } } },
@@ -418,7 +425,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
 
           // ===== Tempo médio: processing -> (completed|paid) =====
           avgDelivery: [
-            { $match: { ...matchBase, status: { $in: ["completed", "paid"] } } }, // <— corrigido
+            { $match: { ...matchBase, status: { $in: ["completed", "paid"] } } }, 
             {
               $project: {
                 startedAt: {
@@ -465,8 +472,6 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       },
     ]);
 
-
-    // normalização: sempre 6 meses
     const MONTHS_PT = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."];
     const now = new Date();
     const last6Idx = Array.from({ length: 6 }, (_, i) => (now.getMonth() - (5 - i) + 12) % 12);

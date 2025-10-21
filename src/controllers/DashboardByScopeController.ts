@@ -20,6 +20,10 @@ export const getDashboardByScopeController = async (req: Request, res: Response)
         return res.status(400).json({ message: 'Escopo inválido.' });
     }
 
+    (req.query as any).scope = scope;
+    if (scope === 'unit')       (req.query as any).unitId       = id;
+    if (scope === 'restaurant') (req.query as any).restaurantId = id;
+
     const filter = getDashboardFilter(scope, id);
 
     switch (type) {
