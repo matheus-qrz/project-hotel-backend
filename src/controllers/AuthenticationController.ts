@@ -320,7 +320,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
     });
 
     // Gerar token JWT usando a nova função
-    const token = issueJWT(adminUser);
+    const { token } = issueJWT(adminUser);
 
     // Atualizar token de sessão no usuário e no restaurante
     await UserModel.findByIdAndUpdate(adminUser._id, {
@@ -412,7 +412,7 @@ export const registerClientHandler = async (req: Request, res: Response) => {
     if (!newUser.email || !newUser.role) {
       throw new Error("Email or role is undefined for the new user.");
     }
-    const token = issueJWT(newUser);
+    const { token } = issueJWT(newUser);
 
     // Atualizar token de sessão no banco de dados
     await UserModel.findByIdAndUpdate(newUser._id, {
