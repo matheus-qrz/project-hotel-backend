@@ -49,16 +49,16 @@ export default (router: Router) => {
     // Atualizar um funcionário existente (requer ser admin)
     router.patch(
         "/employee/:id/update",
-        hasRole(['ADMIN', 'MANAGER']),
         isAuthenticated,
+        hasRole(['ADMIN', 'MANAGER']),
         updateEmployeeController
     );
 
     // Excluir um funcionário (requer ser admin)
     router.delete(
         "/employee/:id/delete",
-        hasRole(['ADMIN', 'MANAGER']),
         isAuthenticated,
+        hasRole(['ADMIN', 'MANAGER']),
         deleteEmployeeController
     );
 };
