@@ -133,7 +133,15 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
 
     return res.status(200).json({
       message: "Login realizado com sucesso",
-      user: { _id: String(user._id), role: user.role },
+      user: { 
+        _id: String(user._id), 
+        role: user.role,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        name: [user.firstName, user.lastName].filter(Boolean).join(" ") || "",
+        email: user.email,
+        cpf: user.cpf,
+      },
       restaurant: restaurantId ? { _id: restaurantId, name: restaurantName } : null,
       unit: unitId ? { _id: unitId } : null,
       restaurantId: restaurantId ?? null,
