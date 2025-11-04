@@ -10,6 +10,7 @@ import { computeTotal } from "../utils/computeTotal";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
 import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
 import { computeSubtotalWithoutCoupons, n0 } from "../helpers/coupon";
+import { dispatchPendingPrintJobs, enqueuePrintJobsFromOrder } from "../helpers/printing";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
@@ -161,6 +162,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         now: new Date(), 
         tz,               
       });
+
+      await enqueuePrintJobsFromOrder(doc, "NEW_TICKET");
 
       await doc.save();
       res.setHeader("x-session-id", sessionId);

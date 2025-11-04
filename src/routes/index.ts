@@ -12,6 +12,7 @@ import rangeAssignment from "./rangeAssignment";
 import tableAssignment from "./tableAssignment";
 import promotions from "./promotions";
 import coupon from "./coupon";
+import printing from "./printing";
 
 export default (): Router => {
   const router = Router();
@@ -29,6 +30,7 @@ export default (): Router => {
   tableAssignment(router);
   promotions(router);
   coupon(router);
+  printing(router);
 
   return router;
 };
