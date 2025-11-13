@@ -17,6 +17,10 @@ export interface IPrintJob extends Document {
   unitId: Types.ObjectId | string;
   orderId: Types.ObjectId | string;
   tableId: string | number | null;
+  attendantId?: string;
+  attendantName?: string;
+  guestId?: string;
+  guestName?: string;
   station: PrintStation;
   action: PrintAction;
   items: IPrintJobItem[];
@@ -35,6 +39,10 @@ const PrintJobSchema = new Schema(
   unitId:       { type: String, required: true, index: true },
   orderId:      { type: String, index: true },
   tableId:      { type: Schema.Types.Mixed },
+  attendantId: { type: String },
+  attendantName: { type: String },
+  guestId: { type: String },
+  guestName: { type: String },
   station:      { type: String, index: true },
   action:       { type: String, required: true }, // NEW_TICKET | REPRINT | CANCEL | ...
   items:        { type: [ { name: String, qty: Number, notes: String } ], default: [] },

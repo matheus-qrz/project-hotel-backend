@@ -548,27 +548,52 @@ export const createMultipleProductsController = async (
 };
 
 // Controlador para criar um combo
-export const createComboController = async (
-  req: Request,
-  res: Response
-) => {
+export const createComboController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params;
-    const { name, price, description, comboOptions } = req.body;
-
-    // Verificações básicas
-    if (!name || !price || !comboOptions) {
-      return res.status(400).json({ message: "Campos obrigatórios ausentes" });
-    }
-
-    const comboData = {
-      restaurant: restaurantId,
+    const unitIdFromParams = (req.params as any).unitId as string | undefined;
+    const {
       name,
       price,
       description,
+      comboOptions,
+      unitId: unitIdFromBody,
+    } = req.body ?? {};
+
+    const unitId = unitIdFromParams ?? unitIdFromBody;
+
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId ausente" });
+    }
+    if (!name || typeof name !== "string") {
+      return res.status(400).json({ message: "Nome é obrigatório" });
+    }
+
+    const priceNumber = Number(price);
+    if (Number.isNaN(priceNumber) || priceNumber < 0) {
+      return res.status(400).json({ message: "Preço inválido" });
+    }
+
+    if (!comboOptions || !Array.isArray(comboOptions) || comboOptions.length === 0) {
+      return res.status(400).json({ message: "comboOptions deve ser um array com ao menos 1 item" });
+    }
+
+    if (unitId !== undefined && typeof unitId !== "string") {
+      return res.status(400).json({ message: "unitId inválido" });
+    }
+
+    const comboData: any = {
+      restaurant: restaurantId, 
+      name,
+      price: priceNumber,
+      description,
       isCombo: true,
-      comboOptions
+      comboOptions,            
     };
+
+    if (unitId) {
+      comboData.unitId = unitId;        
+    }
 
     const newCombo = await createProduct(comboData);
     return res.status(201).json(newCombo);
