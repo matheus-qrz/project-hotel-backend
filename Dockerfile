@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
-  && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # Só copia os manifests primeiro (cache de dependências)
 COPY package.json yarn.lock ./
@@ -29,5 +29,5 @@ EXPOSE 3333
 
 # IMPORTANTE: seu server precisa respeitar process.env.PORT
 # e usar ela no listen, tipo:
-# app.listen(process.env.PORT || 4000, () => ...)
+# app.listen(process.env.PORT || 3333, () => ...)
 CMD ["node", "dist/start.ts"]
