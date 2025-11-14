@@ -29,4 +29,4 @@ EXPOSE 3333
 # IMPORTANTE: seu server precisa respeitar process.env.PORT
 # e usar ela no listen, tipo:
 # app.listen(process.env.PORT || 3333, () => ...)
-CMD ["node", "dist/start.ts"]
+CMD ["node", "src/start.ts"]
