@@ -548,27 +548,77 @@ export const createMultipleProductsController = async (
 };
 
 // Controlador para criar um combo
-export const createComboController = async (
-  req: Request,
-  res: Response
-) => {
+export const createComboController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params;
-    const { name, price, description, comboOptions } = req.body;
+    const unitIdFromParams = (req.params as any).unitId as string | undefined;
 
-    // Verificações básicas
-    if (!name || !price || !comboOptions) {
-      return res.status(400).json({ message: "Campos obrigatórios ausentes" });
-    }
-
-    const comboData = {
-      restaurant: restaurantId,
+    const {
       name,
       price,
       description,
+      comboOptions,   // formato antigo
+      groups,         // formato novo vindo do frontend
+      isAvailable,
+      unitId: unitIdFromBody,
+    } = req.body ?? {};
+
+    const unitId = unitIdFromParams ?? unitIdFromBody;
+
+    // --- validações básicas
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId ausente" });
+    }
+
+    if (!name || typeof name !== "string") {
+      return res.status(400).json({ message: "Nome é obrigatório" });
+    }
+
+    const priceNumber = Number(price);
+    if (Number.isNaN(priceNumber) || priceNumber < 0) {
+      return res.status(400).json({ message: "Preço inválido" });
+    }
+
+    const hasComboOptions =
+      Array.isArray(comboOptions) && comboOptions.length > 0;
+    const hasGroups = Array.isArray(groups) && groups.length > 0;
+
+    if (!hasComboOptions && !hasGroups) {
+      return res
+        .status(400)
+        .json({ message: "Campos obrigatórios ausentes (nenhuma opção/grupo informado)" });
+    }
+
+    if (unitId !== undefined && typeof unitId !== "string") {
+      return res.status(400).json({ message: "unitId inválido" });
+    }
+
+    // --- monta payload para criação
+    const comboData: any = {
+      restaurant: restaurantId,
+      name,
+      price: priceNumber,
+      description,
       isCombo: true,
-      comboOptions
+      isAvailable: isAvailable !== undefined ? !!isAvailable : true,
     };
+
+    // compatibilidade: se vier groups, usamos eles; se vier comboOptions antigo, usamos ele
+    if (hasGroups) {
+      // se seu schema já tiver `comboGroups`, é aqui:
+      comboData.comboGroups = groups;
+
+      // se ainda estiver usando apenas `comboOptions` no schema,
+      // pode reaproveitar o mesmo campo:
+      // comboData.comboOptions = groups;
+    } else if (hasComboOptions) {
+      comboData.comboOptions = comboOptions;
+    }
+
+    if (unitId) {
+      comboData.unitId = unitId;
+      // ou comboData.restaurantUnit = unitId; se esse for o campo no schema
+    }
 
     const newCombo = await createProduct(comboData);
     return res.status(201).json(newCombo);
@@ -585,14 +635,58 @@ export const updateComboController = async (
 ) => {
   try {
     const { id } = req.params;
-    const { name, price, description, comboOptions } = req.body;
+    const unitIdFromParams = (req.params as any).unitId as string | undefined;
 
-    const updatedData = {
+    const {
       name,
       price,
       description,
-      comboOptions
+      comboOptions,   // formato antigo
+      groups,         // formato novo
+      isAvailable,
+      unitId: unitIdFromBody,
+    } = req.body ?? {};
+
+    const unitId = unitIdFromParams ?? unitIdFromBody;
+
+    const updatedData: any = {
+      name,
+      price,
+      description,
+      isCombo: true, // garante que continua sendo combo
     };
+
+    // se veio isAvailable, atualiza; se não, deixa como está
+    if (typeof isAvailable !== "undefined") {
+      updatedData.isAvailable = !!isAvailable;
+    }
+
+    const hasComboOptions =
+      Array.isArray(comboOptions) && comboOptions.length > 0;
+    const hasGroups = Array.isArray(groups) && groups.length > 0;
+
+    if (hasGroups) {
+      // se seu schema tiver comboGroups, use ele
+      updatedData.comboGroups = groups;
+
+      // se ainda estiver reaproveitando comboOptions pra tudo:
+      // updatedData.comboOptions = groups;
+    } else if (hasComboOptions) {
+      updatedData.comboOptions = comboOptions;
+    }
+
+    if (unitId) {
+      updatedData.unitId = unitId;
+      // ou updatedData.restaurantUnit = unitId; se esse for o campo no schema
+    }
+
+    // limpa campos undefined / string vazia pra não sobrescrever à toa
+    Object.keys(updatedData).forEach((k) => {
+      const v = (updatedData as any)[k];
+      if (v === undefined || v === "") {
+        delete (updatedData as any)[k];
+      }
+    });
 
     const updatedCombo = await updateProduct(id, updatedData);
     return res.status(200).json(updatedCombo);
