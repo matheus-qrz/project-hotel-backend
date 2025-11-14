@@ -2,7 +2,7 @@
 FROM node:20-slim
 
 # Define diretório
-WORKDIR /usr/src/app
+WORKDIR /
 
 # Dependências de build para libs nativas (sharp, bcrypt, etc.)
 RUN apt-get update && apt-get install -y \
