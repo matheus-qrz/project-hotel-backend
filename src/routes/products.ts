@@ -66,7 +66,7 @@ export default (productsRouter: Router) => {
 
   // Cria combo para todo restaurante
   productsRouter.post(
-    "/restaurant/:id/combos",
+    "/restaurant/:restaurantId/combos",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     createComboController
