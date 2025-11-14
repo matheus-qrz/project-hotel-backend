@@ -1,9 +1,8 @@
 # Imagem base com Node + Debian (bom pra bcrypt, sharp, etc.)
 FROM node:20-slim
 
-# Define ambiente e diretório
-ENV NODE_ENV=production
-WORKDIR /backend/src/app
+# Define diretório
+WORKDIR /usr/src/app
 
 # Dependências de build para libs nativas (sharp, bcrypt, etc.)
 RUN apt-get update && apt-get install -y \
@@ -16,7 +15,7 @@ RUN apt-get update && apt-get install -y \
 COPY package.json yarn.lock ./
 
 # Instala apenas dependências de produção
-RUN corepack enable && yarn install
+RUN yarn install
 
 # Copia o restante do código
 COPY . .
