@@ -64,15 +64,15 @@ export default (productsRouter: Router) => {
     deleteFoodController
   );
 
-  // Cria combo para todo restaurante
+  // Cria combo para todo restaurante (restaurantId)
   productsRouter.post(
-    "/restaurant/:id/combos",
+    "/restaurant/:restaurantId/combos",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     createComboController
   );
 
-  // Cria combo em unidade específica
+  // Cria combo em unidade específica do restaurante (unitId)
   productsRouter.post(
     "/restaurant/:restaurantId/units/:unitId/combos",
     isAuthenticated,
