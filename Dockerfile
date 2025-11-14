@@ -13,16 +13,16 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 # Só copia os manifests primeiro (cache de dependências)
-COPY package*.json ./
+COPY package.json yarn.lock ./
 
 # Instala apenas dependências de produção
-RUN npm install --omit=dev
+RUN corepack enable && yarn install
 
 # Copia o restante do código
 COPY . .
 
 # Build do TypeScript -> dist/
-RUN npm run build
+RUN yarn build
 
 # Porta (ajusta se no seu server for outra)
 EXPOSE 3333
@@ -30,4 +30,4 @@ EXPOSE 3333
 # IMPORTANTE: seu server precisa respeitar process.env.PORT
 # e usar ela no listen, tipo:
 # app.listen(process.env.PORT || 4000, () => ...)
-CMD ["node", "dist/start.js"]
+CMD ["node", "dist/start.ts"]
