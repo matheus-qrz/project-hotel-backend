@@ -2,7 +2,7 @@
 FROM node:20-slim
 
 # Define diretório
-WORKDIR /
+WORKDIR /usr/src/app
 
 # Dependências de build para libs nativas (sharp, bcrypt, etc.)
 RUN apt-get update && apt-get install -y \
@@ -29,4 +29,4 @@ EXPOSE 3333
 # IMPORTANTE: seu server precisa respeitar process.env.PORT
 # e usar ela no listen, tipo:
 # app.listen(process.env.PORT || 3333, () => ...)
-CMD ["node", "src/start.ts"]
+CMD ["node", "dist/start.js"]
