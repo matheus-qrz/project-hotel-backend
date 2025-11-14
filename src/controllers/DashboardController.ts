@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import '../types/express';
+import '../types/express/index';
 import { Request, Response } from "express";
 import { OrderModel as Order } from "../models/Order";
 import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
