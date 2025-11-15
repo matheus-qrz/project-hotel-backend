@@ -119,6 +119,11 @@ const orderSchema = new Schema(
           ref: "Products",
           required: false
         },
+        observations: {
+          type: String,
+          required: false,
+          trim: true,
+        },
         status: {
           type: String,
           enum: Object.values(OrderItemStatus),
@@ -176,7 +181,6 @@ const orderSchema = new Schema(
         enum: ['local', 'takeaway'],
         default: 'local'
       },
-      observations: String,
       paymentMethod: String,
       paymentRequestedAt: Date,
       processedBy: {

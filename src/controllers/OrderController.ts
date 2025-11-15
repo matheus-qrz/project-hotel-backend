@@ -49,6 +49,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       ...it,
       status: it.status ?? "added",
       createdAt: it.createdAt ? new Date(it.createdAt) : now,
+      observations:
+        typeof it.observations === "string" ? it.observations.trim() : "",
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
@@ -88,7 +90,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
             updatedAt: now,
             status: "processing",
             "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
-            "meta.observations": meta?.observations ?? existing.meta?.observations ?? "",
             "meta.splitCount": Number(meta?.splitCount) || existing.meta?.splitCount || 1,
           },
         }
@@ -138,7 +139,6 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         meta: {
           tableId: Number(meta.tableId),
           orderType: meta?.orderType ?? "local",
-          observations: meta?.observations ?? "",
           splitCount: Number(meta?.splitCount) || 1,
           orderCreatedAt: now,
         },
