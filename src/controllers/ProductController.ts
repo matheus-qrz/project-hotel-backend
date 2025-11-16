@@ -483,7 +483,6 @@ export const updateFoodController = async (req: Request, res: Response) => {
   }
 };
 
-
 export const deleteFoodController = async (
   req: Request,
   res: Response
@@ -601,6 +600,7 @@ export const createComboController = async (req: Request, res: Response) => {
       description,
       isCombo: true,
       isAvailable: isAvailable !== undefined ? !!isAvailable : true,
+      quantity: 1
     };
 
     // compatibilidade: se vier groups, usamos eles; se vier comboOptions antigo, usamos ele
