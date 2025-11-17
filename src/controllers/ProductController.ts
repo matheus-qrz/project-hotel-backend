@@ -557,24 +557,23 @@ export const createComboController = async (req: Request, res: Response) => {
       price,
       description,
       comboOptions,   // formato antigo
-      groups,         // formato novo vindo do frontend
       isAvailable,
       unitId: unitIdFromBody,
+      image: imageFromBody,
     } = req.body ?? {};
 
     const unitId = unitIdFromParams ?? unitIdFromBody;
 
-    // --- validações básicas
     if (!restaurantId) {
-      return res.status(400).json({ message: "restaurantId ausente" });
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
     }
 
-    if (!name || typeof name !== "string") {
-      return res.status(400).json({ message: "Nome é obrigatório" });
+    if (!name) {
+      return res.status(400).json({ message: "Nome do combo é obrigatório" });
     }
 
     const priceNumber = Number(price);
-    if (Number.isNaN(priceNumber) || priceNumber < 0) {
+    if (!priceNumber || Number.isNaN(priceNumber) || priceNumber <= 0) {
       return res.status(400).json({ message: "Preço inválido" });
     }
 
@@ -583,42 +582,56 @@ export const createComboController = async (req: Request, res: Response) => {
     const hasGroups = Array.isArray(groups) && groups.length > 0;
 
     if (!hasComboOptions && !hasGroups) {
-      return res
-        .status(400)
-        .json({ message: "Campos obrigatórios ausentes (nenhuma opção/grupo informado)" });
+      return res.status(400).json({
+        message:
+          "Campos obrigatórios ausentes (nenhuma opção/grupo informado)",
+      });
     }
 
     if (unitId !== undefined && typeof unitId !== "string") {
       return res.status(400).json({ message: "unitId inválido" });
     }
 
+    // --- IMAGEM (mesmo fluxo do createFoodController)
+    let imageUrl: string | undefined;
+    let imageBlur: string | undefined;
+    let imageWidth: number | undefined;
+    let imageHeight: number | undefined;
+
+    const imgOut = await handleIncomingImage(req);
+    if (imgOut) {
+      imageUrl = imgOut.url;
+      imageBlur = imgOut.blurDataURL;
+      imageWidth = imgOut.width;
+      imageHeight = imgOut.height;
+    } else if (imageFromBody) {
+      // fallback se já vier URL pronta no body
+      imageUrl = imageFromBody;
+    }
+
     // --- monta payload para criação
     const comboData: any = {
       restaurant: restaurantId,
       name,
-      category: "combo",
       price: priceNumber,
       description,
+      image: imageUrl,
+      imageBlur,
+      imageWidth,
+      imageHeight,
       isCombo: true,
       isAvailable: isAvailable !== undefined ? !!isAvailable : true,
-      quantity: 1
+      quantity: 1, // manter aquele fix do required no schema
     };
 
-    // compatibilidade: se vier groups, usamos eles; se vier comboOptions antigo, usamos ele
     if (hasGroups) {
-      // se seu schema já tiver `comboGroups`, é aqui:
       comboData.comboGroups = groups;
-
-      // se ainda estiver usando apenas `comboOptions` no schema,
-      // pode reaproveitar o mesmo campo:
-      // comboData.comboOptions = groups;
     } else if (hasComboOptions) {
       comboData.comboOptions = comboOptions;
     }
 
     if (unitId) {
       comboData.unitId = unitId;
-      // ou comboData.restaurantUnit = unitId; se esse for o campo no schema
     }
 
     const newCombo = await createProduct(comboData);
