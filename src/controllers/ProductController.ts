@@ -624,6 +624,8 @@ export const createComboController = async (req: Request, res: Response) => {
     };
 
     const newCombo = await createProduct(comboData);
+    console.log("🔥 DEBUG COMBO createComboController");
+    console.log("body.groups:", JSON.stringify(groups, null, 2));
     return res.status(201).json(newCombo);
   } catch (err) {
     console.error("Erro ao criar combo:", err);

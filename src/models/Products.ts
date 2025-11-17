@@ -57,6 +57,21 @@ export interface IProduct extends Document {
   isPromotionActive(now?: Date): boolean;
 };
 
+const ComboGroupSchema = new Schema({
+  title: { type: String, required: true },
+  categoryId: { type: String, default: null },
+  min: { type: Number, default: 0 },
+  max: { type: Number, required: true },
+  required: { type: Boolean, default: false },
+  options: [
+    {
+      productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
+      extraPrice: { type: Number, default: 0 },
+      defaultSelected: { type: Boolean, default: false },
+    },
+  ],
+});
+
 const productSchema = new Schema<IProduct>({
   restaurant: {
     type: mongoose.Schema.Types.ObjectId,
@@ -101,12 +116,7 @@ const productSchema = new Schema<IProduct>({
     type: Boolean,
     default: false
   },
-  comboOptions: [
-    {
-      name: { type: String, required: true },
-      products: [{ type: mongoose.Schema.Types.ObjectId, ref: "Product" }]
-    }
-  ],
+  comboOptions: [ComboGroupSchema],
   isAdditional: {
     type: Boolean,
     default: false
