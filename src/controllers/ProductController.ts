@@ -557,7 +557,7 @@ export const createComboController = async (req: Request, res: Response) => {
       price,
       description,
       comboOptions,   // formato antigo
-      groups,
+      groups,         // formato novo vindo do frontend
       isAvailable,
       unitId: unitIdFromBody,
       image: imageFromBody,
@@ -580,7 +580,9 @@ export const createComboController = async (req: Request, res: Response) => {
 
     const hasComboOptions =
       Array.isArray(comboOptions) && comboOptions.length > 0;
-    if (!hasComboOptions) {
+    const hasGroups = Array.isArray(groups) && groups.length > 0;
+
+    if (!hasComboOptions && !hasGroups) {
       return res.status(400).json({
         message:
           "Campos obrigatórios ausentes (nenhuma opção/grupo informado)",
@@ -623,7 +625,9 @@ export const createComboController = async (req: Request, res: Response) => {
       quantity: 1, // manter aquele fix do required no schema
     };
 
-    if (hasComboOptions) {
+    if (hasGroups) {
+      comboData.comboGroups = groups;
+    } else if (hasComboOptions) {
       comboData.comboOptions = comboOptions;
     }
 
