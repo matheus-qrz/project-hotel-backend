@@ -550,20 +550,15 @@ export const createMultipleProductsController = async (
 export const createComboController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params;
-    const unitIdFromParams = (req.params as any).unitId as string | undefined;
 
     const {
       name,
       price,
       description,
-      comboOptions,   // formato antigo
-      groups,         // formato novo vindo do frontend
+      groups,          // vem do front
       isAvailable,
-      unitId: unitIdFromBody,
-      image: imageFromBody,
+      image,           // se quiser pegar do body também
     } = req.body ?? {};
-
-    const unitId = unitIdFromParams ?? unitIdFromBody;
 
     if (!restaurantId) {
       return res.status(400).json({ message: "restaurantId é obrigatório" });
@@ -578,26 +573,29 @@ export const createComboController = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Preço inválido" });
     }
 
-    const hasComboOptions =
-      Array.isArray(comboOptions) && comboOptions.length > 0;
-    const hasGroups = Array.isArray(groups) && groups.length > 0;
-
-    if (!hasComboOptions && !hasGroups) {
-      return res.status(400).json({
-        message:
-          "Campos obrigatórios ausentes (nenhuma opção/grupo informado)",
-      });
+    if (!Array.isArray(groups) || groups.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Informe ao menos um grupo com opções." });
     }
 
-    if (unitId !== undefined && typeof unitId !== "string") {
-      return res.status(400).json({ message: "unitId inválido" });
+    // validação rápida dos grupos, no modelo que você já usa no front
+    for (const g of groups) {
+      if (!g.title?.trim()) {
+        return res
+          .status(400)
+          .json({ message: "Há grupo sem título no combo." });
+      }
+      if (!Array.isArray(g.options) || g.options.length === 0) {
+        return res.status(400).json({
+          message: `O grupo "${g.title}" precisa ter pelo menos uma opção.`,
+        });
+      }
     }
 
-    // --- IMAGEM (mesmo fluxo do createFoodController)
-    let imageUrl: string | undefined;
-    let imageBlur: string | undefined;
-    let imageWidth: number | undefined;
-    let imageHeight: number | undefined;
+    // se você usa handleIncomingImage, mantém ele aqui
+    let imageUrl = image || undefined;
+    let imageBlur, imageWidth, imageHeight;
 
     const imgOut = await handleIncomingImage(req);
     if (imgOut) {
@@ -605,12 +603,8 @@ export const createComboController = async (req: Request, res: Response) => {
       imageBlur = imgOut.blurDataURL;
       imageWidth = imgOut.width;
       imageHeight = imgOut.height;
-    } else if (imageFromBody) {
-      // fallback se já vier URL pronta no body
-      imageUrl = imageFromBody;
     }
 
-    // --- monta payload para criação
     const comboData: any = {
       restaurant: restaurantId,
       name,
@@ -622,26 +616,21 @@ export const createComboController = async (req: Request, res: Response) => {
       imageHeight,
       isCombo: true,
       isAvailable: isAvailable !== undefined ? !!isAvailable : true,
-      quantity: 1, // manter aquele fix do required no schema
+      quantity: 1,
+
+      // 👇 AQUI É O PRINCIPAL:
+      // usa SEMPRE comboOptions para guardar os grupos do combo
+      comboOptions: groups,
     };
-
-    if (hasGroups) {
-      comboData.comboGroups = groups;
-    } else if (hasComboOptions) {
-      comboData.comboOptions = comboOptions;
-    }
-
-    if (unitId) {
-      comboData.unitId = unitId;
-    }
 
     const newCombo = await createProduct(comboData);
     return res.status(201).json(newCombo);
-  } catch (error) {
-    console.error("Erro ao criar combo:", error);
+  } catch (err) {
+    console.error("Erro ao criar combo:", err);
     return res.status(500).json({ message: "Erro ao criar combo" });
   }
 };
+
 
 // Controlador para atualizar um combo
 export const updateComboController = async (
