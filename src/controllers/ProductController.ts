@@ -596,6 +596,7 @@ export const createComboController = async (req: Request, res: Response) => {
     const comboData: any = {
       restaurant: restaurantId,
       name,
+      category: "combo",
       price: priceNumber,
       description,
       isCombo: true,
