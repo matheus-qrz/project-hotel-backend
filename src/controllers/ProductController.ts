@@ -579,9 +579,7 @@ export const createComboController = async (req: Request, res: Response) => {
 
     const hasComboOptions =
       Array.isArray(comboOptions) && comboOptions.length > 0;
-    const hasGroups = Array.isArray(groups) && groups.length > 0;
-
-    if (!hasComboOptions && !hasGroups) {
+    if (!hasComboOptions) {
       return res.status(400).json({
         message:
           "Campos obrigatórios ausentes (nenhuma opção/grupo informado)",
@@ -624,9 +622,7 @@ export const createComboController = async (req: Request, res: Response) => {
       quantity: 1, // manter aquele fix do required no schema
     };
 
-    if (hasGroups) {
-      comboData.comboGroups = groups;
-    } else if (hasComboOptions) {
+    if (hasComboOptions) {
       comboData.comboOptions = comboOptions;
     }
 
