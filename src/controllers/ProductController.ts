@@ -557,6 +557,7 @@ export const createComboController = async (req: Request, res: Response) => {
       price,
       description,
       comboOptions,   // formato antigo
+      groups,
       isAvailable,
       unitId: unitIdFromBody,
       image: imageFromBody,
