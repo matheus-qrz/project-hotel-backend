@@ -10,7 +10,7 @@ import { computeTotal } from "../utils/computeTotal";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
 import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
 import { computeSubtotalWithoutCoupons, n0 } from "../helpers/coupon";
-import { dispatchPendingPrintJobs, enqueuePrintJobsFromOrder } from "../helpers/printing";
+import { dispatchPendingPrintJobs, enqueuePrintJobsFromOrder } from "../services/printing";
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {

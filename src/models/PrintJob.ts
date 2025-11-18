@@ -5,10 +5,19 @@ export type PrintStation = "hot" | "cold" | "bar";
 export type PrintAction = "NEW_TICKET" | "ADD_ITEMS" | "CANCEL_ITEMS";
 export type PrintStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED_NO_PRINTER";
 
+export interface PrintJobAddon {
+  name: string;
+  qty: number;
+}
+
 export interface IPrintJobItem {
   name: string;
   qty: number;
   notes?: string;
+  observations?: string;        // observações por item
+  addons?: PrintJobAddon[];     // addons do item
+  isPromo?: boolean;            // item em promoção
+  isCombo?: boolean;            // item de combo
 }
 
 export interface IPrintJob extends Document {
