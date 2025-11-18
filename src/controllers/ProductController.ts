@@ -54,7 +54,8 @@ export const createFoodController = async (
       isAdditional,
       hasAddons,
       additionalOptions,
-      accompaniments
+      accompaniments,
+      preparationGroups
     } = req.body;
 
     // Verificações básicas
@@ -80,11 +81,9 @@ export const createFoodController = async (
       imageWidth = imgOut.width;
       imageHeight = imgOut.height;
     } else if (imageFromBody) {
-      // Mantém compatibilidade se você já salva uma URL pronta no body
       imageUrl = imageFromBody;
     }
 
-    // Cálculo do preço promocional se não for fornecido
     let calculatedPromotionalPrice = promotionalPrice;
     if (isOnPromotion && discountPercentage && !promotionalPrice) {
       calculatedPromotionalPrice = price - (price * (discountPercentage / 100));
@@ -96,8 +95,8 @@ export const createFoodController = async (
       category,
       description,
       price,
-      image: imageUrl,          // mantém o campo original
-      imageBlur: imageBlur,     // novo (LQIP)
+      image: imageUrl,          
+      imageBlur: imageBlur,    
       imageWidth,
       imageHeight,
       quantity,
@@ -107,9 +106,10 @@ export const createFoodController = async (
       promotionStartDate,
       promotionEndDate,
       isAdditional: isAdditional || false,
-      hasAddons: hasAddons || false, // Certifique-se de inicializar ou validar
-      additionalOptions: additionalOptions || [], // Certifique-se de inicializar ou validar
-      accompaniments: accompaniments || [] // Certifique-se de inicializar ou validar
+      hasAddons: hasAddons || false, 
+      additionalOptions: additionalOptions || [], 
+      accompaniments: accompaniments || [], 
+      preparationGroups: preparationGroups || []
     };
 
     const newFood = await createProduct(productData);
@@ -358,6 +358,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
       promotionStartDate: startStr,
       promotionEndDate: endStr,
       additionalOptions,
+      preparationGroups,
     } = req.body as any;
 
     const quantity =
@@ -429,6 +430,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
       isAvailable,
       isOnPromotion: isOnPromotion || false,
       additionalOptions,
+      preparationGroups,
     };
 
     // preço e custo (AGORA parseados corretamente)
@@ -647,46 +649,100 @@ export const updateComboController = async (
       name,
       price,
       description,
-      comboOptions,   // formato antigo
-      groups,         // formato novo
+      comboOptions,   // formato antigo (fallback)
+      groups,         // formato novo (preferido)
       isAvailable,
       unitId: unitIdFromBody,
     } = req.body ?? {};
 
-    const unitId = unitIdFromParams ?? unitIdFromBody;
+    // Busca o combo atual para manter campos não enviados
+    const existing = await getProductById(id);
+    if (!existing) {
+      return res.status(404).json({ message: "Combo não encontrado" });
+    }
 
-    const updatedData: any = {
-      name,
-      price,
-      description,
+    if (!existing.isCombo) {
+      return res.status(400).json({ message: "Produto não é um combo" });
+    }
+
+    // -----------------------------
+    // 1) Tratar grupos / comboOptions
+    // -----------------------------
+    let finalGroups: any[] | undefined;
+
+    if (Array.isArray(groups)) {
+      finalGroups = groups;
+    } else if (Array.isArray(comboOptions)) {
+      // fallback para chamadas antigas que ainda mandem comboOptions “já no formato novo”
+      finalGroups = comboOptions;
+    }
+
+    // Se grupos forem enviados, validar minimamente
+    if (finalGroups) {
+      if (!Array.isArray(finalGroups) || finalGroups.length === 0) {
+        return res
+          .status(400)
+          .json({ message: "Informe ao menos um grupo com opções." });
+      }
+
+      for (const g of finalGroups) {
+        if (!Array.isArray(g.options) || g.options.length === 0) {
+          return res.status(400).json({
+            message: `O grupo "${g.title}" precisa ter pelo menos uma opção.`,
+          });
+        }
+      }
+    }
+
+    // -----------------------------
+    // 2) Tratar preço (se enviado)
+    // -----------------------------
+    let priceNumber: number | undefined;
+    if (price !== undefined) {
+      const n = Number(price);
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ message: "Preço inválido" });
+      }
+      priceNumber = n;
+    }
+
+    // -----------------------------
+    // 3) Montar payload de atualização
+    // -----------------------------
+    const effectiveUnitId =
+      unitIdFromParams !== undefined ? unitIdFromParams : unitIdFromBody;
+
+    const updatedData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true, // garante que continua sendo combo
     };
 
-    // se veio isAvailable, atualiza; se não, deixa como está
-    if (typeof isAvailable !== "undefined") {
-      updatedData.isAvailable = !!isAvailable;
+    if (name !== undefined) {
+      updatedData.name = name;
     }
 
-    const hasComboOptions =
-      Array.isArray(comboOptions) && comboOptions.length > 0;
-    const hasGroups = Array.isArray(groups) && groups.length > 0;
-
-    if (hasGroups) {
-      // se seu schema tiver comboGroups, use ele
-      updatedData.comboGroups = groups;
-
-      // se ainda estiver reaproveitando comboOptions pra tudo:
-      // updatedData.comboOptions = groups;
-    } else if (hasComboOptions) {
-      updatedData.comboOptions = comboOptions;
+    if (priceNumber !== undefined) {
+      updatedData.price = priceNumber;
     }
 
-    if (unitId) {
-      updatedData.unitId = unitId;
-      // ou updatedData.restaurantUnit = unitId; se esse for o campo no schema
+    if (description !== undefined) {
+      updatedData.description = description;
     }
 
-    // limpa campos undefined / string vazia pra não sobrescrever à toa
+    if (typeof isAvailable === "boolean") {
+      updatedData.isAvailable = isAvailable;
+    }
+
+    if (effectiveUnitId !== undefined) {
+      (updatedData as any).unitId = effectiveUnitId;
+    }
+
+    if (finalGroups) {
+      // novo formato -> salva em comboOptions
+      (updatedData as any).comboOptions = finalGroups;
+    }
+
+    // Remove chaves com undefined / string vazia do payload final,
+    // só por segurança.
     Object.keys(updatedData).forEach((k) => {
       const v = (updatedData as any)[k];
       if (v === undefined || v === "") {
@@ -694,6 +750,9 @@ export const updateComboController = async (
       }
     });
 
+    // -----------------------------
+    // 4) Atualizar no banco
+    // -----------------------------
     const updatedCombo = await updateProduct(id, updatedData);
     return res.status(200).json(updatedCombo);
   } catch (error) {

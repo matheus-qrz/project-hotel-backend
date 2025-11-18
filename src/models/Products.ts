@@ -21,6 +21,22 @@ export interface IAccompaniment {
   isAvailable: boolean;
 }
 
+export interface IPreparationOption {
+  id: string;
+  label: string;
+  extraPrice?: number;
+  isAvailable: boolean;
+  defaultSelected?: boolean;
+}
+
+export interface IPreparationGroup {
+  title: string;
+  required: boolean;
+  min: number;
+  max: number;
+  options: IPreparationOption[];
+}
+
 export interface IProduct extends Document {
   restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
   category: string;
@@ -40,6 +56,7 @@ export interface IProduct extends Document {
   hasAddons?: boolean; 
   additionalOptions?: IAdditional[];
   accompaniments?: IAccompaniment;
+  preparationGroups?: IPreparationGroup[];
   isOnPromotion: boolean;
   promotionalPrice?: number;
   discountPercentage?: number | null;
@@ -140,6 +157,24 @@ const productSchema = new Schema<IProduct>({
       isAvailable: { type: Boolean, default: true }
     }
   ],
+   preparationGroups: [
+    {
+      title: { type: String, required: true },
+      required: { type: Boolean, default: true },
+      min: { type: Number, default: 1 },
+      max: { type: Number, required: true },
+      options: [
+        {
+          id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+          label: { type: String, required: true },
+          extraPrice: { type: Number, default: 0 },
+          isAvailable: { type: Boolean, default: true },
+          defaultSelected: { type: Boolean, default: false },
+        },
+      ],
+    },
+  ],
+
   discountPercentage: { type: Number, default: null },   
   promotionalPrice: { type: Number, default: null },     
   promotionStartDate: { type: Date, default: null },
