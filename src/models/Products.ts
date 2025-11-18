@@ -232,7 +232,7 @@ export const getProducts = () => ProductModel.find();
 // Obter produtos de um restaurante específico
 export const getProductsByRestaurant = (restaurantId: string) =>
   ProductModel.find({ restaurant: restaurantId })
-    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate promotionLabel isCombo additionalOptions accompaniments description discountPercentage isAvailable');
+    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate promotionLabel isCombo comboOptions additionalOptions accompaniments description discountPercentage isAvailable');
 
 // Obter produtos em promoção de um restaurante específico
 export const getPromotionalProducts = (restaurantId: string) =>
