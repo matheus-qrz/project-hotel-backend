@@ -30,6 +30,7 @@ export default (productsRouter: Router) => {
   // Criar múltiplos produtos
   productsRouter.post(
     "/restaurant/:id/products_multi",
+    upload.single("image"),
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     createMultipleProductsController
