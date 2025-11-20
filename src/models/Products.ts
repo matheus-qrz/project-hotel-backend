@@ -220,12 +220,19 @@ function finalPriceDoc(doc: any, now = new Date()) {
 
 
 // Middleware para calcular preço promocional automaticamente quando o percentual de desconto for definido
-productSchema.pre('save', function (next) {
+productSchema.pre("save", function (next) {
+  // recalcula o flag com base nos campos atuais
+  this.isOnPromotion = isPromotionActiveDoc(this);
+
+  // se estiver em promoção e tiver desconto preenchido, garante o preço promo
   if (this.isOnPromotion && this.discountPercentage && this.price) {
-    this.promotionalPrice = this.price - (this.price * (this.discountPercentage / 100));
+    this.promotionalPrice =
+      this.price - (this.price * (this.discountPercentage / 100));
   }
+
   next();
 });
+
 
 // Middleware para verificar se a promoção expirou (pode ser chamado por um job agendado)
 productSchema.methods.checkPromotionValidity = function () {
@@ -273,8 +280,24 @@ export const getProductsByRestaurant = (restaurantId: string) =>
 export const getPromotionalProducts = (restaurantId: string) =>
   ProductModel.find({
     restaurant: restaurantId,
-    isOnPromotion: true,
-    promotionEndDate: { $gt: new Date() }
+    $or: [
+      { discountPercentage: { $gt: 0 } },
+      { promotionalPrice: { $gt: 0 } },
+    ],
+    $and: [
+      {
+        $or: [
+          { promotionStartDate: null },
+          { promotionStartDate: { $lte: new Date() } },
+        ],
+      },
+      {
+        $or: [
+          { promotionEndDate: null },
+          { promotionEndDate: { $gte: new Date() } },
+        ],
+      },
+    ],
   });
 
 // Obter produto por ID
@@ -298,15 +321,24 @@ export const updateProduct = async (id: string, values: Record<string, any>) => 
 
   Object.assign(doc, values);
 
-  // garantir cálculo de promoção mesmo em update:
-  if (doc.isOnPromotion) {
+  // recalcula o estado real da promoção com base nos campos recebidos
+  const promotionActive = isPromotionActiveDoc(doc);
+  doc.isOnPromotion = promotionActive;
+
+  if (promotionActive) {
+    // se está em promoção, garante coerência entre desconto e preço promo
     if (doc.discountPercentage && !doc.promotionalPrice) {
-      doc.promotionalPrice = doc.price - (doc.price * (doc.discountPercentage / 100));
+      doc.promotionalPrice =
+        doc.price - (doc.price * (doc.discountPercentage / 100));
     }
+
     if (doc.promotionalPrice && !doc.discountPercentage) {
-      doc.discountPercentage = Math.round(((doc.price - doc.promotionalPrice) / doc.price) * 100);
+      doc.discountPercentage = Math.round(
+        ((doc.price - doc.promotionalPrice) / doc.price) * 100,
+      );
     }
   } else {
+    // se a promoção deixou de ser válida, limpa tudo
     doc.promotionalPrice = undefined;
     doc.discountPercentage = undefined;
     doc.promotionStartDate = undefined;
