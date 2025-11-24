@@ -920,14 +920,30 @@ export const listPromotionalProducts = async (req: Request, res: Response) => {
     if (unitId === "null") unitFilter.unit = null;
     else if (unitId)       unitFilter.unit = new Types.ObjectId(unitId);
 
-    // 1) Buscar promoções ativas (produto + categoria)
-    const promos = await PromotionModel.find({
+    // 1) Montar filtro base da promoção
+    const promoFilter: any = {
       restaurant: new Types.ObjectId(restaurantId),
       startDate: { $lte: now },
       endDate:   { $gte: now },
-      ...unitFilter,
       scope: { $in: ["product", "category"] },
-    }).lean();
+    };
+
+    // Regras de unidade:
+    // - sem unitId  -> todas as promos (qualquer unit + null)
+    // - unitId="null" -> apenas promos globais (unit: null)
+    // - unitId=<id>   -> promos dessa unidade OU globais (unit: null)
+    if (unitId === "null") {
+      promoFilter.unit = null;
+    } else if (unitId) {
+      const unitObj = new Types.ObjectId(unitId);
+      promoFilter.$or = [
+        { unit: unitObj },
+        { unit: null },
+      ];
+    }
+
+    // 2) Buscar promoções ativas (produto + categoria)
+    const promos = await PromotionModel.find(promoFilter).lean();
 
     if (!promos.length) return res.status(200).json([]);
 
