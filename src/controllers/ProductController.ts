@@ -202,7 +202,12 @@ export async function listProductsController(req: Request, res: Response) {
                     {
                       $or: [
                         // 1) produto
-                        { $and: [ { $eq: ["$scope","product"] },  { $eq: ["$product","$$prodId"] } ] },
+                        { 
+                          $and: [ 
+                                  { $eq: ["$scope","product"] },  
+                                  { $eq: ["$productId","$$prodId"] } 
+                                ] 
+                        },
 
                         // 2) categoria + unidade
                         { $and: [
