@@ -1,5 +1,6 @@
 import mongoose, { Types } from "mongoose";
 import { OrderItemStatus, OrderItemStatusType, OrderStatus, OrderStatusType } from '../types/order.types'
+import { ComboOption, IPreparationGroup } from "./Products";
 const Schema = mongoose.Schema;
 
 // Interfaces
@@ -29,6 +30,10 @@ export interface IOrderItem {
   addons?: any[]; 
   isOnPromotion?: boolean;
   originalPrice?: number;
+  isCombo?: boolean;
+  comboOptions?: ComboOption[];    
+  preparationGroups?: IPreparationGroup[]; 
+  createdAt?: Date;
 }
 
 export interface IOrder extends mongoose.Document {
@@ -136,6 +141,18 @@ const orderSchema = new Schema(
         originalPrice: {
           type: Number,
           required: false
+        },
+        isCombo: {
+          type: Boolean,
+          default: false,
+        },
+        comboOptions: {
+          type: [mongoose.Schema.Types.Mixed],
+          default: [],
+        },
+        preparationGroups: {
+          type: [mongoose.Schema.Types.Mixed],
+          default: [],
         },
         completedAt: { type: Date },
       }

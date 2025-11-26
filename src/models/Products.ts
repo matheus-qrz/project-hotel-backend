@@ -2,10 +2,9 @@
 import mongoose, { Document, Schema } from "mongoose";
 import { IRestaurant } from "./index";
 
-// Adicione este tipo ao modelo de produto
 export interface ComboOption {
-  name: string; // Nome da opção (ex: tipo de hambúrguer)
-  products: mongoose.Types.ObjectId[]; // Produtos que fazem parte desta opção
+  name: string; 
+  products: mongoose.Types.ObjectId[]; 
 }
 
 export interface IAdditional {

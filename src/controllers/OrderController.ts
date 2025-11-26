@@ -1,7 +1,7 @@
 import mongoose, { Types } from "mongoose";
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
-import { OrderModel } from "../models/Order";
+import { IOrder, IOrderItem, OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
@@ -45,18 +45,28 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const status = req.body.status ?? "processing";
 
     // normalização de itens
-    const itemsWithStatus = items.map((it: any) => ({
+    const itemsWithStatus = items.map((it: IOrderItem) => ({
       ...it,
+
       status: it.status ?? "added",
       createdAt: it.createdAt ? new Date(it.createdAt) : now,
-      observations:
-        typeof it.observations === "string" ? it.observations.trim() : "",
+
+      // Addons normalizados
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
             status: ad.status ?? "added",
             createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
+        : [],
+
+      // Campos de combo
+      isCombo: !!it.isCombo,
+      comboOptions: Array.isArray(it.comboOptions) ? it.comboOptions : [],
+
+      // Preparações (ou preparationGroups, depende do seu schema)
+      preparations: Array.isArray(it.preparationGroups)
+        ? it.preparationGroups
         : [],
     }));
 
