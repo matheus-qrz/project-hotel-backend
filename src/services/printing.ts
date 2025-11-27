@@ -87,7 +87,7 @@ function formatDateTimeInTimeZone(date: Date, timeZone: string): string {
  * Normaliza um Order vindo do Mongoose (Document) para o formato base que a
  * impressão precisa. Aqui já aproveitamos pra extrair:
  *
- *  - unitId / restaurantId / tableId / orderId
+ *  - unitId / tableId / orderId
  *  - waiterName (garçom)
  *  - customerName (guest)
  *  - unitName / unitAddress
@@ -129,6 +129,7 @@ function normalizeOrderForPrint(order: OrderInput) {
   // nome do cliente / guest
   const customerName =
     o.guest?.name ??
+    o.guestInfo?.name ??
     o.guestName ??
     o.customerName ??
     undefined;
@@ -180,9 +181,21 @@ export async function enqueuePrintJobsFromOrder(
 ) {
   const norm = normalizeOrderForPrint(order);
 
-  if (!norm.unitId || !norm.restaurantId) {
-    console.warn("[printing] order sem unitId/restaurantId; ignorando impressão");
+  // se nem unitId/restaurantUnit veio, aí sim não faz sentido imprimir
+  if (!norm.unitId) {
+    console.warn("[printing] order sem unitId/restaurantUnit; ignorando impressão", {
+      orderId: norm.orderId,
+      rawUnitId: (order as any)?.unitId,
+      rawRestaurantUnit: (order as any)?.restaurantUnit,
+    });
     return;
+  }
+
+  // restaurantId é opcional: se faltar, avisa mas segue
+  if (!norm.restaurantId) {
+    console.warn("[printing] order sem restaurantId; seguindo sem cabeçalho de restaurante", {
+      orderId: norm.orderId,
+    });
   }
 
   // Descobre as estações a partir dos itens (kitchenStation)
