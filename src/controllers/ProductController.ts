@@ -1,6 +1,4 @@
 import { Request, Response} from "express";
-import fs from "fs/promises";
-import path from "path";
 import {
   createProduct,
   deleteProduct,
@@ -15,6 +13,46 @@ import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 import { Types } from "mongoose";
 import { PromotionModel } from "../models/Promotions";
+
+function parseMoneyField(val: any): number | null {
+  if (val === undefined || val === null || val === "") return null;
+
+  if (typeof val === "number") return val;
+
+  if (typeof val === "string") {
+    // remove tudo que não for dígito, vírgula ou ponto
+    const normalized = val
+      .replace(/[^\d.,-]/g, "")
+      .replace(/\./g, "")
+      .replace(",", ".");
+    const n = Number(normalized);
+    return Number.isNaN(n) ? null : n;
+  }
+
+  return null;
+}
+
+function parseBooleanField(val: any, defaultValue = false): boolean {
+  if (typeof val === "boolean") return val;
+  if (typeof val === "number") return val === 1;
+  if (typeof val === "string") {
+    return ["true", "1", "on", "yes"].includes(val.toLowerCase());
+  }
+  return defaultValue;
+}
+
+function parseJSONField<T = any>(val: any): T | null {
+  if (val === undefined || val === null || val === "") return null;
+  if (typeof val === "string") {
+    try {
+      return JSON.parse(val) as T;
+    } catch {
+      return null;
+    }
+  }
+  return val as T;
+}
+
 
 async function handleIncomingImage(req: Request) {
   // 1) arquivo multipart
@@ -37,15 +75,26 @@ export const createFoodController = async (
   req: Request,
   res: Response
 ) => {
+  const start = Date.now();
+
   try {
     const { id: restaurantId } = req.params;
+    if (!restaurantId) {
+      return res
+        .status(400)
+        .json({ message: "restaurantId é obrigatório" });
+    }
+
+    // req.body aqui é any (vindo de JSON ou multipart/form-data)
     const {
       name,
       category,
       description,
       price,
+      costPrice,
       image: imageFromBody,
       quantity,
+      isAvailable,
       isOnPromotion,
       discountPercentage,
       promotionalPrice,
@@ -55,68 +104,146 @@ export const createFoodController = async (
       hasAddons,
       additionalOptions,
       accompaniments,
-      preparationGroups
-    } = req.body;
+      preparationGroups,
+      isCombo,
+      comboOptions,
+    } = req.body as any;
 
-    // Verificações básicas
-    if (!name || !restaurantId || !category || typeof price !== 'number') {
-      return res.status(400).json({ message: "Campos obrigatórios ausentes" });
+    // Campos obrigatórios
+    if (!name || !category) {
+      return res
+        .status(400)
+        .json({ message: "Campos obrigatórios ausentes" });
     }
 
-    // Verificar se já existe produto com o mesmo nome
+    // Converter preço (vem string no FormData)
+    const priceNumber = parseMoneyField(price);
+    if (priceNumber === null || priceNumber <= 0) {
+      return res.status(400).json({ message: "Preço inválido" });
+    }
+
+    const costPriceNumber = parseMoneyField(costPrice);
+    const quantityNumber =
+      quantity !== undefined && quantity !== null && quantity !== ""
+        ? Number(quantity)
+        : 0;
+
+    // Verificar duplicidade por nome
     const sameName = await getProductByName(name);
     if (sameName) {
-      return res.status(400).json({ message: "Já existe um produto com este nome" });
+      return res
+        .status(400)
+        .json({ message: "Já existe um produto com este nome" });
     }
 
-    let imageUrl: string | undefined = undefined;
-    let imageBlur: string | undefined = undefined;
-    let imageWidth: number | undefined = undefined;
-    let imageHeight: number | undefined = undefined;
+    // Tratamento de imagem
+    let imageUrl: string | undefined;
+    let imageBlur: string | undefined;
+    let imageWidth: number | undefined;
+    let imageHeight: number | undefined;
 
     const imgOut = await handleIncomingImage(req);
-        if (imgOut) {
-      imageUrl = imgOut.url;                     // ex.: "/uploads/products/abc123/original.jpg"
-      imageBlur = imgOut.blurDataURL;            // base64 LQIP
+    if (imgOut) {
+      imageUrl = imgOut.url;
+      imageBlur = imgOut.blurDataURL;
       imageWidth = imgOut.width;
       imageHeight = imgOut.height;
     } else if (imageFromBody) {
       imageUrl = imageFromBody;
     }
 
-    let calculatedPromotionalPrice = promotionalPrice;
-    if (isOnPromotion && discountPercentage && !promotionalPrice) {
-      calculatedPromotionalPrice = price - (price * (discountPercentage / 100));
+    // promo flags
+    const isOnPromotionBool = parseBooleanField(isOnPromotion, false);
+    const discountNumber =
+      discountPercentage !== undefined && discountPercentage !== null && discountPercentage !== ""
+        ? Number(discountPercentage)
+        : null;
+
+    let promoPriceNumber = parseMoneyField(promotionalPrice);
+    let finalPromoPrice: number | null = null;
+
+    if (isOnPromotionBool) {
+      if (promoPriceNumber !== null) {
+        finalPromoPrice = promoPriceNumber;
+      } else if (discountNumber !== null && !Number.isNaN(discountNumber)) {
+        finalPromoPrice = priceNumber - priceNumber * (discountNumber / 100);
+      }
     }
 
-    const productData = {
+    // parse de arrays/objetos (vindos como JSON string no FormData)
+    const additionalOptionsParsed =
+      parseJSONField<any[]>(additionalOptions) ?? additionalOptions ?? [];
+    const accompanimentsParsed =
+      parseJSONField<any[]>(accompaniments) ?? accompaniments ?? [];
+    const preparationGroupsParsed =
+      parseJSONField<any[]>(preparationGroups) ?? preparationGroups ?? [];
+    const comboOptionsParsed =
+      parseJSONField<any[]>(comboOptions) ?? comboOptions ?? [];
+
+    // Monta payload compatível com o model (sem tipar como IProduct)
+    const productData: Record<string, any> = {
       restaurant: restaurantId,
       name,
       category,
-      description,
-      price,
-      image: imageUrl,          
-      imageBlur: imageBlur,    
+      description: description ?? "",
+      price: priceNumber,
+      // IProduct.image é string obrigatória -> garante string (nem que seja "")
+      image: imageUrl ?? "",
+      imageBlur,
       imageWidth,
       imageHeight,
-      quantity,
-      isOnPromotion: isOnPromotion || false,
-      discountPercentage,
-      promotionalPrice: calculatedPromotionalPrice,
-      promotionStartDate,
-      promotionEndDate,
-      isAdditional: isAdditional || false,
-      hasAddons: hasAddons || false, 
-      additionalOptions: additionalOptions || [], 
-      accompaniments: accompaniments || [], 
-      preparationGroups: preparationGroups || []
+      quantity: Number.isNaN(quantityNumber) ? 0 : quantityNumber,
+      // IProduct.costPrice é number -> garante number (0 se não veio nada)
+      costPrice: costPriceNumber ?? 0,
+      isAvailable: parseBooleanField(isAvailable, true),
+
+      isOnPromotion: isOnPromotionBool,
+      discountPercentage:
+        discountNumber !== null && !Number.isNaN(discountNumber)
+          ? discountNumber
+          : null,
+      promotionalPrice: finalPromoPrice,
+      promotionStartDate: promotionStartDate
+        ? new Date(promotionStartDate)
+        : null,
+      promotionEndDate: promotionEndDate ? new Date(promotionEndDate) : null,
+
+      isAdditional: parseBooleanField(isAdditional, false),
+      hasAddons: parseBooleanField(hasAddons, false),
+
+      // model espera array de subdocs { id, name, price, isAvailable }
+      additionalOptions: additionalOptionsParsed,
+
+      // model usa array de accompaniments
+      accompaniments: accompanimentsParsed,
+
+      // groups de preparo (ponto da carne etc.)
+      preparationGroups: preparationGroupsParsed,
+
+      // combos
+      isCombo: parseBooleanField(isCombo, false),
+      comboOptions: comboOptionsParsed,
     };
 
     const newFood = await createProduct(productData);
+
+    const total = Date.now() - start;
+    console.log(
+      `[createFoodController] restaurante=${restaurantId} nome="${name}" levou ${total}ms`,
+    );
+
     return res.status(201).json(newFood);
   } catch (error) {
-    console.error("Erro ao criar produto:", error);
-    return res.status(500).json({ message: "Erro ao criar produto" });
+    const total = Date.now() - start;
+    console.error(
+      "[createFoodController] erro após",
+      total,
+      "ms:",
+      error,
+    );
+    return res
+      .status(500)
+      .json({ message: "Erro ao criar produto" });
   }
 };
 
