@@ -57,14 +57,18 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       identifier?: string;
     };
 
+    // permitir "identifier" como entrada única
     if (!email && !cpf && identifier) {
       const id = String(identifier).trim();
       if (/\S+@\S+\.\S+/.test(id)) email = id.toLowerCase();
       else cpf = normalizeCPF(id);
     }
 
-    if ((!email && !cpf) || !password) {
-      return res.status(400).json({ message: "E-mail ou CPF e senha são obrigatórios" });
+    // a partir daqui: email ou cpf é obrigatório
+    if (!email && !cpf) {
+      return res
+        .status(400)
+        .json({ message: "E-mail ou CPF é obrigatório" });
     }
 
     const normalizedEmail = (email ?? "").toLowerCase().trim();
@@ -89,29 +93,53 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     }
 
     if (!user?.authentication?.salt || !user?.authentication?.password) {
-      if (DEBUG) console.warn("[AUTH][login] user has no salt/password:", user._id.toString());
+      if (DEBUG)
+        console.warn(
+          "[AUTH][login] user has no salt/password:",
+          user._id.toString()
+        );
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const { restaurantId, restaurantName, unitId } = await resolveRestaurantForUser(user);
+    const { restaurantId, restaurantName, unitId } =
+      await resolveRestaurantForUser(user);
 
-    const salt = String(user.authentication.salt);
-    const stored = String(user.authentication.password).toLowerCase();
+    // --- NOVO: fluxo de validação de senha / garçom sem senha ---
+    if (password && String(password).trim().length > 0) {
+      // fluxo padrão com senha (ADMIN, MANAGER, etc.)
+      const salt = String(user.authentication.salt);
+      const stored = String(user.authentication.password).toLowerCase();
 
-    // Cálculo EXATO usado no cadastro
-    const expected = generateHash(String(password), salt).toLowerCase();
+      // Cálculo EXATO usado no cadastro
+      const expected = generateHash(String(password), salt).toLowerCase();
 
-    const ok = tSafeEqHex(expected, stored);
-    if (!ok) {
-      if (DEBUG) {
-        console.warn("[AUTH][login] password mismatch", {
-          userId: user._id.toString(),
-          email: user.email,
-          expectedPrefix: expected.slice(0, 8),
-          storedPrefix: stored.slice(0, 8),
-        });
+      const ok = tSafeEqHex(expected, stored);
+      if (!ok) {
+        if (DEBUG) {
+          console.warn("[AUTH][login] password mismatch", {
+            userId: user._id.toString(),
+            email: user.email,
+            expectedPrefix: expected.slice(0, 8),
+            storedPrefix: stored.slice(0, 8),
+          });
+        }
+        return res.status(401).json({ message: "Credenciais inválidas" });
       }
-      return res.status(401).json({ message: "Credenciais inválidas" });
+    } else {
+      // sem senha: só permitimos para GARÇOM (ATTENDANT)
+      if (String(user.role).toUpperCase() !== "ATTENDANT") {
+        if (DEBUG) {
+          console.warn("[AUTH][login] missing password for non-attendant user", {
+            userId: user._id.toString(),
+            email: user.email,
+            role: user.role,
+          });
+        }
+        return res
+          .status(401)
+          .json({ message: "Senha obrigatória para este usuário" });
+      }
+      // se for ATTENDANT, seguimos sem verificar senha
     }
 
     const token = jwt.sign(
@@ -127,18 +155,19 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     );
 
     await UserModel.findByIdAndUpdate(user._id, {
-      "authentication.sessionToken": token
+      "authentication.sessionToken": token,
     });
     await user.save();
 
     return res.status(200).json({
       message: "Login realizado com sucesso",
-      user: { 
-        _id: String(user._id), 
+      user: {
+        _id: String(user._id),
         role: user.role,
         firstName: user.firstName,
         lastName: user.lastName,
-        name: [user.firstName, user.lastName].filter(Boolean).join(" ") || "",
+        name:
+          [user.firstName, user.lastName].filter(Boolean).join(" ") || "",
         email: user.email,
         cpf: user.cpf,
       },
@@ -151,9 +180,12 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
     });
   } catch (error: any) {
     console.error("[AUTH][login] error:", error);
-    return res.status(500).json({ message: "Erro interno do servidor", error: error.message });
+    return res
+      .status(500)
+      .json({ message: "Erro interno do servidor", error: error.message });
   }
 };
+
 
 // Registrar um novo restaurante
 export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
