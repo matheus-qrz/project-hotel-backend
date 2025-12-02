@@ -2,7 +2,6 @@ import { Router } from "express";
 import {
   loginHandler,
   registerClientHandler,
-  registerManagerHandler,
   registerAdminWithRestaurantHandler,
   validateTokenHandler,
   logoutHandler,
@@ -19,23 +18,7 @@ export default (router: Router) => {
 
   // Cadastro de cliente - via página pública
   router.post("/register/client", registerClientHandler);
-
-  // Cadastro de gerente - apenas por restaurante admin
-  router.post(
-    "/register/manager",
-    isAuthenticated,
-    isRestaurantAdmin,
-    registerManagerHandler
-  );
-
-  // Cadastro de atendente - por restaurante admin ou gerente
-  router.post(
-    "/register/attendant",
-    isAuthenticated,
-    isManager,
-    registerManagerHandler
-  );
-
+  
   // Verificação de token
   router.get("/validate", isAuthenticated, validateTokenHandler);
 
