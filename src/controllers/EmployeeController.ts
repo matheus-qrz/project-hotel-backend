@@ -165,8 +165,6 @@ export const createEmployeeController = async (req: Request, res: Response) => {
 
     if (role === "ATTENDANT") {
       if (!cpf) return res.status(400).json({ message: "CPF é obrigatório para ATTENDANT" });
-      if (!password) return res.status(400).json({ message: "Senha é obrigatória para ATTENDANT" });
-      // email é opcional para ATTENDANT
     }
 
     // validar unidade (quando vier uma unit de fato)
@@ -205,9 +203,13 @@ export const createEmployeeController = async (req: Request, res: Response) => {
       if (emailExists) return res.status(409).json({ message: "Já existe um usuário com este email" });
     }
 
-    // monta authentication APENAS quando for necessário
     let authentication: any = undefined;
-     if (role === "ADMIN" || role === "MANAGER" || role === "ATTENDANT") {
+
+    if (
+      role === "ADMIN" ||
+      role === "MANAGER" ||
+      (role === "ATTENDANT" && password)
+    ) {
       const salt = generateSalt();
       const hashedPassword = generateHash(password, salt);
       authentication = { password: hashedPassword, salt, sessionToken: "" };
@@ -217,13 +219,12 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     const newEmployee = new UserModel({
       firstName,
       lastName,
-      email,                 // se undefined, não salva o campo
-      cpf,                   // se undefined, não salva o campo
+      email,                 
+      cpf,                  
       phone: phone || "",
       role,
-      authentication,        // pode ser undefined para atendente sem login
+      authentication,        
       restaurant: restaurantDoc._id,
-      // se escolheu Matriz, persista null; se escolheu uma unit, persista o _id; se não veio nada, null
       restaurantUnit: unitDoc ? unitDoc._id : (isMatrixSelection ? null : null),
       orders: [],
     });
