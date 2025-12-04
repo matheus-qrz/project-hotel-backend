@@ -7,7 +7,7 @@ import {
   logoutHandler,
   validateGuestTokenHandler
 } from "../controllers/AuthenticationController";
-import { isAuthenticated, isRestaurantAdmin, isManager } from "../middlewares";
+import { isAuthenticated } from "../middlewares";
 
 export default (router: Router) => {
   // Rotas específicas para cada tipo
@@ -18,7 +18,7 @@ export default (router: Router) => {
 
   // Cadastro de cliente - via página pública
   router.post("/register/client", registerClientHandler);
-  
+
   // Verificação de token
   router.get("/validate", isAuthenticated, validateTokenHandler);
 

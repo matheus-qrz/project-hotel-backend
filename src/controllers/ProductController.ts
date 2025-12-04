@@ -71,6 +71,30 @@ async function handleIncomingImage(req: Request) {
   return null;
 }
 
+export const uploadProductImageController = async (req: Request, res: Response) => {
+  try {
+    const imgOut = await handleIncomingImage(req);
+
+    if (!imgOut) {
+      return res
+        .status(400)
+        .json({ message: "Nenhuma imagem válida enviada" });
+    }
+
+    return res.status(200).json({
+      url: imgOut.url,
+      blurDataURL: imgOut.blurDataURL,
+      width: imgOut.width,
+      height: imgOut.height,
+    });
+  } catch (error) {
+    console.error("Erro ao fazer upload de imagem de produto:", error);
+    return res
+      .status(500)
+      .json({ message: "Erro ao processar imagem de produto" });
+  }
+};
+
 export const createFoodController = async (
   req: Request,
   res: Response

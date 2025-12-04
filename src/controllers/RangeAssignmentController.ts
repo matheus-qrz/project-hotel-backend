@@ -429,7 +429,7 @@ export const getAssignedAttendantController = async (req: Request, res: Response
       .findOne({ restaurantUnit: unitId, tableId: tableNum, isActive: true })
       .populate({ path: "attendant", select: "firstName lastName avatar role" });
 
-    const recentOverrideHrs = 2; // ajuste se quiser
+    const recentOverrideHrs = 8; // ajuste se quiser
     const isRecent = active?.updatedAt
       ? (Date.now() - new Date(active.updatedAt).getTime()) <= recentOverrideHrs * 3600_000
       : false;
