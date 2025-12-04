@@ -59,11 +59,11 @@ export default (productsRouter: Router) => {
   );
 
   productsRouter.post(
-    "/restaurant/:id/products",
+    "/restaurant/:id/products/upload-image",
     isAuthenticated,
     hasRole(["ADMIN", "MANAGER"]),
     upload.single("image"),
-    createFoodController
+    uploadProductImageController
   );
 
   // Excluir produto
