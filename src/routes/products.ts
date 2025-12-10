@@ -12,7 +12,6 @@ import {
   setProductPromotionController,
   updateComboController,
   updateFoodController,
-  uploadProductImageController
 } from "../controllers/ProductController";
 import { hasRole, isAuthenticated } from "../middlewares/index";
 import { upload } from "../middlewares/multer";
@@ -56,14 +55,6 @@ export default (productsRouter: Router) => {
     hasRole(['ADMIN' ,'MANAGER']),                           
     upload.single("image"),         
     updateFoodController
-  );
-
-  productsRouter.post(
-    "/restaurant/:id/products/upload-image",
-    isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    upload.single("image"),
-    uploadProductImageController
   );
 
   // Excluir produto

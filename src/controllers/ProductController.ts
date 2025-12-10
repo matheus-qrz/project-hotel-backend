@@ -53,7 +53,6 @@ function parseJSONField<T = any>(val: any): T | null {
   return val as T;
 }
 
-
 async function handleIncomingImage(req: Request) {
   // 1) arquivo multipart
   if (req.file?.buffer) {
@@ -70,30 +69,6 @@ async function handleIncomingImage(req: Request) {
   // 3) nenhuma imagem nova -> retornar null (mantém a existente)
   return null;
 }
-
-export const uploadProductImageController = async (req: Request, res: Response) => {
-  try {
-    const imgOut = await handleIncomingImage(req);
-
-    if (!imgOut) {
-      return res
-        .status(400)
-        .json({ message: "Nenhuma imagem válida enviada" });
-    }
-
-    return res.status(200).json({
-      url: imgOut.url,
-      blurDataURL: imgOut.blurDataURL,
-      width: imgOut.width,
-      height: imgOut.height,
-    });
-  } catch (error) {
-    console.error("Erro ao fazer upload de imagem de produto:", error);
-    return res
-      .status(500)
-      .json({ message: "Erro ao processar imagem de produto" });
-  }
-};
 
 export const createFoodController = async (
   req: Request,
@@ -713,9 +688,11 @@ export const createComboController = async (req: Request, res: Response) => {
       name,
       price,
       description,
-      groups,          // vem do front
+      groups,        // formato novo
+      comboOptions,  // fallback formato antigo
       isAvailable,
-      image,           // se quiser pegar do body também
+      image,         // URL vinda do front (ex: "/uploads/products/.../original.jpg")
+      unitId,
     } = req.body ?? {};
 
     if (!restaurantId) {
@@ -726,23 +703,26 @@ export const createComboController = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Nome do combo é obrigatório" });
     }
 
-    const priceNumber = Number(price);
-    if (!priceNumber || Number.isNaN(priceNumber) || priceNumber <= 0) {
-      return res.status(400).json({ message: "Preço inválido" });
+    // -----------------------------
+    // 1) Tratar grupos / comboOptions
+    // -----------------------------
+    let finalGroups: any[] | undefined;
+
+    if (Array.isArray(groups)) {
+      finalGroups = groups;
+    } else if (Array.isArray(comboOptions)) {
+      finalGroups = comboOptions;
     }
 
-    if (!Array.isArray(groups) || groups.length === 0) {
+    if (!finalGroups || !Array.isArray(finalGroups) || finalGroups.length === 0) {
       return res
         .status(400)
         .json({ message: "Informe ao menos um grupo com opções." });
     }
 
-    // validação rápida dos grupos, no modelo que você já usa no front
-    for (const g of groups) {
-      if (!g.title?.trim()) {
-        return res
-          .status(400)
-          .json({ message: "Há grupo sem título no combo." });
+    for (const g of finalGroups) {
+      if (!g.title || !String(g.title).trim()) {
+        return res.status(400).json({ message: "Há grupo sem título." });
       }
       if (!Array.isArray(g.options) || g.options.length === 0) {
         return res.status(400).json({
@@ -751,39 +731,42 @@ export const createComboController = async (req: Request, res: Response) => {
       }
     }
 
-    // se você usa handleIncomingImage, mantém ele aqui
-    let imageUrl = image || undefined;
-    let imageBlur, imageWidth, imageHeight;
-
-    const imgOut = await handleIncomingImage(req);
-    if (imgOut) {
-      imageUrl = imgOut.url;
-      imageBlur = imgOut.blurDataURL;
-      imageWidth = imgOut.width;
-      imageHeight = imgOut.height;
+    // -----------------------------
+    // 2) Tratar preço
+    // -----------------------------
+    const nPrice = Number(price);
+    if (!Number.isFinite(nPrice) || nPrice <= 0) {
+      return res.status(400).json({ message: "Preço inválido" });
     }
 
-    const comboData: any = {
-      restaurant: restaurantId,
-      name,
-      price: priceNumber,
-      description,
-      image: imageUrl,
-      imageBlur,
-      imageWidth,
-      imageHeight,
+    // -----------------------------
+    // 3) Montar dados do combo
+    // -----------------------------
+    const comboData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true,
-      isAvailable: isAvailable !== undefined ? !!isAvailable : true,
+      restaurant: restaurantId as any,
+      name: String(name),
+      description: description ?? "",
+      price: nPrice,
+      isAvailable:
+        typeof isAvailable === "boolean" ? isAvailable : true,
       quantity: 1,
-
-      // 👇 AQUI É O PRINCIPAL:
-      // usa SEMPRE comboOptions para guardar os grupos do combo
-      comboOptions: groups,
+      comboOptions: finalGroups,
     };
 
-    const newCombo = await createProduct(comboData);
-    console.log("🔥 DEBUG COMBO createComboController");
-    console.log("body.groups:", JSON.stringify(groups, null, 2));
+    // imagem enviada como URL pelo front (uploadProductImage)
+    if (typeof image === "string" && image.trim()) {
+      comboData.image = image.trim();
+    }
+
+    if (unitId) {
+      (comboData as any).unitId = unitId;
+    }
+
+    // -----------------------------
+    // 4) Criar no banco
+    // -----------------------------
+    const newCombo = await createProduct(comboData as any);
     return res.status(201).json(newCombo);
   } catch (err) {
     console.error("Erro ao criar combo:", err);
@@ -804,13 +787,14 @@ export const updateComboController = async (
       name,
       price,
       description,
-      comboOptions,   // formato antigo (fallback)
-      groups,         // formato novo (preferido)
+      comboOptions, // formato antigo (fallback)
+      groups,       // formato novo (preferido)
       isAvailable,
       unitId: unitIdFromBody,
+      image,        // ⬅️ pega a imagem que vem do front (string)
     } = req.body ?? {};
 
-    // Busca o combo atual para manter campos não enviados
+    // 1) Buscar combo atual
     const existing = await getProductById(id);
     if (!existing) {
       return res.status(404).json({ message: "Combo não encontrado" });
@@ -820,19 +804,15 @@ export const updateComboController = async (
       return res.status(400).json({ message: "Produto não é um combo" });
     }
 
-    // -----------------------------
-    // 1) Tratar grupos / comboOptions
-    // -----------------------------
+    // 2) Tratar grupos / comboOptions
     let finalGroups: any[] | undefined;
 
     if (Array.isArray(groups)) {
       finalGroups = groups;
     } else if (Array.isArray(comboOptions)) {
-      // fallback para chamadas antigas que ainda mandem comboOptions “já no formato novo”
       finalGroups = comboOptions;
     }
 
-    // Se grupos forem enviados, validar minimamente
     if (finalGroups) {
       if (!Array.isArray(finalGroups) || finalGroups.length === 0) {
         return res
@@ -849,9 +829,7 @@ export const updateComboController = async (
       }
     }
 
-    // -----------------------------
-    // 2) Tratar preço (se enviado)
-    // -----------------------------
+    // 3) Tratar preço (se enviado)
     let priceNumber: number | undefined;
     if (price !== undefined) {
       const n = Number(price);
@@ -861,14 +839,12 @@ export const updateComboController = async (
       priceNumber = n;
     }
 
-    // -----------------------------
-    // 3) Montar payload de atualização
-    // -----------------------------
+    // 4) Montar payload de atualização
     const effectiveUnitId =
       unitIdFromParams !== undefined ? unitIdFromParams : unitIdFromBody;
 
     const updatedData: Partial<IProduct> & { isCombo: boolean } = {
-      isCombo: true, // garante que continua sendo combo
+      isCombo: true,
     };
 
     if (name !== undefined) {
@@ -892,12 +868,21 @@ export const updateComboController = async (
     }
 
     if (finalGroups) {
-      // novo formato -> salva em comboOptions
       (updatedData as any).comboOptions = finalGroups;
     }
 
-    // Remove chaves com undefined / string vazia do payload final,
-    // só por segurança.
+    // 🔹 NOVO: atualizar a imagem, se vier algo do front
+    if (typeof image === "string") {
+      const trimmed = image.trim();
+      if (trimmed.length > 0) {
+        updatedData.image = trimmed;
+      } else {
+        // se mandar string vazia, opcionalmente poderíamos limpar a imagem:
+        // (updatedData as any).image = undefined;
+      }
+    }
+
+    // 5) Limpar campos undefined / string vazia
     Object.keys(updatedData).forEach((k) => {
       const v = (updatedData as any)[k];
       if (v === undefined || v === "") {
@@ -905,9 +890,7 @@ export const updateComboController = async (
       }
     });
 
-    // -----------------------------
-    // 4) Atualizar no banco
-    // -----------------------------
+    // 6) Atualizar no banco
     const updatedCombo = await updateProduct(id, updatedData);
     return res.status(200).json(updatedCombo);
   } catch (error) {
@@ -915,6 +898,7 @@ export const updateComboController = async (
     return res.status(500).json({ message: "Erro ao atualizar combo" });
   }
 };
+
 
 export const getAllAdditionalsController = async (
   req: Request,
