@@ -730,7 +730,7 @@ export const createComboController = async (req: Request, res: Response) => {
         });
       }
     }
-
+    
     // -----------------------------
     // 2) Tratar preço
     // -----------------------------
@@ -738,9 +738,26 @@ export const createComboController = async (req: Request, res: Response) => {
     if (!Number.isFinite(nPrice) || nPrice <= 0) {
       return res.status(400).json({ message: "Preço inválido" });
     }
-
+    
     // -----------------------------
-    // 3) Montar dados do combo
+    // 3) Tratar imagem
+    // -----------------------------
+    let imageUrl: string | undefined;
+    let imageBlur: string | undefined;
+    let imageWidth: number | undefined;
+    let imageHeight: number | undefined;
+    
+    const imgOut = await handleIncomingImage(req);
+    if (imgOut) {
+      imageUrl = imgOut.url;
+      imageBlur = imgOut.blurDataURL;
+      imageWidth = imgOut.width;
+      imageHeight = imgOut.height;
+    } else if (typeof image === "string" && image.trim().length > 0) {
+      imageUrl = image.trim();
+    }
+
+    // 4) Montar dados do combo
     // -----------------------------
     const comboData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true,
@@ -750,13 +767,13 @@ export const createComboController = async (req: Request, res: Response) => {
       price: nPrice,
       isAvailable:
         typeof isAvailable === "boolean" ? isAvailable : true,
-      quantity: 1,
-      comboOptions: finalGroups,
     };
 
-    // imagem enviada como URL pelo front (uploadProductImage)
-    if (typeof image === "string" && image.trim()) {
-      comboData.image = image.trim();
+    if (imageUrl) {
+      comboData.image = imageUrl;
+      (comboData as any).imageBlur = imageBlur;
+      (comboData as any).imageWidth = imageWidth;
+      (comboData as any).imageHeight = imageHeight;
     }
 
     if (unitId) {
@@ -839,9 +856,13 @@ export const updateComboController = async (
       priceNumber = n;
     }
 
+
     // 4) Montar payload de atualização
     const effectiveUnitId =
       unitIdFromParams !== undefined ? unitIdFromParams : unitIdFromBody;
+
+    // 5) Tratar imagem (arquivo ou string)
+    const imgOut = await handleIncomingImage(req);
 
     const updatedData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true,
@@ -871,14 +892,17 @@ export const updateComboController = async (
       (updatedData as any).comboOptions = finalGroups;
     }
 
-    // 🔹 NOVO: atualizar a imagem, se vier algo do front
-    if (typeof image === "string") {
+    
+    if (imgOut) {
+      updatedData.image = imgOut.url;
+      (updatedData as any).imageBlur = imgOut.blurDataURL;
+      (updatedData as any).imageWidth = imgOut.width;
+      (updatedData as any).imageHeight = imgOut.height;
+    } else if (typeof image === "string") {
       const trimmed = image.trim();
+
       if (trimmed.length > 0) {
         updatedData.image = trimmed;
-      } else {
-        // se mandar string vazia, opcionalmente poderíamos limpar a imagem:
-        // (updatedData as any).image = undefined;
       }
     }
 
