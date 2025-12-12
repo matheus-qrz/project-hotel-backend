@@ -49,6 +49,22 @@ export interface PrintJobPayload {
   items: PrintJobItem[];
 }
 
+function extractId(value: any): string | null {
+  if (!value) return null;
+
+  // já é string
+  if (typeof value === "string") return value;
+
+  // number (só por garantia)
+  if (typeof value === "number") return String(value);
+
+  // ObjectId ou objeto populado
+  if (value._id) return String(value._id);
+  if (value.id) return String(value.id);
+
+  return null;
+}
+
 function makeIdempotencyKey(
   orderId: string,
   unitId: string,
@@ -96,17 +112,25 @@ function formatDateTimeInTimeZone(date: Date, timeZone: string): string {
  *  - items (array bruto, como vem do Order, para depois quebrar por estação)
  */
 function normalizeOrderForPrint(order: OrderInput) {
-  // se for Document, transforma em plain object
-  const o = typeof order?.toObject === "function" ? order.toObject() : order;
+const o = typeof order?.toObject === "function" ? order.toObject() : order;
 
-  // tu usa restaurantUnit no schema
-  const unitId = o.unitId ?? o.restaurantUnit;
-  // restaurante pode não existir no Order -> deixa opcional
-  const restaurantId = o.restaurantId ?? o.restaurant ?? null;
-  // tua mesa está em meta.tableId
-  const tableId = o.tableId ?? o.meta?.tableId ?? null;
+  // 🔧 Corrige unitId (aceita vários formatos)
+  const unitId =
+    extractId(o.unitId) ??
+    extractId(o.restaurantUnit) ??
+    extractId(o.restaurantUnitId) ??
+    null;
+
+  // 🔧 Corrige restaurantId (id do restaurante "pai")
+  const restaurantId =
+    extractId(o.restaurantId) ??
+    extractId(o.restaurant) ??
+    null;
+
+  // mesa: tenta meta.tableId primeiro (seu padrão atual)
+  const tableId = o.meta?.tableId ?? o.tableId ?? null;
+
   const orderId = o.orderCode ?? o._id;
-
   const items = Array.isArray(o.items) ? o.items : [];
 
   // timezone: tenta pegar da unidade, depois do restaurante, senão fallback
@@ -119,7 +143,7 @@ function normalizeOrderForPrint(order: OrderInput) {
   const createdAtDate = o.createdAt ? new Date(o.createdAt) : new Date();
   const printedAt = formatDateTimeInTimeZone(createdAtDate, timezone);
 
-  // nome do garçom
+  // nome do garçom, como você já tinha
   const waiterName =
     o.attendant?.name ??
     o.attendantName ??
@@ -154,8 +178,8 @@ function normalizeOrderForPrint(order: OrderInput) {
     undefined;
 
   return {
-    restaurantId: restaurantId ? String(restaurantId) : null,
-    unitId: unitId ? String(unitId) : "",
+    restaurantId,
+    unitId: unitId ?? "",
     tableId,
     orderId: String(orderId),
     items,
