@@ -69,6 +69,7 @@ export default (productsRouter: Router) => {
   productsRouter.post(
     "/restaurant/:restaurantId/combos",
     isAuthenticated,
+    upload.single("file"),
     hasRole(["ADMIN", "MANAGER"]),
     createComboController
   );
@@ -77,20 +78,13 @@ export default (productsRouter: Router) => {
   productsRouter.post(
     "/restaurant/:restaurantId/units/:unitId/combos",
     isAuthenticated,
+    upload.single("file"),
     hasRole(['ADMIN', 'MANAGER']),
     createComboController
   );
 
-  // Atualizar combo
-  productsRouter.patch(
-    "/restaurant/:id/combos/:id/update",
-    isAuthenticated,
-    hasRole(["ADMIN", "MANAGER"]),
-    updateComboController
-  );
-
   productsRouter.post(
-    "/restaurant/:id/products/import",
+    "/restaurant/:restaurantId/products/:comboId/import",
     isAuthenticated,
     hasRole(["ADMIN","MANAGER"]),
     upload.single("file"),

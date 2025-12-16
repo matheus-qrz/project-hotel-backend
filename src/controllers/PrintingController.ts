@@ -42,6 +42,16 @@ export const createPrintJob = async (req: Request, res: Response) => {
 // usado pelo printer-worker
 //
 export const getPendingPrintJobs = async (req: Request, res: Response) => {
+  console.log("[printing] GET /printing/pending chamado", {
+    headers: req.headers,
+    query: req.query,
+  });
+
+  if (!req.worker) {
+    console.warn("[printing] worker não autenticado");
+    return res.status(401).end();
+  }
+  
   if (!req.worker) return res.status(401).end();
   const { restaurantId, unitId, stations } = req.worker;
   const { station, limit } = req.query;

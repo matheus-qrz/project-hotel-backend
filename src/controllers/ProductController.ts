@@ -67,6 +67,8 @@ async function handleIncomingImage(req: Request) {
     }
   }
   // 3) nenhuma imagem nova -> retornar null (mantém a existente)
+  console.log("file:", req.file?.originalname, req.file?.mimetype, req.file?.size);
+
   return null;
 }
 
@@ -797,19 +799,40 @@ export const updateComboController = async (
   res: Response
 ) => {
   try {
-    const { id } = req.params;
+    const { comboId, restaurantId } = req.params as any;
+    const id = comboId;
     const unitIdFromParams = (req.params as any).unitId as string | undefined;
 
     const {
       name,
       price,
       description,
-      comboOptions, // formato antigo (fallback)
-      groups,       // formato novo (preferido)
+      comboOptions, 
+      groups,       
       isAvailable,
       unitId: unitIdFromBody,
-      image,        // ⬅️ pega a imagem que vem do front (string)
+      image,       
     } = req.body ?? {};
+
+    const isAvailableBool =
+      typeof isAvailable === "boolean"
+        ? isAvailable
+        : typeof isAvailable === "string"
+          ? isAvailable === "true"
+          : undefined;
+
+    const parseMaybeJson = (v: any) => {
+      if (typeof v === "string") {
+        const s = v.trim();
+        if (!s) return undefined;
+        try { return JSON.parse(s); } catch { return v; }
+      }
+      return v;
+    };
+
+    const parsedGroups = parseMaybeJson(groups);
+    const parsedComboOptions = parseMaybeJson(comboOptions);
+    
 
     // 1) Buscar combo atual
     const existing = await getProductById(id);
@@ -823,12 +846,8 @@ export const updateComboController = async (
 
     // 2) Tratar grupos / comboOptions
     let finalGroups: any[] | undefined;
-
-    if (Array.isArray(groups)) {
-      finalGroups = groups;
-    } else if (Array.isArray(comboOptions)) {
-      finalGroups = comboOptions;
-    }
+    if (Array.isArray(parsedGroups)) finalGroups = parsedGroups;
+    else if (Array.isArray(parsedComboOptions)) finalGroups = parsedComboOptions;
 
     if (finalGroups) {
       if (!Array.isArray(finalGroups) || finalGroups.length === 0) {
@@ -880,38 +899,29 @@ export const updateComboController = async (
       updatedData.description = description;
     }
 
-    if (typeof isAvailable === "boolean") {
-      updatedData.isAvailable = isAvailable;
+    if (isAvailableBool !== undefined) {
+      updatedData.isAvailable = isAvailableBool;
     }
 
     if (effectiveUnitId !== undefined) {
       (updatedData as any).unitId = effectiveUnitId;
     }
 
-    if (finalGroups) {
-      (updatedData as any).comboOptions = finalGroups;
-    }
+    if (finalGroups) (updatedData as any).comboOptions = finalGroups;
 
-    
     if (imgOut) {
       updatedData.image = imgOut.url;
       (updatedData as any).imageBlur = imgOut.blurDataURL;
       (updatedData as any).imageWidth = imgOut.width;
       (updatedData as any).imageHeight = imgOut.height;
-    } else if (typeof image === "string") {
-      const trimmed = image.trim();
-
-      if (trimmed.length > 0) {
-        updatedData.image = trimmed;
-      }
+    } else if (typeof image === "string" && image.trim()) {
+      updatedData.image = image.trim();
     }
 
     // 5) Limpar campos undefined / string vazia
     Object.keys(updatedData).forEach((k) => {
       const v = (updatedData as any)[k];
-      if (v === undefined || v === "") {
-        delete (updatedData as any)[k];
-      }
+      if (v === undefined || v === "") delete (updatedData as any)[k];
     });
 
     // 6) Atualizar no banco
@@ -922,7 +932,6 @@ export const updateComboController = async (
     return res.status(500).json({ message: "Erro ao atualizar combo" });
   }
 };
-
 
 export const getAllAdditionalsController = async (
   req: Request,
