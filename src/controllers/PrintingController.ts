@@ -8,30 +8,55 @@ import { PrintJobModel as PrintJob } from "../models/PrintJob";
 export const createPrintJob = async (req: Request, res: Response) => {
   try {
     const {
+      restaurantId,
       unitId,
       station,
       orderId,
       tableId,
       action = "NEW_TICKET",
+      items = [],
       payload,
+      idempotencyKey,
     } = req.body;
 
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
+    }
     if (!unitId) {
       return res.status(400).json({ message: "unitId é obrigatório" });
     }
+    if (!idempotencyKey) {
+      return res.status(400).json({ message: "idempotencyKey é obrigatório" });
+    }
+
+    // idempotente: se já existir, devolve o existente (não cria duplicado)
+    const existing = await PrintJob.findOne({ idempotencyKey }).lean();
+    if (existing) return res.status(200).json(existing);
 
     const job = await PrintJob.create({
+      restaurantId,
       unitId,
       station,
       orderId,
       tableId,
       action,
-      payload,
+      items,
+      payload: payload ?? null,
+      idempotencyKey,
       status: "PENDING",
+      attempts: 0,
+      lastError: null,
     });
 
     return res.status(201).json(job);
   } catch (err: any) {
+    // erro comum: duplicate key do idempotencyKey
+    if (err?.code === 11000) {
+      const key = req.body?.idempotencyKey;
+      const existing = key ? await PrintJob.findOne({ idempotencyKey: key }).lean() : null;
+      if (existing) return res.status(200).json(existing);
+    }
+
     console.error("Erro ao criar print job:", err);
     return res.status(500).json({ message: "Erro ao criar print job" });
   }
@@ -87,15 +112,16 @@ export const markPrintJobDone = async (req: Request, res: Response) => {
 //
 export const markPrintJobFailed = async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    if (!req.worker) return res.status(401).end();
+    const { restaurantId, unitId } = req.worker;
     const { errorMessage } = req.body;
 
-    const job = await PrintJob.findByIdAndUpdate(
-      id,
+    const job = await PrintJob.findOneAndUpdate(
+      { _id: req.params.id, restaurantId, unitId },
       {
         $set: {
           status: "FAILED",
-          errorMessage: errorMessage || "Falha na impressão",
+          lastError: errorMessage || "Falha na impressão",
         },
         $inc: { attempts: 1 },
       },
@@ -103,7 +129,7 @@ export const markPrintJobFailed = async (req: Request, res: Response) => {
     );
 
     if (!job) {
-      return res.status(404).json({ message: "Print job não encontrado" });
+      return res.status(404).json({ message: "Print job não encontrado no seu escopo" });
     }
 
     return res.json(job);

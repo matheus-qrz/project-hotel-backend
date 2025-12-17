@@ -22,5 +22,5 @@ export default(printingRouter: Router) => {
     printingRouter.patch("/printing/:id/fail", workerAuth, markPrintJobFailed);
 
     // claim atomico
-    printingRouter.patch("/printing/:id/fail", workerAuth, claimPendingJobs);
+    printingRouter.patch("/printing/claim", workerAuth, claimPendingJobs);
 };
