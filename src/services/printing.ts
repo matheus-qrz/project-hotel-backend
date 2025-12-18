@@ -271,9 +271,11 @@ export async function enqueuePrintJobsFromOrder(
       String(printSeq)
     );
 
-    const payload: PrintJobPayload = {
+    const payload: any = {
       restaurantId: norm.restaurantId,
+      restaurantUnit: norm.unitId,
       unitId: norm.unitId,
+
       orderId: norm.orderId,
       tableId: norm.tableId,
       station,

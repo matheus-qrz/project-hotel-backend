@@ -127,7 +127,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         await updatedDoc.save();
       }
 
-      // ✅ FALTAVA ISSO
+      const printSeq = String(Date.now()); // ✅ garante idempotência por "evento"
+      await enqueuePrintJobsFromOrder(updatedDoc, "ADD_ITEMS", printSeq);
+
       return res.status(200).json(updatedDoc);
 
     } else {
@@ -173,7 +175,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
         tz,               
       });
 
-      await enqueuePrintJobsFromOrder(doc, "NEW_TICKET");
+      await enqueuePrintJobsFromOrder(doc, "NEW_TICKET", "v1");
 
       await doc.save();
       res.setHeader("x-session-id", sessionId);
