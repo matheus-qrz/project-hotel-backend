@@ -13,6 +13,7 @@ import tableAssignment from "./tableAssignment";
 import promotions from "./promotions";
 import coupon from "./coupon";
 import printing from "./printing";
+import printerWorker from "./printerWorker";
 
 export default (): Router => {
   const router = Router();
@@ -31,6 +32,7 @@ export default (): Router => {
   promotions(router);
   coupon(router);
   printing(router);
+  printerWorker(router);
 
   return router;
 };

@@ -1,24 +1,45 @@
-// middlewares/workerAuth.ts
-import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import type { Request, Response, NextFunction } from "express";
+import crypto from "crypto";
+import { PrinterWorkerToken } from "../models/PrinterWorkerToken";
 
-declare global { namespace Express {
-  interface Request { worker?: { restaurantId: string; unitId: string; stations?: string[] } }
-}}
+function sha256(input: string) {
+  return crypto.createHash("sha256").update(input).digest("hex");
+}
 
-export function workerAuth(req: Request, res: Response, next: NextFunction) {
-  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (!token) return res.status(401).json({ message: "Token ausente" });
-
+export async function workerAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const payload = jwt.verify(token, process.env.WORKER_JWT_SECRET! ) as any;
-    req.worker = {
-      restaurantId: String(payload.restaurantId),
-      unitId: String(payload.unitId),
-      stations: Array.isArray(payload.stations) ? payload.stations : undefined,
+    const auth = req.headers.authorization || "";
+    if (!auth.startsWith("Bearer ")) return res.status(401).end();
+
+    const rawToken = auth.slice("Bearer ".length).trim();
+    if (!rawToken) return res.status(401).end();
+
+    const tokenHash = sha256(rawToken);
+
+    const device = await PrinterWorkerToken.findOne({
+      tokenHash,
+      isActive: true,
+    }).lean();
+
+    if (!device) return res.status(401).end();
+
+    // injeta escopo
+    (req as any).worker = {
+      restaurantId: device.restaurantId,
+      unitId: device.unitId,
+      stations: Array.isArray(device.stations) ? device.stations : [],
+      workerDeviceId: String(device._id),
     };
-    return next();
-  } catch {
-    return res.status(401).json({ message: "Token inválido" });
+
+    // heartbeat
+    await PrinterWorkerToken.updateOne(
+      { _id: device._id },
+      { $set: { lastSeenAt: new Date() } }
+    );
+
+    next();
+  } catch (e) {
+    console.error("workerAuth error:", e);
+    return res.status(401).end();
   }
 }

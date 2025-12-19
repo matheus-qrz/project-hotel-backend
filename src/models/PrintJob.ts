@@ -25,31 +25,67 @@ export interface IPrintJobItem {
   isCombo?: boolean;
 }
 
-export interface IPrintJob extends Document {
+export interface IPrintJob /* extends Document (opcional, se você estiver tipando) */ {
   _id: Types.ObjectId;
-  restaurantId: string;
-  unitId: string;
-  orderId?: string;
-  tableId: string | number | null;
 
-  station?: PrintStation;
+  restaurantId: Types.ObjectId | string;
+  unitId: Types.ObjectId | string;
+
+  orderId?: Types.ObjectId | string;
+  tableId?: string | number | null;
+
+  attendantId?: string;
+  attendantName?: string;
+  guestId?: string;
+  guestName?: string;
+
+  station: PrintStation;
   action: PrintAction;
 
-  // compat + worker
+  // compat simples
   items: IPrintJobItem[];
 
-  // payload rico pro worker
+  // ✅ payload rico (worker novo)
   payload?: any;
 
   idempotencyKey: string;
   status: PrintStatus;
 
   attempts: number;
+
+  // ✅ padroniza (o resto do teu código usa lastError)
   lastError?: string | null;
 
   sentAt?: Date | null;
   claimedAt?: Date | null;
+
+  createdAt: Date;
+  updatedAt: Date;
 }
+
+const PrintJobItemSchema = new Schema(
+  {
+    name: { type: String, required: true },
+    qty: { type: Number, required: true },
+
+    notes: { type: String },
+    observations: { type: String },
+
+    addons: {
+      type: [
+        {
+          name: { type: String, required: true },
+          qty: { type: Number, required: true },
+        },
+      ],
+      default: [],
+    },
+
+    isPromo: { type: Boolean, default: false },
+    isCombo: { type: Boolean, default: false },
+  },
+  { _id: false }
+);
 
 const PrintJobSchema = new Schema(
   {
@@ -59,35 +95,27 @@ const PrintJobSchema = new Schema(
     orderId: { type: String, index: true },
     tableId: { type: Schema.Types.Mixed },
 
-    station: { type: String, index: true },
+    attendantId: { type: String },
+    attendantName: { type: String },
+    guestId: { type: String },
+    guestName: { type: String },
+
+    station: { type: String, enum: ["hot", "cold", "bar"], index: true },
     action: {
       type: String,
-      required: true,
       enum: ["NEW_TICKET", "ADD_ITEMS", "CANCEL_ITEMS", "REPRINT"],
+      required: true,
+      index: true,
     },
 
-    // compat simples
-    items: {
-      type: [
-        {
-          name: String,
-          qty: Number,
-          notes: String,
-          observations: String,
-          addons: [{ name: String, qty: Number }],
-          isPromo: Boolean,
-          isCombo: Boolean,
-        },
-      ],
-      default: [],
-    },
+    // compat com worker antigo
+    items: { type: [PrintJobItemSchema], default: [] },
 
-    // ✅ payload rico (worker usa)
+    // ✅ payload rico (worker novo)
     payload: { type: Schema.Types.Mixed, default: null },
 
     idempotencyKey: { type: String, required: true, unique: true, index: true },
 
-    // ✅ alinhado com service/controller
     status: {
       type: String,
       enum: ["PENDING", "SENT", "PRINTED", "FAILED", "SKIPPED_NO_PRINTER"],
@@ -96,6 +124,8 @@ const PrintJobSchema = new Schema(
     },
 
     attempts: { type: Number, default: 0 },
+
+    // ✅ padronizado
     lastError: { type: String, default: null },
 
     sentAt: { type: Date, default: null },

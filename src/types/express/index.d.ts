@@ -13,6 +13,12 @@ declare global {
             isRestaurantAdmin?: boolean; // Flag para indicar se é admin de restaurante
             identity?: UserModel; // Se você ainda precisa disso por compatibilidade
             dashboardFilter?: FilterQuery<IOrder>;
+            worker?: {
+              restaurantId: string;
+              unitId: string;
+              stations?: string[];
+              workerDeviceId?: string;
+            };
         }
     }
 }

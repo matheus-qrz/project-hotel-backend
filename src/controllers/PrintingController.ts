@@ -3,7 +3,9 @@ import { PrintJobModel as PrintJob } from "../models/PrintJob";
 
 //
 // POST /printing
-// usado pelo teu próprio backend pra criar o job
+// (uso interno do backend; idealmente protegido depois)
+// OBS: seu fluxo principal já cria jobs via services/printing.ts (enqueuePrintJobsFromOrder)
+// então aqui mantemos apenas como endpoint "manual"/debug.
 //
 export const createPrintJob = async (req: Request, res: Response) => {
   try {
@@ -15,45 +17,44 @@ export const createPrintJob = async (req: Request, res: Response) => {
       tableId,
       action = "NEW_TICKET",
       items = [],
-      payload,
+      payload = null,
       idempotencyKey,
-    } = req.body;
+    } = req.body ?? {};
 
-    if (!restaurantId) {
-      return res.status(400).json({ message: "restaurantId é obrigatório" });
-    }
-    if (!unitId) {
-      return res.status(400).json({ message: "unitId é obrigatório" });
-    }
-    if (!idempotencyKey) {
-      return res.status(400).json({ message: "idempotencyKey é obrigatório" });
+    if (!unitId) return res.status(400).json({ message: "unitId é obrigatório" });
+    if (!station) return res.status(400).json({ message: "station é obrigatório" });
+    if (!action) return res.status(400).json({ message: "action é obrigatório" });
+
+    // Se você for usar este endpoint de verdade, idempotencyKey deve ser obrigatório.
+    // Mantive como opcional para não quebrar chamadas antigas, mas recomendo fortemente exigir.
+    if (idempotencyKey) {
+      // idempotente
+      const existing = await PrintJob.findOne({ idempotencyKey }).lean();
+      if (existing) return res.status(200).json(existing);
     }
 
-    // idempotente: se já existir, devolve o existente (não cria duplicado)
-    const existing = await PrintJob.findOne({ idempotencyKey }).lean();
-    if (existing) return res.status(200).json(existing);
-
-    const job = await PrintJob.create({
-      restaurantId,
+    const created = await PrintJob.create({
+      restaurantId: restaurantId ?? null,
       unitId,
       station,
       orderId,
       tableId,
       action,
       items,
-      payload: payload ?? null,
-      idempotencyKey,
+      payload,
+      idempotencyKey: idempotencyKey ?? undefined,
       status: "PENDING",
       attempts: 0,
       lastError: null,
+      sentAt: null,
+      claimedAt: null,
     });
 
-    return res.status(201).json(job);
+    return res.status(201).json(created);
   } catch (err: any) {
-    // erro comum: duplicate key do idempotencyKey
-    if (err?.code === 11000) {
-      const key = req.body?.idempotencyKey;
-      const existing = key ? await PrintJob.findOne({ idempotencyKey: key }).lean() : null;
+    // duplicate key (idempotencyKey unique)
+    if (err?.code === 11000 && req.body?.idempotencyKey) {
+      const existing = await PrintJob.findOne({ idempotencyKey: req.body.idempotencyKey }).lean();
       if (existing) return res.status(200).json(existing);
     }
 
@@ -63,29 +64,23 @@ export const createPrintJob = async (req: Request, res: Response) => {
 };
 
 //
-// GET /printing/pending?unitId=U-MATRIZ&station=hot
-// usado pelo printer-worker
+// GET /printing/pending?station=hot&limit=20
+// (debug; worker novo deve usar claim)
 //
 export const getPendingPrintJobs = async (req: Request, res: Response) => {
-  console.log("[printing] GET /printing/pending chamado", {
-    headers: req.headers,
-    query: req.query,
-  });
-
-  if (!req.worker) {
-    console.warn("[printing] worker não autenticado");
-    return res.status(401).end();
-  }
-  
   if (!req.worker) return res.status(401).end();
-  const { restaurantId, unitId, stations } = req.worker;
-  const { station, limit } = req.query;
+  const { restaurantId, unitId, stations } = req.worker as any;
 
-  const q: any = { status: { $in: ["PENDING","SENT"] }, restaurantId, unitId };
+  const { station, limit } = req.query as any;
+
+  const q: any = { status: { $in: ["PENDING", "SENT"] }, restaurantId, unitId };
+
   if (station) q.station = String(station);
   else if (Array.isArray(stations) && stations.length) q.station = { $in: stations };
 
-  const jobs = await PrintJob.find(q).sort({ createdAt: 1 }).limit(Number(limit) || 20).lean();
+  const take = Math.min(Math.max(Number(limit) || 20, 1), 50);
+
+  const jobs = await PrintJob.find(q).sort({ createdAt: 1 }).limit(take).lean();
   return res.json(jobs);
 };
 
@@ -95,26 +90,28 @@ export const getPendingPrintJobs = async (req: Request, res: Response) => {
 //
 export const markPrintJobDone = async (req: Request, res: Response) => {
   if (!req.worker) return res.status(401).end();
-  const { restaurantId, unitId } = req.worker;
+  const { restaurantId, unitId } = req.worker as any;
 
   const job = await PrintJob.findOneAndUpdate(
     { _id: req.params.id, restaurantId, unitId },
-    { $set: { status: "PRINTED", errorMessage: null } },
+    { $set: { status: "PRINTED", lastError: null } },
     { new: true }
   );
+
   if (!job) return res.status(404).json({ message: "Print job não encontrado no seu escopo" });
   return res.json(job);
 };
 
 //
 // PATCH /printing/:id/fail
-// opcional: se o worker capturar erro de impressora
+// chamado pelo worker se falhar a impressão
 //
 export const markPrintJobFailed = async (req: Request, res: Response) => {
   try {
     if (!req.worker) return res.status(401).end();
-    const { restaurantId, unitId } = req.worker;
-    const { errorMessage } = req.body;
+    const { restaurantId, unitId } = req.worker as any;
+
+    const { errorMessage } = req.body ?? {};
 
     const job = await PrintJob.findOneAndUpdate(
       { _id: req.params.id, restaurantId, unitId },
@@ -128,10 +125,7 @@ export const markPrintJobFailed = async (req: Request, res: Response) => {
       { new: true }
     );
 
-    if (!job) {
-      return res.status(404).json({ message: "Print job não encontrado no seu escopo" });
-    }
-
+    if (!job) return res.status(404).json({ message: "Print job não encontrado no seu escopo" });
     return res.json(job);
   } catch (err: any) {
     console.error("Erro ao marcar como fail:", err);
@@ -141,30 +135,50 @@ export const markPrintJobFailed = async (req: Request, res: Response) => {
 
 //
 // PATCH /printing/claim?station=hot&limit=10
-// Claim atomico para mais de uma impressora em mesma unidade,
-// evitando double print.
+// Claim atômico por unidade (evita double-print).
 //
 export const claimPendingJobs = async (req: Request, res: Response) => {
   if (!req.worker) return res.status(401).end();
-  const { restaurantId, unitId, stations } = req.worker;
-  const { station } = req.query;
+  const { restaurantId, unitId, stations } = req.worker as any;
 
-  const stationFilter = station
-    ? { station: String(station) }
-    : (Array.isArray(stations) && stations.length ? { station: { $in: stations } } : {});
+  const { station, limit } = req.query as any;
 
-  // pega em lote (exemplo 10) mudando status para "SENT"
+  const stationFilter =
+    station
+      ? { station: String(station) }
+      : Array.isArray(stations) && stations.length
+        ? { station: { $in: stations } }
+        : {};
+
+  const take = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
+  // 1) pega em lote os PENDING
   const jobs = await PrintJob.find({
-    restaurantId, unitId, status: "PENDING", ...stationFilter,
-  }).sort({ createdAt: 1 }).limit(10);
+    restaurantId,
+    unitId,
+    status: "PENDING",
+    ...stationFilter,
+  })
+    .sort({ createdAt: 1 })
+    .limit(take);
 
-  const ids = jobs.map(j => j._id);
+  const ids = jobs.map((j: any) => j._id);
+
+  // 2) marca como SENT (claim)
   if (ids.length) {
     await PrintJob.updateMany(
-      { _id: { $in: ids }, status: "PENDING" },
-      { $set: { status: "SENT", claimedAt: new Date() }, $inc: { attempts: 1 } }
+      { _id: { $in: ids }, status: "PENDING", restaurantId, unitId },
+      {
+        $set: { status: "SENT", claimedAt: new Date(), lastError: null },
+        $inc: { attempts: 1 },
+      }
     );
   }
 
-  return res.json(jobs);
+  // 3) devolve já como "SENT" (evita retorno “stale”)
+  const claimed = ids.length
+    ? await PrintJob.find({ _id: { $in: ids } }).sort({ createdAt: 1 }).lean()
+    : [];
+
+  return res.json(claimed);
 };
