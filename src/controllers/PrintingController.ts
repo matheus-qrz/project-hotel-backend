@@ -21,7 +21,6 @@ export const createPrintJob = async (req: Request, res: Response) => {
       idempotencyKey,
     } = req.body ?? {};
 
-    if (!unitId) return res.status(400).json({ message: "unitId é obrigatório" });
     if (!station) return res.status(400).json({ message: "station é obrigatório" });
     if (!action) return res.status(400).json({ message: "action é obrigatório" });
 

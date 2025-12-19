@@ -34,7 +34,6 @@ export const createPrinterWorkerController = async (req: Request, res: Response)
     const { restaurantId, unitId, name, stations } = req.body ?? {};
 
     if (!restaurantId) return res.status(400).json({ message: "restaurantId é obrigatório" });
-    if (!unitId) return res.status(400).json({ message: "unitId é obrigatório" });
     if (!name) return res.status(400).json({ message: "name é obrigatório" });
 
     // token “bruto” só aparece uma vez

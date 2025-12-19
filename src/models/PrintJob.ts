@@ -29,7 +29,7 @@ export interface IPrintJob /* extends Document (opcional, se você estiver tipan
   _id: Types.ObjectId;
 
   restaurantId: Types.ObjectId | string;
-  unitId: Types.ObjectId | string;
+  unitId?: Types.ObjectId | string;
 
   orderId?: Types.ObjectId | string;
   tableId?: string | number | null;
@@ -90,7 +90,7 @@ const PrintJobItemSchema = new Schema(
 const PrintJobSchema = new Schema(
   {
     restaurantId: { type: String, required: true, index: true },
-    unitId: { type: String, required: true, index: true },
+    unitId: { type: String, required: false, index: true },
 
     orderId: { type: String, index: true },
     tableId: { type: Schema.Types.Mixed },
