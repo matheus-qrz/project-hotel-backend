@@ -112,69 +112,71 @@ function formatDateTimeInTimeZone(date: Date, timeZone: string): string {
  *  - items (array bruto, como vem do Order, para depois quebrar por estação)
  */
 function normalizeOrderForPrint(order: OrderInput) {
-const o = typeof order?.toObject === "function" ? order.toObject() : order;
+  const o = typeof (order as any)?.toObject === "function" ? (order as any).toObject() : order;
 
-  // 🔧 Corrige unitId (aceita vários formatos)
+  // restaurantUnit pode ser string (id) OU objeto populado
+  const unitObj =
+    o.restaurantUnit && typeof o.restaurantUnit === "object"
+      ? o.restaurantUnit
+      : null;
+
+  // 🔧 unitId: aceita vários formatos
   const unitId =
-    extractId(o.unitId) ??
-    extractId(o.restaurantUnit) ??
-    extractId(o.restaurantUnitId) ??
+    extractId((o as any).unitId) ??
+    extractId((o as any).restaurantUnit) ??
+    extractId((o as any).restaurantUnitId) ??
     null;
 
-  // 🔧 Corrige restaurantId (id do restaurante "pai")
+  // 🔧 restaurantId (restaurante "pai")
   const restaurantId =
-    extractId(o.restaurantId) ??
-    extractId(o.restaurant) ??
+    extractId((o as any).restaurantId) ??
+    extractId((o as any).restaurant) ??
     null;
 
-  // mesa: tenta meta.tableId primeiro (seu padrão atual)
-  const tableId = o.meta?.tableId ?? o.tableId ?? null;
+  const tableId = (o as any).meta?.tableId ?? (o as any).tableId ?? null;
 
-  const orderId = o.orderCode ?? o._id;
-  const items = Array.isArray(o.items) ? o.items : [];
+  const orderId = (o as any).orderCode ?? (o as any)._id;
+  const items = Array.isArray((o as any).items) ? (o as any).items : [];
 
-  // timezone: tenta pegar da unidade, depois do restaurante, senão fallback
+  // timezone: tenta unidade populada; depois restaurante; depois fallback
   const timezone =
-    o.restaurantUnit?.timezone ||
-    o.restaurant?.timezone ||
+    (unitObj as any)?.timezone ||
+    (o as any).restaurant?.timezone ||
     process.env.DEFAULT_TZ ||
     "America/Fortaleza";
 
-  const createdAtDate = o.createdAt ? new Date(o.createdAt) : new Date();
+  const createdAtDate = (o as any).createdAt ? new Date((o as any).createdAt) : new Date();
   const printedAt = formatDateTimeInTimeZone(createdAtDate, timezone);
 
-  // nome do garçom, como você já tinha
   const waiterName =
-    o.attendant?.name ??
-    o.attendantName ??
-    o.waiterName ??
+    (o as any).attendant?.name ??
+    (o as any).attendantName ??
+    (o as any).waiterName ??
+    (o as any).assignedAttendantName ?? // ✅ no teu Order real existe isso
     undefined;
 
-  // nome do cliente / guest
   const customerName =
-    o.guest?.name ??
-    o.guestInfo?.name ??
-    o.guestName ??
-    o.customerName ??
+    (o as any).guest?.name ??
+    (o as any).guestInfo?.name ??
+    (o as any).guestName ??
+    (o as any).customerName ??
     undefined;
 
-  // nome e endereço da unidade
   const unitName =
-    o.restaurantUnit?.name ??
-    o.unitName ??
+    (unitObj as any)?.name ??
+    (o as any).unitName ??
     undefined;
 
   const unitAddress =
-    o.restaurantUnit?.address ??
-    o.restaurantUnit?.fullAddress ??
-    o.unitAddress ??
+    (unitObj as any)?.address ??
+    (unitObj as any)?.fullAddress ??
+    (o as any).unitAddress ??
     undefined;
 
-  // logo do restaurante
   const restaurantLogoUrl =
-    o.restaurant?.logo ??
-    o.restaurant?.logoUrl ??
-    o.logo ??
+    (o as any).restaurant?.logo ??
+    (o as any).restaurant?.logoUrl ??
+    (o as any).logo ??
     undefined;
 
   return {
@@ -205,6 +207,16 @@ export async function enqueuePrintJobsFromOrder(
 ) {
   const norm = normalizeOrderForPrint(order);
 
+  const unitId =
+    String((order as any).unitId || "").trim() ||
+    String((order as any).restaurantUnit || "").trim() ||
+    String((order as any).restaurantUnitId || "").trim();
+
+  const restaurantId =
+    String((order as any).restaurantId || "").trim() ||
+    String((order as any).restaurant || "").trim();
+
+
   // se nem unitId/restaurantUnit veio, aí sim não faz sentido imprimir
   if (!norm.unitId) {
     console.warn("[printing] order sem unitId/restaurantUnit; ignorando impressão", {
@@ -227,6 +239,12 @@ export async function enqueuePrintJobsFromOrder(
   for (const it of norm.items) {
     if (it?.kitchenStation) stations.add(it.kitchenStation as Station);
   }
+
+  for (const it of norm.items) {
+  const st = (it as any)?.kitchenStation ?? (it as any)?.station ?? "hot";
+  (it as any).kitchenStation = st; // garante
+  stations.add(st as Station);
+}
 
   for (const station of stations) {
     // Itens da estação corrente
@@ -300,9 +318,8 @@ export async function enqueuePrintJobsFromOrder(
           tableId: norm.tableId,
           station,
           action,
-          // mantém items "simples" para compat, se o worker antigo ainda usar
           items: itemsForStation,
-          payload, // 👈 aqui vai o payload rico
+          payload, 
           idempotencyKey,
           status: "PENDING",
           attempts: 0,
@@ -351,7 +368,7 @@ export async function dispatchPendingPrintJobs(limit = 30) {
       const body: any = job.payload
         ? job.payload
         : {
-            unitId: String(job.unitId),
+            restaurantUnit: String(job.unitId),
             restaurantId: job.restaurantId ? String(job.restaurantId) : undefined,
             orderId: String(job.orderId),
             tableId: job.tableId,

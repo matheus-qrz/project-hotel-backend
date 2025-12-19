@@ -1,8 +1,7 @@
 // scripts/test-print.ts
 import "dotenv/config";
 import mongoose from "mongoose";
-import { enqueuePrintJobsFromOrder, dispatchPendingPrintJobs } from "../src/helpers/printing"; // ajuste o path
-// se seus models são registrados no bootstrap, pode importar o app/config aqui também
+import { enqueuePrintJobsFromOrder, dispatchPendingPrintJobs } from "../src/services/printing"; 
 
 async function main() {
   // 1) conecta no mesmo Mongo do backend

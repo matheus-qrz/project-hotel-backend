@@ -17,8 +17,12 @@ export const initiateOrderController = async (req: Request, res: Response) => {
   try {
     const { restaurantId } = req.params as { restaurantId: string };
 
-    const unitIdFromBody = (req.body?.restaurantUnitId as string) || "";
-    const restaurantUnit = unitIdFromBody || restaurantId;
+    const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
+    if (!unitId) {
+      return res.status(400).json({ message: "unitId é obrigatório" });
+    }
+
+    const restaurantUnit = unitId;
 
     const { guestInfo, meta, items, totalAmount, assignedAttendantId, assignedAttendantName } = req.body as any;
 
@@ -47,11 +51,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     // normalização de itens
     const itemsWithStatus = items.map((it: IOrderItem) => ({
       ...it,
-
+      kitchenStation: (it as any).kitchenStation ?? "hot",
       status: it.status ?? "added",
       createdAt: it.createdAt ? new Date(it.createdAt) : now,
-
-      // Addons normalizados
       addons: Array.isArray(it.addons)
         ? it.addons.map((ad: any) => ({
             ...ad,
@@ -59,15 +61,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
             createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
-
-      // Campos de combo
       isCombo: !!it.isCombo,
       comboOptions: Array.isArray(it.comboOptions) ? it.comboOptions : [],
-
-      // Preparações (ou preparationGroups, depende do seu schema)
-      preparations: Array.isArray(it.preparationGroups)
-        ? it.preparationGroups
-        : [],
+      preparations: Array.isArray(it.preparationGroups) ? it.preparationGroups : [],
     }));
 
     // ---------- PROCURAR PEDIDO EXISTENTE DESSA SESSÃO ----------
