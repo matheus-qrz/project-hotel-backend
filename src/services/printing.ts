@@ -216,6 +216,9 @@ export async function enqueuePrintJobsFromOrder(
     String((order as any).restaurantId || "").trim() ||
     String((order as any).restaurant || "").trim();
 
+  // ✅ força preencher norm
+  (norm as any).unitId = (norm as any).unitId || unitId;
+  (norm as any).restaurantId = (norm as any).restaurantId || restaurantId;
 
   // se nem unitId/restaurantUnit veio, aí sim não faz sentido imprimir
   if (!norm.unitId) {
