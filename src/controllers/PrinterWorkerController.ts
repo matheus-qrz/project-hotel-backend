@@ -31,31 +31,46 @@ export const listPrinterWorkersController = async (req: Request, res: Response) 
 
 export const createPrinterWorkerController = async (req: Request, res: Response) => {
   try {
-    const { restaurantId, unitId, name, stations } = req.body ?? {};
+    const { restaurantId, name, stations } = req.body ?? {};
 
-    if (!restaurantId) return res.status(400).json({ message: "restaurantId é obrigatório" });
-    if (!name) return res.status(400).json({ message: "name é obrigatório" });
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
+    }
+    if (!name) {
+      return res.status(400).json({ message: "name é obrigatório" });
+    }
 
-    const unitIdNormalized = unitId ? String(unitId) : null;
+    // ✅ pega unitId de múltiplos campos possíveis (compatível com o teu sistema)
+    const unitIdRaw =
+      req.body?.unitId ??
+      req.body?.restaurantUnitId ??
+      req.body?.restaurantUnit;
 
-    // token “bruto” só aparece uma vez
+    const unitId = String(unitIdRaw ?? "").trim();
+
+    // ✅ bloqueia casos problemáticos que viram string no JSON/env
+    if (!unitId || unitId === "undefined" || unitId === "null") {
+      return res.status(400).json({
+        message: "unitId é obrigatório e válido (use unitId/restaurantUnitId/restaurantUnit).",
+      });
+    }
+
     const rawToken = crypto.randomBytes(32).toString("hex");
     const token = sha256(rawToken);
 
     const doc = await PrinterWorkerToken.create({
       token,
-      restaurantId: String(restaurantId),
-      unitId: unitIdNormalized,
-      name: String(name),
-      stations: Array.isArray(stations) ? stations.map(String) : [],
+      restaurantId: String(restaurantId).trim(),
+      unitId, // ✅ sempre string válida agora
+      name: String(name).trim(),
+      stations: Array.isArray(stations) ? stations.map((s: any) => String(s).trim()) : [],
       isActive: true,
       lastSeenAt: null,
     });
 
-    // ✅ retorna token uma única vez
     return res.status(201).json({
       id: doc._id,
-      token: rawToken,
+      token: rawToken, // ✅ só retorna uma vez
       restaurantId: doc.restaurantId,
       unitId: doc.unitId,
       name: doc.name,
