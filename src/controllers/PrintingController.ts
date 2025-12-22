@@ -72,7 +72,7 @@ export const getPendingPrintJobs = async (req: Request, res: Response) => {
 
   const { station, limit } = req.query as any;
 
-  const q: any = { status: { $in: ["PENDING", "SENT"] }, restaurantId, unitId };
+  const q: any = { status: { $in: ["PENDING", "SENT"] }, restaurantId, unitId: unitId ?? null };
 
   if (station) q.station = String(station);
   else if (Array.isArray(stations) && stations.length) q.station = { $in: stations };
@@ -153,7 +153,7 @@ export const claimPendingJobs = async (req: Request, res: Response) => {
 
   // 1) pega em lote os PENDING
   const jobs = await PrintJob.find({
-    unitId,
+    unitId: unitId ?? null,
     status: "PENDING",
     ...stationFilter,
     $or: [{ restaurantId }, { restaurantId: null }],

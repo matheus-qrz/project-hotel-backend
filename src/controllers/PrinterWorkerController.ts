@@ -36,6 +36,8 @@ export const createPrinterWorkerController = async (req: Request, res: Response)
     if (!restaurantId) return res.status(400).json({ message: "restaurantId é obrigatório" });
     if (!name) return res.status(400).json({ message: "name é obrigatório" });
 
+    const unitIdNormalized = unitId ? String(unitId) : null;
+
     // token “bruto” só aparece uma vez
     const rawToken = crypto.randomBytes(32).toString("hex");
     const token = sha256(rawToken);
@@ -43,7 +45,7 @@ export const createPrinterWorkerController = async (req: Request, res: Response)
     const doc = await PrinterWorkerToken.create({
       token,
       restaurantId: String(restaurantId),
-      unitId: String(unitId),
+      unitId: unitIdNormalized,
       name: String(name),
       stations: Array.isArray(stations) ? stations.map(String) : [],
       isActive: true,
