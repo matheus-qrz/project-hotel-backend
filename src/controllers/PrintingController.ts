@@ -153,10 +153,10 @@ export const claimPendingJobs = async (req: Request, res: Response) => {
 
   // 1) pega em lote os PENDING
   const jobs = await PrintJob.find({
-    restaurantId,
     unitId,
     status: "PENDING",
     ...stationFilter,
+    $or: [{ restaurantId }, { restaurantId: null }],
   })
     .sort({ createdAt: 1 })
     .limit(take);
