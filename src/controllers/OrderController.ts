@@ -15,9 +15,15 @@ import { dispatchPendingPrintJobs, enqueuePrintJobsFromOrder } from "../services
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
-    const { restaurantId } = req.params as { restaurantId: string };
+    const restaurantId =
+      String((req.params as any)?.restaurantId || req.body?.restaurantId || "").trim();
+
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
+    }
 
     const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
+    
     if (!unitId) {
       return res.status(400).json({ message: "unitId é obrigatório" });
     }
@@ -69,6 +75,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     // ---------- PROCURAR PEDIDO EXISTENTE DESSA SESSÃO ----------
     const candidates = await OrderModel.find({
       sessionId,
+      restaurantId,
       restaurantUnit,
       "guestInfo.id": guestInfo.id,
       isPaid: false,
@@ -131,7 +138,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     } else {
       // ---------- CRIAR NOVO PEDIDO ----------
       const doc = new OrderModel({
-        restaurant: restaurantId || undefined,
+        restaurantId: restaurantId || undefined,
         restaurantUnit,
         guestInfo: {
           id: guestInfo.id,

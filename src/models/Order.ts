@@ -45,6 +45,7 @@ export interface IOrder extends mongoose.Document {
     name: string;
     joinedAt: Date;
   };
+  restaurantId: mongoose.Schema.Types.ObjectId;
   restaurantUnit: mongoose.Schema.Types.ObjectId;
   items: IOrderItem[]
   totalAmount: number;
@@ -99,6 +100,12 @@ const orderSchema = new Schema(
         type: Date,
         default: Date.now
       }
+    },
+    restaurantId: {
+      type: Schema.Types.ObjectId,
+      ref: "Restaurant",
+      required: true,
+      index: true,
     },
     restaurantUnit: {
       type: mongoose.Schema.Types.ObjectId,
@@ -290,7 +297,7 @@ orderSchema.pre("save", function (next) {
 orderSchema.methods.canTransitionTo = function (newStatus: OrderStatusType): boolean {
   const validTransitions: Record<OrderStatusType, OrderStatusType[]> = {
     [OrderStatus.PROCESSING]: [OrderStatus.COMPLETED, OrderStatus.CANCELLED, OrderStatus.PAYMENT_REQUESTED],
-    [OrderStatus.COMPLETED]: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED, OrderStatus.PAID], // 👈 add PAID
+    [OrderStatus.COMPLETED]: [OrderStatus.PROCESSING, OrderStatus.PAYMENT_REQUESTED, OrderStatus.PAID],
     [OrderStatus.PAYMENT_REQUESTED]: [OrderStatus.PAID, OrderStatus.PROCESSING],
     [OrderStatus.PAID]: [],
     [OrderStatus.CANCELLED]: [],
@@ -346,15 +353,17 @@ export const deleteOrder = (id: string) =>
   OrderModel.findByIdAndDelete(id);
 
 // Get orders by table number
-export const getOrdersByTable = (restaurantUnitId: string, tableId: number) =>
+export const getOrdersByTable = (restaurantId: string, restaurantUnitId: string, tableId: number) =>
   OrderModel.find({
+    restaurantId: restaurantId,
     restaurantUnit: restaurantUnitId,
     'meta.tableId': tableId
   });
 
 // Get unpaid orders by table
-export const getUnpaidOrdersByTable = (restaurantUnitId: string, tableId: number) =>
+export const getUnpaidOrdersByTable = (restaurantId: string, restaurantUnitId: string, tableId: number) =>
   OrderModel.find({
+    restaurantId: restaurantId,
     restaurantUnit: restaurantUnitId,
     'meta.tableId': tableId,
     isPaid: false,
@@ -364,7 +373,7 @@ export const getUnpaidOrdersByTable = (restaurantUnitId: string, tableId: number
 // models/Order.ts
 export const getGuestOrders = (guestId: string, tableId: string) => {
   return OrderModel.find({
-    'guestInfo.id': guestId, // Filtra pelos pedidos do convidado
+    'guestInfo.id': guestId, 
     'meta.tableId': Number(tableId),
   });
 };
