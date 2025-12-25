@@ -190,6 +190,55 @@ export const initiateOrderController = async (req: Request, res: Response) => {
   }
 };
 
+// POST /orders/:orderId/print
+export const manualPrintOrderController = async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.params as { orderId: string };
+    const action = String(req.body?.action || "REPRINT"); // REPRINT default
+
+    const order = await OrderModel.findById(orderId);
+    if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
+
+    const seq = `manual-${Date.now()}`;
+    await enqueuePrintJobsFromOrder(order, action, seq);
+
+    return res.status(200).json({ ok: true });
+  } catch (e) {
+    console.error("manualPrintOrderController error:", e);
+    return res.status(500).json({ message: "Erro ao solicitar impressão do pedido" });
+  }
+};
+
+// POST /orders/print-by-status
+export const manualPrintOrdersByStatusController = async (req: Request, res: Response) => {
+  try {
+    const unitId = String(req.body?.unitId || "").trim();
+    const status = String(req.body?.status || "").trim(); // processing, completed, etc.
+    const action = String(req.body?.action || "REPRINT");
+
+    if (!unitId) return res.status(400).json({ message: "unitId é obrigatório" });
+    if (!status) return res.status(400).json({ message: "status é obrigatório" });
+
+    const orders = await OrderModel.find({
+      restaurantUnit: unitId,
+      status: status ? status : { $nin: ["paid", "cancelled"] },
+      isPaid: false,
+    });
+
+    if (!orders.length) return res.status(200).json({ ok: true, count: 0 });
+
+    const seqBase = `manual-bulk-${Date.now()}`;
+    for (let i = 0; i < orders.length; i++) {
+      await enqueuePrintJobsFromOrder(orders[i], action, `${seqBase}-${i}`);
+    }
+
+    return res.status(200).json({ ok: true, count: orders.length });
+  } catch (e) {
+    console.error("manualPrintOrdersByStatusController error:", e);
+    return res.status(500).json({ message: "Erro ao solicitar impressão em lote" });
+  }
+};
+
 // Controlador para requisição de pagamento por pedido de cliente
 export const requestOrderCheckout = async (req: Request, res: Response) => {
   const { tableId, orderId } = req.params as { tableId: string; orderId: string };

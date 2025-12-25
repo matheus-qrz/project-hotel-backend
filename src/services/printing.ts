@@ -202,7 +202,7 @@ function normalizeOrderForPrint(order: OrderInput) {
  */
 export async function enqueuePrintJobsFromOrder(
   order: OrderInput,
-  action: PrintAction,
+  action: PrintAction | string,
   printSeq: number | string = "v1"
 ) {
   const norm = normalizeOrderForPrint(order);

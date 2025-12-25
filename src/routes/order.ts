@@ -22,6 +22,8 @@ import {
   applyOrderCouponController,
   getTableStatus,
   requestHelpController,
+  manualPrintOrderController,
+  manualPrintOrdersByStatusController,
 } from "../controllers/OrderController";
 import { isAuthenticated, hasRole } from "../middlewares";
 
@@ -136,4 +138,18 @@ export default (orderRouter: Router) => {
     "/units/:unitId/orders/:orderId/help-request",
     requestHelpController
   )
+
+  orderRouter.post(
+    "/orders/:orderId/print",
+    isAuthenticated,
+    hasRole(["ATTENDANT", "MANAGER"]),
+    manualPrintOrderController
+  );
+
+  orderRouter.post(
+    "/orders/print-by-status",
+    isAuthenticated,
+    hasRole(["ATTENDANT", "MANAGER"]),
+    manualPrintOrdersByStatusController
+  );
 };
