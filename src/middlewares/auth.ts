@@ -30,7 +30,6 @@ declare global {
 const JWT_SECRET = process.env.JWT_SECRET || 'default_secret_change_in_production';
 
 // 1) Autenticação base: valida JWT, confere sessionToken no usuário e anexa dados essenciais ao req
-
 export const isAuthenticated = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization;

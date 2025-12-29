@@ -15,11 +15,7 @@ const STATIC_UPLOADS =
 
 app.use(
   "/uploads",
-  express.static(STATIC_UPLOADS, {
-    setHeaders: (res) => {
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    },
-  })
+  express.static(path.resolve(process.cwd(), "uploads"))
 );
 
 app.use(
