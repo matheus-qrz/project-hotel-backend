@@ -1,7 +1,7 @@
 import mongoose, { Types } from "mongoose";
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
-import { IOrder, IOrderItem, OrderModel } from "../models/Order";
+import { OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
@@ -10,109 +10,69 @@ import { computeTotal } from "../utils/computeTotal";
 import { applyAssignmentToOrder } from "../services/applyAssignment";
 import { isTableInCurrentRange } from "../helpers/tableInCurrentRange";
 import { computeSubtotalWithoutCoupons, n0 } from "../helpers/coupon";
-import { dispatchPendingPrintJobs, enqueuePrintJobsFromOrder } from "../services/printing";
+import { enqueuePrintJobsFromOrder } from "../services/printing";
+
+function buildDeltaOrderForPrint(order: any, items: any[]) {
+  const o = (order as any)?.toObject ? (order as any).toObject() : order;
+  return {
+    ...o,
+    items,
+  };
+}
 
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
-    const restaurantId =
-      String((req.params as any)?.restaurantId || req.body?.restaurantId || "").trim();
-
-    if (!restaurantId) {
-      return res.status(400).json({ message: "restaurantId é obrigatório" });
-    }
-
-    const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
-    
-    if (!unitId) {
-      return res.status(400).json({ message: "unitId é obrigatório" });
-    }
-
-    const restaurantUnit = unitId;
-
-    const { guestInfo, meta, items, totalAmount, assignedAttendantId, assignedAttendantName } = req.body as any;
-
-    if (
-      !restaurantUnit ||
-      !guestInfo?.id ||
-      !meta?.tableId ||
-      !Array.isArray(items) ||
-      items.length === 0
-    ) {
-      return res
-        .status(400)
-        .json({ message: "Dados insuficientes para iniciar pedido." });
-    }
-
-    // sessionId: usa o header se vier; senão gera um novo
-    const sessionId =
-      typeof req.headers["x-session-id"] === "string" &&
-      req.headers["x-session-id"].trim()
-        ? String(req.headers["x-session-id"]).trim()
-        : randomUUID();
-
-    const now = new Date();
-    const status = req.body.status ?? "processing";
-
-    // normalização de itens
-    const itemsWithStatus = items.map((it: IOrderItem) => ({
-      ...it,
-      kitchenStation: (it as any).kitchenStation ?? "hot",
-      status: it.status ?? "added",
-      createdAt: it.createdAt ? new Date(it.createdAt) : now,
-      addons: Array.isArray(it.addons)
-        ? it.addons.map((ad: any) => ({
-            ...ad,
-            status: ad.status ?? "added",
-            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
-          }))
-        : [],
-      isCombo: !!it.isCombo,
-      comboOptions: Array.isArray(it.comboOptions) ? it.comboOptions : [],
-      preparations: Array.isArray(it.preparationGroups) ? it.preparationGroups : [],
-    }));
-
-    // ---------- PROCURAR PEDIDO EXISTENTE DESSA SESSÃO ----------
-    const candidates = await OrderModel.find({
-      sessionId,
+    const {
       restaurantId,
       restaurantUnit,
-      "guestInfo.id": guestInfo.id,
-      isPaid: false,
-      status: { $nin: ["paid", "cancelled"] }, 
-    }).lean();
+      guestInfo,
+      items = [],
+      status = "processing",
+      meta = {},
+      assignedAttendantId,
+      assignedAttendantName,
+      tz,
+    } = req.body ?? {};
 
-    const existing =
-      candidates.find(
-        (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
-      ) || null;
+    if (!restaurantUnit) return res.status(400).json({ message: "restaurantUnit é obrigatório" });
+    if (!guestInfo?.id) return res.status(400).json({ message: "guestInfo.id é obrigatório" });
+
+    const now = new Date();
+
+    // Itens com status default
+    const itemsWithStatus = (Array.isArray(items) ? items : []).map((it: any) => ({
+      ...it,
+      status: it.status || "new",
+    }));
+
+    // --------- Tenta encontrar pedido existente do mesmo guestId + tableId em processamento
+    const existing = await OrderModel.findOne({
+      restaurantUnit,
+      "guestInfo.id": guestInfo.id,
+      "meta.tableId": meta.tableId,
+      isPaid: false,
+      status: { $in: ["processing", "payment_requested"] },
+    });
 
     if (existing) {
-      const now = new Date();
+      // ---------- UPDATE PEDIDO EXISTENTE ----------
+      existing.items = [...(existing.items || []), ...itemsWithStatus];
 
-      await OrderModel.updateOne(
-        { _id: existing._id },
-        {
-          $push: {
-            items: { $each: itemsWithStatus },
-            // opcional: registrar que voltou para processing
-            statusHistory: { status: "processing", at: now },
-          },
-          $inc: { totalAmount: Number(totalAmount) || 0 },
-          $set: {
-            updatedAt: now,
-            status: "processing",
-            "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
-            "meta.splitCount": Number(meta?.splitCount) || existing.meta?.splitCount || 1,
-          },
-        }
-      );
+      // status pode vir do body (sem forçar processing sempre)
+      if (status) existing.status = status;
+
+      // recomputa total
+      existing.totalAmount = computeTotal(existing.items as any);
+
+      await existing.save();
 
       // re-carrega para aplicar possível re-atribuição de garçom
       let updatedDoc = await OrderModel.findById(existing._id);
 
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
-        const tz =
+        const tzResolved =
+          tz ||
           req.body?.tz ||
           (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
           "America/Sao_Paulo";
@@ -124,77 +84,75 @@ export const initiateOrderController = async (req: Request, res: Response) => {
           preferredAttendantId: assignedAttendantId,
           preferredAttendantName: assignedAttendantName,
           now: new Date(),
-          tz,
+          tz: tzResolved,
         });
 
         await updatedDoc.save();
       }
 
-      const printSeq = String(Date.now()); // ✅ garante idempotência por "evento"
+      const printSeq = String(Date.now()); // evento único
       await enqueuePrintJobsFromOrder(updatedDoc, "ADD_ITEMS", printSeq);
 
       return res.status(200).json(updatedDoc);
-
-    } else {
-      // ---------- CRIAR NOVO PEDIDO ----------
-      const doc = new OrderModel({
-        restaurantId: restaurantId || undefined,
-        restaurantUnit,
-        guestInfo: {
-          id: guestInfo.id,
-          name: guestInfo.name ?? "",
-          joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
-        },
-        items: itemsWithStatus,
-        status,
-        processingAt: status === 'processing' ? now : null,
-        statusHistory: [{ status, at: status === "processing" ? now : now }],
-        isPaid: false,
-        sessionId,
-        meta: {
-          tableId: Number(meta.tableId),
-          orderType: meta?.orderType ?? "local",
-          splitCount: Number(meta?.splitCount) || 1,
-          orderCreatedAt: now,
-        },
-        totalAmount: Number(totalAmount) || 0,
-        createdAt: now,
-        updatedAt: now,
-      });
-      
-      const tz =
-        req.body?.tz ||
-        (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
-          ?.timezone ||
-        "America/Sao_Paulo";
-
-      await applyAssignmentToOrder({
-        order: doc,
-        unitId: String(restaurantUnit),
-        tableId: Number(meta.tableId),
-        preferredAttendantId: assignedAttendantId,
-        preferredAttendantName: assignedAttendantName,
-        now: new Date(), 
-        tz,               
-      });
-
-      await enqueuePrintJobsFromOrder(doc, "NEW_TICKET", "v1");
-
-      await doc.save();
-      res.setHeader("x-session-id", sessionId);
-      return res.status(201).json(doc);
     }
+
+    // ---------- CRIAR NOVO PEDIDO ----------
+    const doc = new OrderModel({
+      restaurantId: restaurantId || undefined,
+      restaurantUnit,
+      guestInfo: {
+        id: guestInfo.id,
+        name: guestInfo.name ?? "",
+        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+      },
+      items: itemsWithStatus,
+      status,
+      processingAt: status === "processing" ? now : null,
+      meta: {
+        tableId: meta.tableId,
+        createdAt: meta.createdAt ? new Date(meta.createdAt) : now,
+        tz: meta.tz,
+      },
+      assignedAttendantId: assignedAttendantId || undefined,
+      assignedAttendantName: assignedAttendantName || undefined,
+      total: computeTotal(itemsWithStatus as any),
+      sessionId: req.headers["x-session-id"] || randomUUID(),
+    });
+
+    const tzResolved =
+      tz ||
+      req.body?.tz ||
+      (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
+      "America/Sao_Paulo";
+
+    await applyAssignmentToOrder({
+      order: doc,
+      unitId: String(restaurantUnit),
+      tableId: Number(meta.tableId),
+      preferredAttendantId: assignedAttendantId,
+      preferredAttendantName: assignedAttendantName,
+      now: new Date(),
+      tz: tzResolved,
+    });
+
+    // ✅ salva antes de enfileirar
+    await doc.save();
+
+    // ✅ NEW_TICKET idempotente e estável por pedido
+    await enqueuePrintJobsFromOrder(doc, "NEW_TICKET", `new-${doc._id}`);
+
+    res.setHeader("x-session-id", String(doc.sessionId || ""));
+    return res.status(201).json(doc);
   } catch (e) {
     console.error("Erro ao iniciar pedido:", e);
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
-
 // POST /orders/:orderId/print
 export const manualPrintOrderController = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params as { orderId: string };
-    const action = String(req.body?.action || "REPRINT"); // REPRINT default
+    const action = String(req.body?.action || "REPRINT");
 
     const order = await OrderModel.findById(orderId);
     if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
@@ -205,29 +163,28 @@ export const manualPrintOrderController = async (req: Request, res: Response) =>
     return res.status(200).json({ ok: true });
   } catch (e) {
     console.error("manualPrintOrderController error:", e);
-    return res.status(500).json({ message: "Erro ao solicitar impressão do pedido" });
+    return res.status(500).json({ message: "Erro ao solicitar impressão" });
   }
 };
 
 // POST /orders/print-by-status
 export const manualPrintOrdersByStatusController = async (req: Request, res: Response) => {
   try {
-    const unitId = String(req.body?.unitId || "").trim();
-    const status = String(req.body?.status || "").trim(); // processing, completed, etc.
-    const action = String(req.body?.action || "REPRINT");
+    const { status, unitId, action = "REPRINT", limit = 50 } = req.body ?? {};
 
     if (!unitId) return res.status(400).json({ message: "unitId é obrigatório" });
     if (!status) return res.status(400).json({ message: "status é obrigatório" });
 
     const orders = await OrderModel.find({
       restaurantUnit: unitId,
-      status: status ? status : { $nin: ["paid", "cancelled"] },
+      status,
       isPaid: false,
-    });
+    })
+      .sort({ createdAt: -1 })
+      .limit(Math.min(Number(limit) || 50, 200));
 
-    if (!orders.length) return res.status(200).json({ ok: true, count: 0 });
+    const seqBase = `bulk-${Date.now()}`;
 
-    const seqBase = `manual-bulk-${Date.now()}`;
     for (let i = 0; i < orders.length; i++) {
       await enqueuePrintJobsFromOrder(orders[i], action, `${seqBase}-${i}`);
     }
@@ -625,6 +582,39 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
     // salva (timestamps do mongoose atualizam updatedAt)
     await order.save();
 
+    if (prevStatus !== nextStatus) {
+      if (nextStatus === "cancelled") {
+        const nowTs = now.getTime();
+        const affected = (order.items || [])
+          .filter((it: any) => {
+            const st = String(it?.status || "");
+            return st !== "completed" && st !== "cancelled" && Number(it?.quantity ?? 1) > 0;
+          })
+          .map((it: any) => ({ ...(it.toObject?.() || it), status: "cancelled", cancelledAt: now }));
+
+        if (affected.length) {
+          const seq = `order-status-cancel-${order._id}-${nowTs}`;
+          await enqueuePrintJobsFromOrder(
+            buildDeltaOrderForPrint(order, affected),
+            "CANCEL_ITEMS" as any,
+            seq
+          );
+        }
+      } else if (nextStatus === "completed") {
+        const nowTs = now.getTime();
+        const affected = (order.items || []).filter((it: any) => Number(it?.quantity ?? 1) > 0);
+
+        if (affected.length) {
+          const seq = `order-status-complete-${order._id}-${nowTs}`;
+          await enqueuePrintJobsFromOrder(
+            buildDeltaOrderForPrint(order, affected),
+            "COMPLETE_ORDER" as any,
+            seq
+          );
+        }
+      }
+    }
+
     return res.status(200).json(order);
   } catch (error: any) {
     console.error("Erro ao atualizar status do pedido:", error);
@@ -742,14 +732,38 @@ export const cancelOrderController = async (req: Request, res: Response) => {
     const hdr = req.headers['x-session-id'];
     if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
-    const updated = await OrderModel.findOneAndUpdate(
-      filter,
-      { $set: { status: 'cancelled', 'meta.cancelledAt': new Date() } },
-      { new: true }
-    );
+const order = await OrderModel.findOne(filter);
+if (!order) return res.status(404).json({ message: 'Pedido não encontrado ou já cancelado/fechado.' });
 
-    if (!updated) return res.status(404).json({ message: 'Pedido não encontrado ou já cancelado/fechado.' });
-    return res.json(updated);
+const now = new Date();
+order.status = 'cancelled' as any;
+(order as any).meta = (order as any).meta || {};
+(order as any).meta.cancelledAt = now;
+
+// marca itens ainda ativos como cancelados (para a cozinha parar a produção)
+const affectedItems: any[] = [];
+for (const it of (order.items || []) as any[]) {
+  const st = String((it as any).status || "");
+  if (st !== "cancelled" && st !== "completed") {
+    (it as any).status = "cancelled";
+    (it as any).cancelledAt = now;
+    affectedItems.push(it);
+  }
+}
+
+await order.save();
+
+// imprime apenas o delta
+if (affectedItems.length) {
+  const seq = `order-cancel-${order._id}-${now.getTime()}`;
+  await enqueuePrintJobsFromOrder(
+    buildDeltaOrderForPrint(order, affectedItems),
+    "CANCEL_ITEMS" as any,
+    seq
+  );
+}
+
+return res.json(order);
   } catch (e) {
     console.error('Erro ao cancelar pedido:', e);
     return res.status(500).json({ message: 'Erro ao cancelar pedido.' });
@@ -779,7 +793,7 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
     if (typeof hdr === 'string' && hdr.trim()) filter.sessionId = hdr.trim();
 
     const updated = await OrderModel.findOneAndUpdate(filter,
-      { $set: { 'items.$.status': 'cancelled' } },
+      { $set: { 'items.$.status': 'cancelled', 'items.$.cancelledAt': new Date() } },
       { new: true }
     );
     if (!updated) return res.status(404).json({ message: 'Pedido/Item não encontrado ou já cancelado.' });
@@ -790,6 +804,20 @@ export const cancelOrderItemController = async (req: Request, res: Response) => 
     } catch (err) {
       console.warn('recomputeAndReturn falhou (cancel item):', err);
     }
+
+    const base = (recomputed ?? updated) as any;
+    
+    const item = (base?.items || []).find((it: any) => String(it?._id) === String(itemId));
+    if (item) {
+      const ts = item.cancelledAt ? new Date(item.cancelledAt) : new Date();
+      const seq = `item-cancel-${orderId}-${itemId}-${ts.getTime()}`;
+      await enqueuePrintJobsFromOrder(
+        buildDeltaOrderForPrint(base, [item]),
+        "CANCEL_ITEMS" as any,
+        seq
+      );
+    }
+
     return res.json(recomputed ?? updated);
   } catch (e) {
     console.error('Erro ao cancelar item:', e);
@@ -902,8 +930,8 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
           $unset["items.$.completedAt"] = "";
         } else if (normalized === "reduced") {
           $set["items.$.status"] = "reduced";
+          $set["items.$.reducedAt"] = now;
           $unset["items.$.completedAt"] = "";
-          $unset["items.$.cancelledAt"] = "";
         } else if (normalized === "added") {
           // mantém como 'processing' mas registra atualização
           $set["items.$.status"] = "processing";
@@ -933,6 +961,39 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
     // 6) Recompute tolerante a erro
     let recomputed = null;
     try { recomputed = await recomputeAndReturn(String(updated._id)); } catch {}
+
+    const base = (recomputed ?? updated) as any;
+    const item = (base?.items || []).find((it: any) => String(it?._id) === String(itemId));
+
+    if (item && typeof status === "string") {
+      const st = String(item.status || "").toLowerCase();
+
+      if (st === "cancelled") {
+        const ts = item.cancelledAt ? new Date(item.cancelledAt) : new Date();
+        const seq = `item-cancel-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "CANCEL_ITEMS" as any,
+          seq
+        );
+      } else if (st === "reduced") {
+        const ts = item.reducedAt ? new Date(item.reducedAt) : new Date();
+        const seq = `item-reduce-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "REDUCE_ITEMS" as any,
+          seq
+        );
+      } else if (st === "completed") {
+        const ts = item.completedAt ? new Date(item.completedAt) : new Date();
+        const seq = `item-complete-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "COMPLETE_ITEMS" as any,
+          seq
+        );
+      }
+    }
 
     return res.json(recomputed ?? updated);
   } catch (e) {
