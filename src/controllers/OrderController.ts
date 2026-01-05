@@ -1,7 +1,7 @@
 import mongoose, { Types } from "mongoose";
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
-import { IOrderItem, OrderModel } from "../models/Order";
+import { OrderModel, IOrder, IOrderItem } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
@@ -23,132 +23,171 @@ function buildDeltaOrderForPrint(order: any, items: any[]) {
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
-    const {
-      restaurantId,
-      restaurantUnit,
-      guestInfo,
-      items = [],
-      status = "processing",
-      meta = {},
-      assignedAttendantId,
-      assignedAttendantName,
-      tz,
-    } = req.body ?? {};
+ const restaurantId =
+      String((req.params as any)?.restaurantId || req.body?.restaurantId || "").trim();
 
-    if (!restaurantUnit) return res.status(400).json({ message: "restaurantUnit é obrigatório" });
-    if (!guestInfo?.id) return res.status(400).json({ message: "guestInfo.id é obrigatório" });
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
+    }
+
+    const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
+    
+    if (!unitId) {
+      return res.status(400).json({ message: "unitId é obrigatório" });
+    }
+
+    const restaurantUnit = unitId;
+
+    const { guestInfo, meta, items, totalAmount, assignedAttendantId, assignedAttendantName } = req.body as any;
+
+    if (
+      !restaurantUnit ||
+      !guestInfo?.id ||
+      !meta?.tableId ||
+      !Array.isArray(items) ||
+      items.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Dados insuficientes para iniciar pedido." });
+    }
+
+    // sessionId: usa o header se vier; senão gera um novo
+    const sessionId =
+      typeof req.headers["x-session-id"] === "string" &&
+      req.headers["x-session-id"].trim()
+        ? String(req.headers["x-session-id"]).trim()
+        : randomUUID();
 
     const now = new Date();
+    const status = req.body.status ?? "processing";
 
-    // Itens com status default
+    // normalização de itens
     const itemsWithStatus = items.map((it: IOrderItem) => ({
       ...it,
-      status: it.status || "added",
+      kitchenStation: (it as any).kitchenStation ?? "hot",
+      status: it.status ?? "added",
+      createdAt: it.createdAt ? new Date(it.createdAt) : now,
+      addons: Array.isArray(it.addons)
+        ? it.addons.map((ad: any) => ({
+            ...ad,
+            status: ad.status ?? "added",
+            createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
+          }))
+        : [],
+      isCombo: !!it.isCombo,
+      comboOptions: Array.isArray(it.comboOptions) ? it.comboOptions : [],
+      preparations: Array.isArray(it.preparationGroups) ? it.preparationGroups : [],
     }));
 
     // --------- Tenta encontrar pedido existente do mesmo guestId + tableId em processamento
-    const existing = await OrderModel.findOne({
+    const candidates = await OrderModel.find({
+      sessionId,
+      restaurantId,
       restaurantUnit,
       "guestInfo.id": guestInfo.id,
       "meta.tableId": meta.tableId,
       isPaid: false,
-      status: { $in: ["processing", "payment_requested"] },
-    });
+      status: { $nin: ["paid", "cancelled"] }, 
+    }).lean();
+
+    const existing =
+      candidates.find(
+        (o: any) => String(o?.meta?.tableId) === String(meta.tableId)
+      ) || null;
 
     if (existing) {
+      const now = new Date();
+
       // ---------- UPDATE PEDIDO EXISTENTE ----------
-      existing.items = [...(existing.items || []), ...itemsWithStatus];
-
-      // status pode vir do body (sem forçar processing sempre)
-      if (status) existing.status = status;
-
-      // recomputa total
-      existing.totalAmount = computeTotal(existing.items as any);
-
-      await existing.save();
+      await OrderModel.updateOne(
+        { _id: existing._id },
+        {
+          $push: {
+            items: { $each: itemsWithStatus },
+            // opcional: registrar que voltou para processing
+            statusHistory: { status: "processing", at: now },
+          },
+          $inc: { totalAmount: Number(totalAmount) || 0 },
+          $set: {
+            updatedAt: now,
+            status: "processing",
+            "meta.orderType": meta?.orderType ?? existing.meta?.orderType ?? "local",
+            "meta.splitCount": Number(meta?.splitCount) || existing.meta?.splitCount || 1,
+          },
+        }
+      );
 
       // re-carrega para aplicar possível re-atribuição de garçom
       let updatedDoc = await OrderModel.findById(existing._id);
 
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
-        const tzResolved =
-          tz ||
+        const tz =
           req.body?.tz ||
           (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
           "America/Sao_Paulo";
 
-        await applyAssignmentToOrder({
-          order: updatedDoc,
-          unitId: String(restaurantUnit),
-          tableId: Number(meta.tableId),
-          preferredAttendantId: assignedAttendantId,
-          preferredAttendantName: assignedAttendantName,
-          now: new Date(),
-          tz: tzResolved,
-        });
-
         await updatedDoc.save();
       }
 
-      const printSeq = String(Date.now()); // evento único
-      await enqueuePrintJobsFromOrder(updatedDoc, "ADD_ITEMS", printSeq);
+        const printSeq = String(Date.now()); // evento único
+        await enqueuePrintJobsFromOrder(updatedDoc, "ADD_ITEMS", printSeq);
 
-      return res.status(200).json(updatedDoc);
+        return res.status(200).json(updatedDoc);
+      } else {
+      // ---------- CRIAR NOVO PEDIDO ----------
+      const doc = new OrderModel({
+        restaurantId: restaurantId || undefined,
+        restaurantUnit,
+        guestInfo: {
+          id: guestInfo.id,
+          name: guestInfo.name ?? "",
+          joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
+        },
+        items: itemsWithStatus,
+        status,
+        processingAt: status === 'processing' ? now : null,
+        statusHistory: [{ status, at: status === "processing" ? now : now }],
+        isPaid: false,
+        sessionId,
+        meta: {
+          tableId: Number(meta.tableId),
+          orderType: meta?.orderType ?? "local",
+          splitCount: Number(meta?.splitCount) || 1,
+          orderCreatedAt: now,
+        },
+        totalAmount: Number(totalAmount) || 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      
+      const tz =
+        req.body?.tz ||
+        (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
+          ?.timezone ||
+        "America/Sao_Paulo";
+
+      await applyAssignmentToOrder({
+        order: doc,
+        unitId: String(restaurantUnit),
+        tableId: Number(meta.tableId),
+        preferredAttendantId: assignedAttendantId,
+        preferredAttendantName: assignedAttendantName,
+        now: new Date(), 
+        tz,               
+      });
+
+      await enqueuePrintJobsFromOrder(doc, "NEW_TICKET", "v1");
+
+      await doc.save();
+      res.setHeader("x-session-id", sessionId);
+      return res.status(201).json(doc);
     }
-
-    // ---------- CRIAR NOVO PEDIDO ----------
-    const doc = new OrderModel({
-      restaurantId: restaurantId || undefined,
-      restaurantUnit,
-      guestInfo: {
-        id: guestInfo.id,
-        name: guestInfo.name ?? "",
-        joinedAt: guestInfo.joinedAt ? new Date(guestInfo.joinedAt) : now,
-      },
-      items: itemsWithStatus,
-      status,
-      processingAt: status === "processing" ? now : null,
-      meta: {
-        tableId: meta.tableId,
-        createdAt: meta.createdAt ? new Date(meta.createdAt) : now,
-        tz: meta.tz,
-      },
-      assignedAttendantId: assignedAttendantId || undefined,
-      assignedAttendantName: assignedAttendantName || undefined,
-      total: computeTotal(itemsWithStatus as any),
-      sessionId: req.headers["x-session-id"] || randomUUID(),
-    });
-
-    const tzResolved =
-      tz ||
-      req.body?.tz ||
-      (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
-      "America/Sao_Paulo";
-
-    await applyAssignmentToOrder({
-      order: doc,
-      unitId: String(restaurantUnit),
-      tableId: Number(meta.tableId),
-      preferredAttendantId: assignedAttendantId,
-      preferredAttendantName: assignedAttendantName,
-      now: new Date(),
-      tz: tzResolved,
-    });
-
-    // ✅ salva antes de enfileirar
-    await doc.save();
-
-    // ✅ NEW_TICKET idempotente e estável por pedido
-    await enqueuePrintJobsFromOrder(doc, "NEW_TICKET", `new-${doc._id}`);
-
-    res.setHeader("x-session-id", String(doc.sessionId || ""));
-    return res.status(201).json(doc);
   } catch (e) {
     console.error("Erro ao iniciar pedido:", e);
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
-
 // POST /orders/:orderId/print
 export const manualPrintOrderController = async (req: Request, res: Response) => {
   try {
