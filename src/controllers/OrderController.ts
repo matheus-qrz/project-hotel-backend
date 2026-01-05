@@ -31,12 +31,11 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     }
 
     const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
-    
-    if (!unitId) {
-      return res.status(400).json({ message: "unitId é obrigatório" });
-    }
-
     const restaurantUnit = unitId;
+    
+    if (!restaurantUnit) {
+      return res.status(400).json({ message: "restaurantUnit é obrigatório" });
+    }
 
     const { guestInfo, meta, items, totalAmount, assignedAttendantId, assignedAttendantName } = req.body as any;
 
