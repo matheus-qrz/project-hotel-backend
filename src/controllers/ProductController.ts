@@ -9,10 +9,17 @@ import {
   updateProduct
 } from "../models/Products";
 import { parseDataURL } from "../utils/parseDataURL";
-import { processAndSaveProductImage } from "../infra/image";
 import { IProduct } from "../models";
 import { Types } from "mongoose";
 import { PromotionModel } from "../models/Promotions";
+import { v2 as cloudinary } from "cloudinary";
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 
 function parseMoneyField(val: any): number | null {
   if (val === undefined || val === null || val === "") return null;
@@ -54,21 +61,45 @@ function parseJSONField<T = any>(val: any): T | null {
 }
 
 async function handleIncomingImage(req: Request) {
+  // helper: upload buffer -> cloudinary
+  const uploadBuffer = async (buffer: Buffer, mimetype: string) => {
+    const dataUri = `data:${mimetype};base64,${buffer.toString("base64")}`;
+
+    const result = await cloudinary.uploader.upload(dataUri, {
+      folder: "seu-garcom/products",
+      resource_type: "image",
+    });
+
+    return {
+      url: result.secure_url,
+      publicId: result.public_id,
+      blurDataURL: undefined,
+      width: result.width,
+      height: result.height,
+    };
+  };
+
   // 1) arquivo multipart
   if (req.file?.buffer) {
-    return await processAndSaveProductImage(req.file.buffer, "products");
+    return await uploadBuffer(req.file.buffer, req.file.mimetype || "image/jpeg");
   }
-  // 2) data URL enviada no body (caso clientes antigos ainda mandem base64)
-  const raw = req.body.image;
+
+  // 2) data URL enviada no body (compatibilidade com clientes antigos)
+  const raw = (req.body as any).image;
   if (typeof raw === "string" && raw.startsWith("data:image/")) {
     const parsed = parseDataURL(raw);
-    if (parsed) {
-      return await processAndSaveProductImage(parsed.buffer, "products");
+    if (parsed?.buffer) {
+      // tenta pegar mimetype do parseDataURL; se não tiver, assume jpeg
+      const mime =
+        (parsed as any).mimetype ||
+        (parsed as any).mimeType ||
+        "image/jpeg";
+
+      return await uploadBuffer(parsed.buffer, mime);
     }
   }
-  // 3) nenhuma imagem nova -> retornar null (mantém a existente)
-  console.log("file:", req.file?.originalname, req.file?.mimetype, req.file?.size);
 
+  // 3) nenhuma imagem nova
   return null;
 }
 
@@ -142,10 +173,12 @@ export const createFoodController = async (
     let imageBlur: string | undefined;
     let imageWidth: number | undefined;
     let imageHeight: number | undefined;
+    let imagePublicId: string | undefined;
 
     const imgOut = await handleIncomingImage(req);
     if (imgOut) {
       imageUrl = imgOut.url;
+      imagePublicId = imgOut.publicId;
       imageBlur = imgOut.blurDataURL;
       imageWidth = imgOut.width;
       imageHeight = imgOut.height;
@@ -188,8 +221,8 @@ export const createFoodController = async (
       category,
       description: description ?? "",
       price: priceNumber,
-      // IProduct.image é string obrigatória -> garante string (nem que seja "")
       image: imageUrl ?? "",
+      imagePublicId,
       imageBlur,
       imageWidth,
       imageHeight,
@@ -504,28 +537,39 @@ export const updateFoodController = async (req: Request, res: Response) => {
 
     // IMAGEM
     let imagePatch: string | undefined;
+    let imagePublicIdPatch: string | undefined;
     let imageBlurPatch: string | undefined;
     let imageWidthPatch: number | undefined;
     let imageHeightPatch: number | undefined;
 
-    const imgOut = await (async function handleIncomingImage(req: Request) {
-      // 1) arquivo multipart (multer + memoryStorage)
-      if (req.file?.buffer) {
-        return await processAndSaveProductImage(req.file.buffer, "products");
+    const imgOut = await handleIncomingImage(req);
+
+    if (imgOut) {
+      // se estamos trocando imagem, apaga a antiga
+      if ((existingProduct as any).imagePublicId) {
+        try {
+          await cloudinary.uploader.destroy((existingProduct as any).imagePublicId);
+        } catch {}
       }
-      // 2) data URL enviada no body
+
+      imagePatch = imgOut.url;
+      imagePublicIdPatch = imgOut.publicId;
+      imageBlurPatch = imgOut.blurDataURL;
+      imageWidthPatch = imgOut.width;
+      imageHeightPatch = imgOut.height;
+
+    } else if (typeof (req.body as any).image === "string") {
+      // mantém compatibilidade (se já vier URL pronta)
       const raw = (req.body as any).image;
-      if (typeof raw === "string" && raw.startsWith("data:image/")) {
-        const parsed = parseDataURL(raw);
-        if (parsed) {
-          return await processAndSaveProductImage(parsed.buffer, "products");
-        }
+      if (raw.startsWith("/uploads/") || raw.startsWith("http")) {
+        imagePatch = raw;
+        // IMPORTANT: não mexe no imagePublicId se não houve upload novo
       }
-      return null;
-    })(req);
+    }
 
     if (imgOut) {
       imagePatch       = imgOut.url;         // ex.: "/uploads/products/abc123/original.jpg"
+      imagePublicIdPatch = imgOut.publicId;
       imageBlurPatch   = imgOut.blurDataURL; // base64
       imageWidthPatch  = imgOut.width;
       imageHeightPatch = imgOut.height;
@@ -577,13 +621,13 @@ export const updateFoodController = async (req: Request, res: Response) => {
       updatedData.quantity = quantity;
     }
 
-    if (imagePatch !== undefined) {
-      updatedData.image = imagePatch;
-      // se você guarda esses campos no model, atualiza também:
-      if (imageBlurPatch !== undefined)   updatedData.imageBlur   = imageBlurPatch;
-      if (imageWidthPatch !== undefined)  updatedData.imageWidth  = imageWidthPatch;
-      if (imageHeightPatch !== undefined) updatedData.imageHeight = imageHeightPatch;
-    } else if (typeof image === "string" && image.startsWith("/uploads/")) {
+    if (imagePatch !== undefined) updatedData.image = imagePatch;
+    if (imagePublicIdPatch !== undefined) updatedData.imagePublicId = imagePublicIdPatch;
+    if (imageBlurPatch !== undefined) updatedData.imageBlur = imageBlurPatch;
+    if (imageWidthPatch !== undefined) updatedData.imageWidth = imageWidthPatch;
+    if (imageHeightPatch !== undefined) updatedData.imageHeight = imageHeightPatch;
+
+    if (typeof image === "string" && image.startsWith("/uploads/")) {
       updatedData.image = image; // mantém a atual se veio path válido no body
     }
 
@@ -629,8 +673,15 @@ export const deleteFoodController = async (
     if (!product) {
       return res.status(404).json({ message: "Produto não encontrado" });
     }
+    
+    const publicId = (product as any).imagePublicId;
+    if (publicId) {
+      try {
+        await cloudinary.uploader.destroy(publicId);
+      } catch {}
+    }
 
-    const deletedFood = await deleteProduct(id);
+    await deleteProduct(id);
     return res.status(200).json({ message: "Produto excluído com sucesso" });
   } catch (error) {
     console.error("Erro ao excluir produto:", error);
@@ -748,10 +799,12 @@ export const createComboController = async (req: Request, res: Response) => {
     let imageBlur: string | undefined;
     let imageWidth: number | undefined;
     let imageHeight: number | undefined;
-    
+    let imagePublicId: string | undefined;
+
     const imgOut = await handleIncomingImage(req);
     if (imgOut) {
       imageUrl = imgOut.url;
+      imagePublicId = (imgOut as any).publicId; // <- novo
       imageBlur = imgOut.blurDataURL;
       imageWidth = imgOut.width;
       imageHeight = imgOut.height;
@@ -773,6 +826,7 @@ export const createComboController = async (req: Request, res: Response) => {
 
     if (imageUrl) {
       comboData.image = imageUrl;
+      if (imagePublicId) (comboData as any).imagePublicId = imagePublicId; // <- novo
       (comboData as any).imageBlur = imageBlur;
       (comboData as any).imageWidth = imageWidth;
       (comboData as any).imageHeight = imageHeight;
@@ -910,11 +964,23 @@ export const updateComboController = async (
     if (finalGroups) (updatedData as any).comboOptions = finalGroups;
 
     if (imgOut) {
+      // se veio imagem nova, apaga a antiga (se existir)
+      const oldPublicId = (existing as any).imagePublicId as string | undefined;
+      if (oldPublicId) {
+        try {
+          await cloudinary.uploader.destroy(oldPublicId);
+        } catch {}
+      }
+
       updatedData.image = imgOut.url;
+      (updatedData as any).imagePublicId = (imgOut as any).publicId; // <- novo
+
       (updatedData as any).imageBlur = imgOut.blurDataURL;
       (updatedData as any).imageWidth = imgOut.width;
       (updatedData as any).imageHeight = imgOut.height;
+
     } else if (typeof image === "string" && image.trim()) {
+      // aqui NÃO mexe no imagePublicId (porque não teve upload novo)
       updatedData.image = image.trim();
     }
 

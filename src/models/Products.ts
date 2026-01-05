@@ -39,7 +39,8 @@ export interface IPreparationGroup {
 export interface IProduct extends Document {
   restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
   category: string;
-  image: string;            
+  image: string;
+  imagePublicId?: string;            
   imageBlur?: string;       
   imageWidth?: number;      
   imageHeight?: number;     
@@ -98,6 +99,7 @@ const productSchema = new Schema<IProduct>({
     type: String,
   },
   image: { type: String },
+  imagePublicId: { type: String },
   imageBlur: { type: String },        
   imageWidth: { type: Number },       
   imageHeight: { type: Number },  
