@@ -23,14 +23,14 @@ function buildDeltaOrderForPrint(order: any, items: any[]) {
 // Inicializador do pedido
 export const initiateOrderController = async (req: Request, res: Response) => {
   try {
- const restaurantId =
+    const restaurantId =
       String((req.params as any)?.restaurantId || req.body?.restaurantId || "").trim();
 
     if (!restaurantId) {
       return res.status(400).json({ message: "restaurantId é obrigatório" });
     }
 
-    const unitId = String(req.body?.unitId || req.body?.restaurantUnitId || "").trim();
+    const unitId = String(req.body?.unitId || req.body?.restaurantUnit || "").trim();
     const restaurantUnit = unitId;
     
     if (!restaurantUnit) {
