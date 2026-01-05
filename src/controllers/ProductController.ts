@@ -8,11 +8,10 @@ import {
   ProductModel,
   updateProduct
 } from "../models/Products";
-import { parseDataURL } from "../utils/parseDataURL";
 import { IProduct } from "../models";
 import { Types } from "mongoose";
 import { PromotionModel } from "../models/Promotions";
-import { v2 as cloudinary } from "cloudinary";
+import cloudinary from "../config/cloudinary";
 
 type ImgOut = {
   url: string;
