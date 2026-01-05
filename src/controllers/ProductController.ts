@@ -14,6 +14,15 @@ import { Types } from "mongoose";
 import { PromotionModel } from "../models/Promotions";
 import { v2 as cloudinary } from "cloudinary";
 
+type ImgOut = {
+  url: string;
+  publicId: string;
+  width?: number;
+  height?: number;
+  blurDataURL?: string; // se você gera
+};
+
+
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -60,47 +69,42 @@ function parseJSONField<T = any>(val: any): T | null {
   return val as T;
 }
 
-async function handleIncomingImage(req: Request) {
-  // helper: upload buffer -> cloudinary
-  const uploadBuffer = async (buffer: Buffer, mimetype: string) => {
-    const dataUri = `data:${mimetype};base64,${buffer.toString("base64")}`;
+export async function handleIncomingImage(req: any): Promise<ImgOut | null> {
+  const file = req.file;
+  if (!file) return null;
 
-    const result = await cloudinary.uploader.upload(dataUri, {
-      folder: "seu-garcom/products",
-      resource_type: "image",
-    });
+  // file.buffer existe no memoryStorage
+  if (!file.buffer) {
+    throw new Error("Multer file.buffer ausente. Verifique memoryStorage e o campo 'image'.");
+  }
 
-    return {
-      url: result.secure_url,
-      publicId: result.public_id,
-      blurDataURL: undefined,
-      width: result.width,
-      height: result.height,
-    };
+  // validação básica
+  if (!file.mimetype?.startsWith("image/")) {
+    throw new Error(`Arquivo inválido: mimetype=${file.mimetype}`);
+  }
+
+  const uploadResult = await new Promise<any>((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder: "combos",            // ajuste como quiser
+        resource_type: "image",
+        // public_id opcional
+      },
+      (err, result) => {
+        if (err) return reject(err);
+        resolve(result);
+      }
+    );
+
+    stream.end(file.buffer);
+  });
+
+  return {
+    url: uploadResult.secure_url || uploadResult.url,
+    publicId: uploadResult.public_id,
+    width: uploadResult.width,
+    height: uploadResult.height,
   };
-
-  // 1) arquivo multipart
-  if (req.file?.buffer) {
-    return await uploadBuffer(req.file.buffer, req.file.mimetype || "image/jpeg");
-  }
-
-  // 2) data URL enviada no body (compatibilidade com clientes antigos)
-  const raw = (req.body as any).image;
-  if (typeof raw === "string" && raw.startsWith("data:image/")) {
-    const parsed = parseDataURL(raw);
-    if (parsed?.buffer) {
-      // tenta pegar mimetype do parseDataURL; se não tiver, assume jpeg
-      const mime =
-        (parsed as any).mimetype ||
-        (parsed as any).mimeType ||
-        "image/jpeg";
-
-      return await uploadBuffer(parsed.buffer, mime);
-    }
-  }
-
-  // 3) nenhuma imagem nova
-  return null;
 }
 
 export const createFoodController = async (
@@ -175,7 +179,8 @@ export const createFoodController = async (
     let imageHeight: number | undefined;
     let imagePublicId: string | undefined;
 
-    const imgOut = await handleIncomingImage(req);
+    const imgOut = req.file ? await handleIncomingImage(req) : null;
+
     if (imgOut) {
       imageUrl = imgOut.url;
       imagePublicId = imgOut.publicId;
@@ -542,7 +547,7 @@ export const updateFoodController = async (req: Request, res: Response) => {
     let imageWidthPatch: number | undefined;
     let imageHeightPatch: number | undefined;
 
-    const imgOut = await handleIncomingImage(req);
+    const imgOut = req.file ? await handleIncomingImage(req) : null;
 
     if (imgOut) {
       // se estamos trocando imagem, apaga a antiga
@@ -801,7 +806,8 @@ export const createComboController = async (req: Request, res: Response) => {
     let imageHeight: number | undefined;
     let imagePublicId: string | undefined;
 
-    const imgOut = await handleIncomingImage(req);
+    const imgOut = req.file ? await handleIncomingImage(req) : null;
+
     if (imgOut) {
       imageUrl = imgOut.url;
       imagePublicId = (imgOut as any).publicId; // <- novo
@@ -935,7 +941,7 @@ export const updateComboController = async (
       unitIdFromParams !== undefined ? unitIdFromParams : unitIdFromBody;
 
     // 5) Tratar imagem (arquivo ou string)
-    const imgOut = await handleIncomingImage(req);
+    const imgOut = req.file ? await handleIncomingImage(req) : null;
 
     const updatedData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true,
