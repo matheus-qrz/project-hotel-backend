@@ -1,7 +1,7 @@
 import mongoose, { Types } from "mongoose";
 import { randomUUID } from "crypto";
 import { Request, Response } from "express";
-import { OrderModel } from "../models/Order";
+import { IOrderItem, OrderModel } from "../models/Order";
 import { UserModel } from "../models/User";
 import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
@@ -41,9 +41,9 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     const now = new Date();
 
     // Itens com status default
-    const itemsWithStatus = (Array.isArray(items) ? items : []).map((it: any) => ({
+    const itemsWithStatus = items.map((it: IOrderItem) => ({
       ...it,
-      status: it.status || "new",
+      status: it.status || "added",
     }));
 
     // --------- Tenta encontrar pedido existente do mesmo guestId + tableId em processamento
@@ -148,6 +148,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     return res.status(500).json({ message: "Erro interno ao iniciar pedido." });
   }
 };
+
 // POST /orders/:orderId/print
 export const manualPrintOrderController = async (req: Request, res: Response) => {
   try {
