@@ -940,6 +940,16 @@ export const updateComboController = async (
     const effectiveUnitId =
       unitIdFromParams !== undefined ? unitIdFromParams : unitIdFromBody;
 
+    console.log("REQ.FILE:", {
+      hasFile: !!req.file,
+      fieldname: req.file?.fieldname,
+      mimetype: req.file?.mimetype,
+      size: req.file?.size,
+      hasBuffer: !!req.file?.buffer,
+      hasPath: (req.file as any)?.path,
+    });
+
+
     // 5) Tratar imagem (arquivo ou string)
     const imgOut = req.file ? await handleIncomingImage(req) : null;
 
