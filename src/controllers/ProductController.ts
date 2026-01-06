@@ -21,14 +21,6 @@ type ImgOut = {
   blurDataURL?: string; // se você gera
 };
 
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-
 function parseMoneyField(val: any): number | null {
   if (val === undefined || val === null || val === "") return null;
 
