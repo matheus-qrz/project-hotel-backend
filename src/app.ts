@@ -8,7 +8,7 @@ import { lookup } from "mime-types";
 
 dotenv.config();
 
-import "./cloudinary";
+import "./config/cloudinary";
 
 const app = express();
 
