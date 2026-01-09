@@ -24,16 +24,28 @@ type ImgOut = {
 function parseMoneyField(val: any): number | null {
   if (val === undefined || val === null || val === "") return null;
 
-  if (typeof val === "number") return val;
+  if (typeof val === "number") {
+    // Se vier como número puro, assume que são CENTAVOS
+    return val / 100;
+  }
 
   if (typeof val === "string") {
-    // remove tudo que não for dígito, vírgula ou ponto
-    const normalized = val
-      .replace(/[^\d.,-]/g, "")
-      .replace(/\./g, "")
-      .replace(",", ".");
-    const n = Number(normalized);
-    return Number.isNaN(n) ? null : n;
+    // Se contém formatação (R$, vírgula, ponto), trata como valor formatado
+    const hasFormatting = /[R$,.]/.test(val);
+    
+    if (hasFormatting) {
+      // Remove tudo que não for dígito, vírgula ou ponto
+      const normalized = val
+        .replace(/[^\d.,-]/g, "")
+        .replace(/\./g, "")
+        .replace(",", ".");
+      const n = Number(normalized);
+      return Number.isNaN(n) ? null : n;
+    } else {
+      // String com apenas dígitos = centavos
+      const n = Number(val);
+      return Number.isNaN(n) ? null : n / 100;
+    }
   }
 
   return null;
