@@ -252,35 +252,41 @@ export async function enqueuePrintJobsFromOrder(
   for (const station of stations) {
     // Itens da estação corrente
     const itemsForStation: PrintJobItem[] = norm.items
-      .filter((it: any) => it.kitchenStation === station)
-      .map((it: any) => {
-        const addons: PrintJobAddon[] | undefined = Array.isArray(it.addons)
-          ? it.addons.map((ad: any) => ({
-              name: ad.name || ad.label || ad.title,
-              qty: ad.quantity ?? ad.qty ?? 1,
-            }))
-          : undefined;
+  .filter((it: any) => it.kitchenStation === station)
+  .map((it: any) => {
+    const addons: PrintJobAddon[] | undefined = Array.isArray(it.addons)
+      ? it.addons.map((ad: any) => ({
+          name: ad.name || ad.label || ad.title,
+          qty: ad.quantity ?? ad.qty ?? 1,
+        }))
+      : undefined;
 
-        const isPromo =
-          !!it.appliedPromotionId ||
-          !!it.promotionId ||
-          !!it.isPromotional ||
-          false;
+    const isPromo =
+      !!it.appliedPromotionId ||
+      !!it.promotionId ||
+      !!it.isPromotional ||
+      false;
 
-        const isCombo =
-          !!it.comboId ||
-          !!it.isCombo ||
-          false;
+    const isCombo =
+      !!it.comboId ||
+      !!it.isCombo ||
+      false;
 
-        return {
-          name: it.name,
-          qty: it.quantity ?? it.qty ?? 1,
-          observations: it.observations ?? it.notes ?? "",
-          addons,
-          isPromo,
-          isCombo,
-        };
-      });
+    // ✅ ADICIONE ESTAS LINHAS:
+    const comboOptions = Array.isArray(it.comboOptions) 
+      ? it.comboOptions 
+      : undefined;
+
+    return {
+      name: it.name,
+      qty: it.quantity ?? it.qty ?? 1,
+      observations: it.observations ?? it.notes ?? "",
+      addons,
+      isPromo,
+      isCombo,
+      comboOptions, 
+    };
+  });
 
     if (!itemsForStation.length) continue;
 
