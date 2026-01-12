@@ -953,40 +953,177 @@ export const removeOrderItemController = async (req: Request, res: Response) => 
 
 // Atualizar quantidade/detalhes de item específico de um pedido
 export const updateOrderItemController = async (req: Request, res: Response) => {
+  const { tableId, orderId, itemId } = req.params as any;
+  const { guestId, quantity, status, servedAt } = (req.body || {}) as any;
+
+  const role = String(req.user?.role || "");
+  const isManagerOrAttendant = role === "MANAGER" || role === "ATTENDANT";
+
   try {
-    const { unitId, tableId, orderId, itemId } = req.params;
-    const updates = req.body;
-
-    const order = await OrderModel.findOne({ 
-      _id: orderId, 
-      restaurantUnit: unitId,
-      'meta.tableId': Number(tableId)
-    });
-    
-    if (!order) return res.status(404).json({ message: "Order not found" });
-
-    const item = (order.items || []).find((it: any) => String(it._id) === String(itemId));
-    if (!item) return res.status(404).json({ message: "Item not found" });
-
-    // Aplica as atualizações
-    Object.assign(item, updates);
-
-    // 🔹 NOVO: Se a quantidade virar 0, remove o item
-    if (updates.quantity !== undefined && Number(updates.quantity) <= 0) {
-      order.items = (order.items || []).filter((it: any) => String(it._id) !== String(itemId));
+    // 0) validações de ids
+    if (!Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "orderId inválido." });
+    }
+    if (!Types.ObjectId.isValid(itemId)) {
+      return res.status(400).json({ message: "itemId inválido." });
     }
 
-    await order.save();
+    const tableNum = Number(tableId);
+    if (Number.isNaN(tableNum)) {
+      return res.status(400).json({ message: "tableId inválido." });
+    }
 
-    // 🔹 NOVO: Verifica se deve cancelar o pedido inteiro
+    // 1) Confirma pedido + mesa
+    // 🔹 CORREÇÃO: Busca APENAS com _id e meta.tableId (sem unitId)
+    const doc = await OrderModel.findOne({ 
+      _id: orderId, 
+      "meta.tableId": tableNum 
+    });
+    
+    if (!doc) return res.status(404).json({ message: "Pedido não encontrado." });
+
+    const currentUserId = String(req.user?.id ?? "");
+
+    // 2) Gates (manager/attendant passa; demais checam range)
+    if (!isManagerOrAttendant) {
+      if (doc.assignedAttendantId && String(doc.assignedAttendantId) !== currentUserId) {
+        return res.status(403).json({ message: "Você não está atribuído a este pedido." });
+      }
+      if (!doc.assignedAttendantId) {
+        const canOperate = await isTableInCurrentRange({
+          unitId: String(doc.restaurantUnit),
+          attendantId: currentUserId,
+          tableId: tableNum,
+        });
+        if (!canOperate) {
+          return res.status(403).json({ message: "Pedido fora do seu range/horário." });
+        }
+      }
+    }
+
+    // 3) Filtro base robusto com ObjectId no subdocumento
+    const baseFilter: any = {
+      _id: new Types.ObjectId(orderId),
+      "meta.tableId": tableNum,
+      isPaid: false,
+      status: { $in: ["processing", "payment_requested"] },
+      "items._id": new Types.ObjectId(itemId),
+    };
+    if (guestId) baseFilter["guestInfo.id"] = guestId;
+
+    const now = new Date();
+    const $set: any = {};
+    const $unset: any = {};
+    const $currentDate: any = { "items.$.updatedAt": true };
+
+    // 4) quantity
+    if (typeof quantity === "number") {
+      if (quantity <= 0) {
+        $set["items.$.quantity"] = 0;
+        $set["items.$.status"] = "cancelled";
+        $set["items.$.cancelledAt"] = now;
+        $unset["items.$.completedAt"] = "";
+      } else {
+        $set["items.$.quantity"] = quantity;
+      }
+    }
+
+    // 5) status (inclui 'added' → mantém processing e só atualiza timestamps)
+    if (typeof status === "string") {
+      const normalized = status.toLowerCase();
+      if (["processing", "completed", "cancelled", "reduced", "added"].includes(normalized)) {
+        if (normalized === "completed") {
+          const ts = servedAt ? new Date(servedAt) : now;
+          $set["items.$.status"] = "completed";
+          $set["items.$.completedAt"] = ts;
+          $unset["items.$.cancelledAt"] = "";
+        } else if (normalized === "cancelled") {
+          $set["items.$.status"] = "cancelled";
+          $set["items.$.cancelledAt"] = now;
+          $unset["items.$.completedAt"] = "";
+        } else if (normalized === "reduced") {
+          $set["items.$.status"] = "reduced";
+          $set["items.$.reducedAt"] = now;
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
+        } else if (normalized === "added") {
+          // mantém como 'processing' mas registra atualização
+          $set["items.$.status"] = "processing";
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
+        } else {
+          // processing explícito
+          $set["items.$.status"] = "processing";
+          $unset["items.$.completedAt"] = "";
+          $unset["items.$.cancelledAt"] = "";
+        }
+      }
+    }
+
+    if (Object.keys($set).length === 0 && Object.keys($unset).length === 0) {
+      return res.status(400).json({ message: "Nada para atualizar." });
+    }
+
+    const updateOp: any = { $set, $currentDate };
+    if (Object.keys($unset).length) updateOp.$unset = $unset;
+
+    const updated = await OrderModel.findOneAndUpdate(baseFilter, updateOp, { new: true });
+    if (!updated) {
+      return res.status(404).json({ message: "Pedido/Item não encontrado ou bloqueado para edição." });
+    }
+
+    // 6) Recompute tolerante a erro
+    let recomputed = null;
+    try { 
+      recomputed = await recomputeAndReturn(String(updated._id)); 
+    } catch (err) {
+      console.warn('recomputeAndReturn falhou (update item):', err);
+    }
+
+    const base = (recomputed ?? updated) as any;
+    
+    const item = (base?.items || []).find((it: any) => String(it?._id) === String(itemId));
+    if (item && typeof status === "string") {
+      const st = String(item.status || "").toLowerCase();
+
+      if (st === "cancelled") {
+        const ts = item.cancelledAt ? new Date(item.cancelledAt) : new Date();
+        const seq = `item-cancel-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "CANCEL_ITEMS" as any,
+          seq
+        );
+      } else if (st === "reduced") {
+        const ts = item.reducedAt ? new Date(item.reducedAt) : new Date();
+        const seq = `item-reduce-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "REDUCE_ITEMS" as any,
+          seq
+        );
+      } else if (st === "completed") {
+        const ts = item.completedAt ? new Date(item.completedAt) : new Date();
+        const seq = `item-complete-${orderId}-${itemId}-${ts.getTime()}`;
+        await enqueuePrintJobsFromOrder(
+          buildDeltaOrderForPrint(base, [item]),
+          "COMPLETE_ITEMS" as any,
+          seq
+        );
+      }
+    }
+
+    // 🔹 NOVO: Verifica se deve cancelar o pedido inteiro após a atualização
     const finalOrder = await checkAndCancelOrderIfAllItemsCancelled(orderId);
 
-    return res.json((finalOrder ?? order).toObject());
-  } catch (err: any) {
-    return res.status(500).json({ 
-      message: "Failed to update item", 
-      error: String(err?.message || err) 
+    return res.json(finalOrder ?? recomputed ?? updated);
+  } catch (e) {
+    console.error('Erro ao atualizar item:', {
+      params: req.params,
+      body: req.body,
+      error: e,
     });
+    return res.status(500).json({ message: "Erro ao atualizar item." });
   }
 };
 
