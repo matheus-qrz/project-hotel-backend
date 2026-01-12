@@ -1052,7 +1052,7 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
           $unset["items.$.completedAt"] = "";
           $unset["items.$.cancelledAt"] = "";
         } else {
-          // processing explícito
+          // processing 
           $set["items.$.status"] = "processing";
           $unset["items.$.completedAt"] = "";
           $unset["items.$.cancelledAt"] = "";
