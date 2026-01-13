@@ -55,7 +55,7 @@ export interface IProduct extends Document {
   isAdditional?: boolean; 
   hasAddons?: boolean; 
   additionalOptions?: IAdditional[];
-  accompaniments?: IAccompaniment;
+  accompaniments?: IAccompaniment[];
   preparationGroups?: IPreparationGroup[];
   isOnPromotion: boolean;
   promotionalPrice?: number;
