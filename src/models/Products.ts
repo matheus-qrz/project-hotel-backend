@@ -153,7 +153,7 @@ const productSchema = new Schema<IProduct>({
   ],
   accompaniments: [
     {
-      id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+      id: { type: String, required: true }
       name: { type: String, required: true },
       isAvailable: { type: Boolean, default: true }
     }
