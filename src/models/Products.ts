@@ -153,7 +153,7 @@ const productSchema = new Schema<IProduct>({
   ],
   accompaniments: [
     {
-      id: { type: String, required: true }
+      id: { type: String, required: true },
       name: { type: String, required: true },
       isAvailable: { type: Boolean, default: true }
     }
