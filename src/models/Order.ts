@@ -28,6 +28,7 @@ export interface IOrderItem {
   observations: String,
   image: String,
   addons?: any[]; 
+  accompaniments?: any[];
   isOnPromotion?: boolean;
   originalPrice?: number;
   isCombo?: boolean;
@@ -127,6 +128,11 @@ const orderSchema = new Schema(
           required: true
         },
         addons: {
+          type: [mongoose.Schema.Types.Mixed],
+          ref: "Products",
+          required: false
+        },
+        accompaniments: {  
           type: [mongoose.Schema.Types.Mixed],
           ref: "Products",
           required: false

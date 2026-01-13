@@ -74,6 +74,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
             createdAt: ad.createdAt ? new Date(ad.createdAt) : now,
           }))
         : [],
+      accompaniments: Array.isArray(it.accompaniments) ? it.accompaniments : [],
       isCombo: !!it.isCombo,
       comboOptions: Array.isArray(it.comboOptions) ? it.comboOptions : [],
       preparations: Array.isArray(it.preparationGroups) ? it.preparationGroups : [],
