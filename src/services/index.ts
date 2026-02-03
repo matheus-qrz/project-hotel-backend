@@ -1,4 +1,4 @@
-// services/dashboardService.ts
+// services/index.ts - Dashboard Services para Hotel
 import mongoose from "mongoose";
 import { OrderModel } from "../models/Order";
 import { RestaurantUnitModel as HotelUnitModel } from "../models/RestaurantUnit";
