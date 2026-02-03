@@ -1,4 +1,4 @@
-// utils/dashboard.ts (ou onde estiver)
+// utils/dashboardFilter.ts
 import { Request } from 'express';
 import mongoose from 'mongoose';
 
@@ -15,11 +15,11 @@ export function buildDashboardFilterFromRequest(req: Request) {
 
   const objectId = new mongoose.Types.ObjectId(String(id));
 
-  if (scope === 'unit') {
+  if (scope === 'hotelUnit') {
     return { restaurantUnit: objectId };
   }
 
-  if (scope === 'restaurant') {
+  if (scope === 'hotel') {
     return { 'restaurantUnitData.restaurant': objectId };
   }
 
