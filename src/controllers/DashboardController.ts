@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { Request, Response } from "express";
 import { OrderModel as Order } from "../models/Order";
-import { RestaurantUnitModel as RestaurantUnit } from '../models/RestaurantUnit';
+import { RestaurantUnitModel as HotelUnit } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
   CustomersSummary,
@@ -21,22 +21,22 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
     if (!scope || !id || !mongoose.isValidObjectId(String(id))) {
       return res.status(400).json({ message: 'Parâmetros inválidos' });
     }
-    const restaurantOrUnitId = new mongoose.Types.ObjectId(String(id));
+    const hotelOrUnitId = new mongoose.Types.ObjectId(String(id));
 
     // ----- monta o filtro base
     let matchFilter: any = { status: 'paid' };
 
-    if (scope === 'unit') {
-      matchFilter.restaurantUnit = restaurantOrUnitId;
-    } else if (scope === "restaurant") {
-      const units = await RestaurantUnit.find({ restaurant: restaurantOrUnitId })
+    if (scope === 'hotelUnit') {
+      matchFilter.restaurantUnit = hotelOrUnitId;
+    } else if (scope === "hotel") {
+      const units = await HotelUnit.find({ restaurant: hotelOrUnitId })
         .select("_id")
         .lean();
 
       const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
 
-      // inclui SEMPRE a matriz (há bases onde pedidos da matriz usam o próprio restaurantId em restaurantUnit)
-      const ids = [...unitIds, restaurantOrUnitId];
+      // inclui SEMPRE a matriz (há bases onde pedidos da matriz usam o próprio hotelId em restaurantUnit)
+      const ids = [...unitIds, hotelOrUnitId];
 
       matchFilter.restaurantUnit = { $in: ids };
     } else {
@@ -118,16 +118,16 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
 
     const targetId = new mongoose.Types.ObjectId(String(id));
 
-    // ---- filtro base por restaurante/unidade + somente pedidos pagos e com guest definido
+    // ---- filtro base por hotel/unidade + somente pedidos pagos e com guest definido
     let matchFilter: any = {
       status: "paid",
       "guestInfo.id": { $ne: null }
     };
 
-    if (scope === "unit") {
+    if (scope === "hotelUnit") {
       matchFilter.restaurantUnit = targetId;
-    } else if (scope === "restaurant") {
-      const units = await RestaurantUnit.find({ restaurant: targetId }).select("_id").lean();
+    } else if (scope === "hotel") {
+      const units = await HotelUnit.find({ restaurant: targetId }).select("_id").lean();
       const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
       matchFilter.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
     } else {
@@ -329,18 +329,18 @@ export const getPromotionsDashboardController = async (req: Request, res: Respon
 // ------------------ ORDERS DASHBOARD ------------------
 export const getOrdersDashboardDataController = async (req: Request, res: Response) => {
   try {
-    const { scope, restaurantId, unitId } = req.query as {
-      scope: "restaurant" | "unit";
-      restaurantId?: string;
-      unitId?: string;
+    const { scope, hotelId, hotelUnitId } = req.query as {
+      scope: "hotel" | "hotelUnit";
+      hotelId?: string;
+      hotelUnitId?: string;
     };
 
     let matchBase: any = {};
-        if (scope === 'unit' && unitId) {
-          matchBase.restaurantUnit = new mongoose.Types.ObjectId(String(unitId));
-        } else if (scope === 'restaurant' && restaurantId) {
-          const targetId = new mongoose.Types.ObjectId(String(restaurantId));
-          const units = await RestaurantUnit.find({ restaurant: targetId })
+        if (scope === 'hotelUnit' && hotelUnitId) {
+          matchBase.restaurantUnit = new mongoose.Types.ObjectId(String(hotelUnitId));
+        } else if (scope === 'hotel' && hotelId) {
+          const targetId = new mongoose.Types.ObjectId(String(hotelId));
+          const units = await HotelUnit.find({ restaurant: targetId })
             .select('_id').lean();
           const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
           matchBase.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
@@ -485,7 +485,7 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
       agg?.summary?.[0] ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
     const [avgRes] = await Order.aggregate([
-      { $match: { restaurant: new mongoose.Types.ObjectId(restaurantId), status: "completed" } },
+      { $match: { restaurantId: new mongoose.Types.ObjectId(hotelId), status: "completed" } },
       {
         $addFields: {
           startAt: {

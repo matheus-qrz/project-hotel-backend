@@ -8,21 +8,21 @@ import {
 } from './DashboardController';
 
 const getDashboardFilter = (scope: string, id: string) => {
-    return scope === 'unit'
+    return scope === 'hotelUnit'
         ? { restaurantUnit: new mongoose.Types.ObjectId(id) }
-        : { restaurant: new mongoose.Types.ObjectId(id) };
+        : { hotel: new mongoose.Types.ObjectId(id) };
 };
 
 export const getDashboardByScopeController = async (req: Request, res: Response) => {
     const { scope, id, type } = req.params;
 
-    if (!['unit', 'restaurant'].includes(scope)) {
+    if (!['hotelUnit', 'hotel'].includes(scope)) {
         return res.status(400).json({ message: 'Escopo inválido.' });
     }
 
     (req.query as any).scope = scope;
-    if (scope === 'unit')       (req.query as any).unitId       = id;
-    if (scope === 'restaurant') (req.query as any).restaurantId = id;
+    if (scope === 'hotelUnit') (req.query as any).hotelUnitId = id;
+    if (scope === 'hotel')     (req.query as any).hotelId     = id;
 
     const filter = getDashboardFilter(scope, id);
 

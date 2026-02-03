@@ -1,7 +1,7 @@
 // services/dashboardService.ts
 import mongoose from "mongoose";
 import { OrderModel } from "../models/Order";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { RestaurantUnitModel as HotelUnitModel } from "../models/RestaurantUnit";
 
 /**
  * Interface para relatório de faturamento
@@ -44,26 +44,26 @@ export interface OrdersReport {
 }
 
 /**
- * Obtém um resumo geral do dashboard para uma unidade específica
+ * Obtém um resumo geral do dashboard para uma unidade de hotel específica
  */
-export const getDashboardSummary = async (unitId: string) => {
-    // Valida o ID da unidade
-    if (!mongoose.Types.ObjectId.isValid(unitId)) {
-        throw new Error("ID de unidade inválido");
+export const getDashboardSummary = async (hotelUnitId: string) => {
+    // Valida o ID da unidade do hotel
+    if (!mongoose.Types.ObjectId.isValid(hotelUnitId)) {
+        throw new Error("ID de unidade de hotel inválido");
     }
 
-    // Busca a unidade para confirmar que existe
-    const unit = await RestaurantUnitModel.findById(unitId);
+    // Busca a unidade do hotel para confirmar que existe
+    const unit = await HotelUnitModel.findById(hotelUnitId);
     if (!unit) {
-        throw new Error("Unidade não encontrada");
+        throw new Error("Unidade de hotel não encontrada");
     }
 
     // Obtém os relatórios
-    const revenueReport = await getRevenueReport(unitId);
-    const ordersReport = await getOrdersReport(unitId);
+    const revenueReport = await getRevenueReport(hotelUnitId);
+    const ordersReport = await getOrdersReport(hotelUnitId);
 
     // Obtém os produtos mais populares
-    const topProducts = await getTopProducts(unitId, 5);
+    const topProducts = await getTopProducts(hotelUnitId, 5);
 
     return {
         revenue: revenueReport,
@@ -73,12 +73,12 @@ export const getDashboardSummary = async (unitId: string) => {
 };
 
 /**
- * Obtém um relatório de faturamento para uma unidade específica
+ * Obtém um relatório de faturamento para uma unidade de hotel específica
  */
-export const getRevenueReport = async (unitId: string): Promise<RevenueReport> => {
-    // Valida o ID da unidade
-    if (!mongoose.Types.ObjectId.isValid(unitId)) {
-        throw new Error("ID de unidade inválido");
+export const getRevenueReport = async (hotelUnitId: string): Promise<RevenueReport> => {
+    // Valida o ID da unidade do hotel
+    if (!mongoose.Types.ObjectId.isValid(hotelUnitId)) {
+        throw new Error("ID de unidade de hotel inválido");
     }
 
     // Data atual e últimos 6 meses
@@ -101,12 +101,12 @@ export const getRevenueReport = async (unitId: string): Promise<RevenueReport> =
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
 
-    // Obtém todos os pedidos pagos da unidade nos últimos 6 meses
+    // Obtém todos os pedidos pagos da unidade do hotel nos últimos 6 meses
     const orders = await OrderModel.find({
-        'restaurantUnit': unitId,
+        'restaurantUnit': hotelUnitId,
         'isPaid': true,
         'createdAt': { $gte: sixMonthsAgo },
-        'status': { $ne: 'cancelled' } // alterado para minúsculo conforme nosso enum
+        'status': { $ne: 'cancelled' }
     }).sort({ createdAt: 1 });
 
     // Calcula o faturamento total
@@ -170,12 +170,12 @@ export const getRevenueReport = async (unitId: string): Promise<RevenueReport> =
 };
 
 /**
- * Obtém um relatório de pedidos para uma unidade específica
+ * Obtém um relatório de pedidos para uma unidade de hotel específica
  */
-export const getOrdersReport = async (unitId: string): Promise<OrdersReport> => {
-    // Valida o ID da unidade
-    if (!mongoose.Types.ObjectId.isValid(unitId)) {
-        throw new Error("ID de unidade inválido");
+export const getOrdersReport = async (hotelUnitId: string): Promise<OrdersReport> => {
+    // Valida o ID da unidade do hotel
+    if (!mongoose.Types.ObjectId.isValid(hotelUnitId)) {
+        throw new Error("ID de unidade de hotel inválido");
     }
 
     // Data atual e últimos 6 meses
@@ -187,9 +187,9 @@ export const getOrdersReport = async (unitId: string): Promise<OrdersReport> => 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    // Obtém todos os pedidos da unidade nos últimos 6 meses
+    // Obtém todos os pedidos da unidade do hotel nos últimos 6 meses
     const orders = await OrderModel.find({
-        'restaurantUnit': unitId,
+        'restaurantUnit': hotelUnitId,
         'createdAt': { $gte: sixMonthsAgo }
     }).sort({ createdAt: 1 });
 
@@ -268,17 +268,17 @@ export const getOrdersReport = async (unitId: string): Promise<OrdersReport> => 
 };
 
 /**
- * Obtém os produtos mais vendidos para uma unidade específica
+ * Obtém os produtos mais vendidos para uma unidade de hotel específica
  */
-export const getTopProducts = async (unitId: string, limit: number = 5) => {
-    // Valida o ID da unidade
-    if (!mongoose.Types.ObjectId.isValid(unitId)) {
-        throw new Error("ID de unidade inválido");
+export const getTopProducts = async (hotelUnitId: string, limit: number = 5) => {
+    // Valida o ID da unidade do hotel
+    if (!mongoose.Types.ObjectId.isValid(hotelUnitId)) {
+        throw new Error("ID de unidade de hotel inválido");
     }
 
-    // Obtém todos os pedidos da unidade que não foram cancelados
+    // Obtém todos os pedidos da unidade do hotel que não foram cancelados
     const orders = await OrderModel.find({
-        'restaurantUnit': unitId,
+        'restaurantUnit': hotelUnitId,
         'status': { $ne: 'cancelled' }
     });
 
@@ -321,15 +321,15 @@ export const getTopProducts = async (unitId: string, limit: number = 5) => {
 /**
  * Obtém um relatório de faturamento diário para um período específico
  */
-export const getDailyRevenueReport = async (unitId: string, startDate: Date, endDate: Date) => {
-    // Valida o ID da unidade
-    if (!mongoose.Types.ObjectId.isValid(unitId)) {
-        throw new Error("ID de unidade inválido");
+export const getDailyRevenueReport = async (hotelUnitId: string, startDate: Date, endDate: Date) => {
+    // Valida o ID da unidade do hotel
+    if (!mongoose.Types.ObjectId.isValid(hotelUnitId)) {
+        throw new Error("ID de unidade de hotel inválido");
     }
 
-    // Obtém todos os pedidos pagos da unidade no período
+    // Obtém todos os pedidos pagos da unidade do hotel no período
     const orders = await OrderModel.find({
-        'restaurantUnit': unitId,
+        'restaurantUnit': hotelUnitId,
         'isPaid': true,
         'createdAt': { $gte: startDate, $lte: endDate },
         'status': { $ne: 'cancelled' }
