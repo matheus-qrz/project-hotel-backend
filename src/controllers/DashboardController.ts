@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { Request, Response } from "express";
 import { OrderModel as Order } from "../models/Order";
-import { RestaurantUnitModel as HotelUnit } from '../models/RestaurantUnit';
+import { RestaurantUnitModel as HotelUnitModel } from '../models/RestaurantUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
   CustomersSummary,
@@ -27,15 +27,17 @@ export const getFinancialDashboardDataController = async (req: Request, res: Res
     let matchFilter: any = { status: 'paid' };
 
     if (scope === 'hotelUnit') {
+      // Filtra por unidade específica do hotel
       matchFilter.restaurantUnit = hotelOrUnitId;
     } else if (scope === "hotel") {
-      const units = await HotelUnit.find({ restaurant: hotelOrUnitId })
+      // Busca todas as unidades do hotel para filtrar pedidos
+      const units = await HotelUnitModel.find({ restaurant: hotelOrUnitId })
         .select("_id")
         .lean();
 
       const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
 
-      // inclui SEMPRE a matriz (há bases onde pedidos da matriz usam o próprio hotelId em restaurantUnit)
+      // Inclui SEMPRE a matriz (há casos onde pedidos da matriz usam o próprio hotelId em restaurantUnit)
       const ids = [...unitIds, hotelOrUnitId];
 
       matchFilter.restaurantUnit = { $in: ids };
@@ -125,9 +127,11 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
     };
 
     if (scope === "hotelUnit") {
+      // Filtra por unidade específica do hotel
       matchFilter.restaurantUnit = targetId;
     } else if (scope === "hotel") {
-      const units = await HotelUnit.find({ restaurant: targetId }).select("_id").lean();
+      // Busca todas as unidades do hotel para filtrar pedidos de clientes
+      const units = await HotelUnitModel.find({ restaurant: targetId }).select("_id").lean();
       const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
       matchFilter.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
     } else {
@@ -290,7 +294,8 @@ export const getCustomersDashboardDataController = async (req: Request, res: Res
 // ------------------ PROMOTIONS DASHBOARD ------------------
 export const getPromotionsDashboardController = async (req: Request, res: Response) => {
   try {
-    const filter = buildDashboardFilterFromRequest(req);
+    // Constrói o filtro baseado no escopo (hotel ou hotelUnit)
+    const filter = await buildDashboardFilterFromRequest(req);
 
     const promotions = await Order.aggregate([
       {
@@ -336,17 +341,19 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     };
 
     let matchBase: any = {};
-        if (scope === 'hotelUnit' && hotelUnitId) {
-          matchBase.restaurantUnit = new mongoose.Types.ObjectId(String(hotelUnitId));
-        } else if (scope === 'hotel' && hotelId) {
-          const targetId = new mongoose.Types.ObjectId(String(hotelId));
-          const units = await HotelUnit.find({ restaurant: targetId })
-            .select('_id').lean();
-          const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
-          matchBase.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
-        } else {
-          return res.status(400).json({ message: 'Parâmetros inválidos' });
-        }
+    if (scope === 'hotelUnit' && hotelUnitId) {
+      // Filtra por unidade específica do hotel
+      matchBase.restaurantUnit = new mongoose.Types.ObjectId(String(hotelUnitId));
+    } else if (scope === 'hotel' && hotelId) {
+      // Busca todas as unidades do hotel para filtrar pedidos
+      const targetId = new mongoose.Types.ObjectId(String(hotelId));
+      const units = await HotelUnitModel.find({ restaurant: targetId })
+        .select('_id').lean();
+      const unitIds = units.map(u => u._id as mongoose.Types.ObjectId);
+      matchBase.restaurantUnit = { $in: unitIds.length ? unitIds : [targetId] };
+    } else {
+      return res.status(400).json({ message: 'Parâmetros inválidos' });
+    }
 
     // --- parâmetros de "hoje" (já usados no summary.todayTotal) ---
     const tz = (req.query?.tz as string) || "America/Sao_Paulo";
@@ -484,8 +491,9 @@ export const getOrdersDashboardDataController = async (req: Request, res: Respon
     const summaryBase =
       agg?.summary?.[0] ?? { total: 0, completed: 0, paid: 0, cancelled: 0, processing: 0, todayTotal: 0 };
 
+    // Cálculo adicional de tempo médio de entrega usando o mesmo filtro de escopo
     const [avgRes] = await Order.aggregate([
-      { $match: { restaurantId: new mongoose.Types.ObjectId(hotelId), status: "completed" } },
+      { $match: { ...matchBase, status: "completed" } },
       {
         $addFields: {
           startAt: {
