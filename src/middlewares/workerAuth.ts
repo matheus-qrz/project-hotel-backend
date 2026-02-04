@@ -31,7 +31,7 @@ export async function workerAuth(req: Request, res: Response, next: NextFunction
     if (!device) return res.status(401).end();
 
     (req as any).worker = {
-      restaurantId: device.restaurantId,
+      hotelId: device.hotelId,
       unitId: device.unitId,
       stations: Array.isArray(device.stations) ? device.stations : [],
       workerDeviceId: String(device._id),

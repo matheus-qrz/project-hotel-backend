@@ -12,8 +12,8 @@ import {
   UserModel,
 } from "../models/User";
 import { authentication, random } from "../helpers/index";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
-import { RestaurantModel } from "../models/Restaurant";
+import { HotelUnitModel } from "../models/HotelUnit";
+import { HotelModel } from "../models/Hotel";
 
 const AVATAR_DIR = path.join(process.cwd(), 'public/avatars');
 
@@ -142,7 +142,7 @@ export const createRestaurantUserController = async (
 
   // Verificar se o restaurante existe
   try {
-    const restaurant = await RestaurantModel.findById(restaurantId);
+    const restaurant = await HotelModel.findById(restaurantId);
     if (!restaurant) {
       return res.status(404).json({ msg: 'Restaurante não encontrado' });
     }
@@ -197,14 +197,14 @@ export const createRestaurantUserController = async (
 
         // Validar unidade do restaurante, se fornecida
         if (restaurantUnitId) {
-          const unit = await RestaurantUnitModel.findById(restaurantUnitId);
+          const unit = await HotelUnitModel.findById(restaurantUnitId);
           if (!unit) {
             return res.status(404).json({ msg: 'Unidade de restaurante não encontrada' });
           }
 
-          if (unit.restaurant.toString() !== restaurantId.toString()) {
+          if (unit.hotel.toString() !== restaurantId.toString()) {
             return res.status(403).json({
-              msg: 'Esta unidade não pertence ao seu restaurante'
+              msg: 'Esta unidade não pertence ao seu hotel'
             });
           }
         }
@@ -254,7 +254,7 @@ export const createRestaurantUserController = async (
         // Atualizar relações dependendo da role
         if (role === "MANAGER" && restaurantUnitId) {
           // Se for gerente vinculado a uma unidade, atualizar a unidade
-          await RestaurantUnitModel.findByIdAndUpdate(
+          await HotelUnitModel.findByIdAndUpdate(
             restaurantUnitId,
             { manager: `${firstName} ${lastName}` },
             { new: true }
@@ -263,7 +263,7 @@ export const createRestaurantUserController = async (
 
         // Atualizar o restaurante com o novo usuário
         const updateField = role === "MANAGER" ? "managers" : "attendants";
-        await RestaurantModel.findByIdAndUpdate(
+        await HotelModel.findByIdAndUpdate(
           restaurantId,
           { $addToSet: { [updateField]: user._id } },
           { new: true }
@@ -348,10 +348,10 @@ export const createRestaurantUserController = async (
 
       // Validar unidade do restaurante, se fornecida
       if (restaurantUnitId) {
-        const unit = await RestaurantUnitModel.findById(restaurantUnitId);
+        const unit = await HotelUnitModel.findById(restaurantUnitId);
         if (!unit) return res.status(404).json({ msg: "Unidade de restaurante não encontrada" });
-        if (unit.restaurant.toString() !== restaurantId.toString()) {
-          return res.status(403).json({ msg: "Esta unidade não pertence ao seu restaurante" });
+        if (unit.hotel.toString() !== restaurantId.toString()) {
+          return res.status(403).json({ msg: "Esta unidade não pertence ao seu hotel" });
         }
       }
 
@@ -378,7 +378,7 @@ export const createRestaurantUserController = async (
       // Atualizar relações dependendo da role
       if (role === "MANAGER" && restaurantUnitId) {
         // Se for gerente vinculado a uma unidade, atualizar a unidade
-        await RestaurantUnitModel.findByIdAndUpdate(
+        await HotelUnitModel.findByIdAndUpdate(
           restaurantUnitId,
           { manager: `${firstName} ${lastName}` },
           { new: true }
@@ -387,7 +387,7 @@ export const createRestaurantUserController = async (
 
       // Atualizar o restaurante com o novo usuário
       const updateField = role === "MANAGER" ? "managers" : "attendants";
-      await RestaurantModel.findByIdAndUpdate(
+      await HotelModel.findByIdAndUpdate(
         restaurantId,
         { $addToSet: { [updateField]: user._id } },
         { new: true }

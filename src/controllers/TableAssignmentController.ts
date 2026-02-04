@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 
 import { TableAssignmentModel } from "../models/TableAssignment";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelUnitModel } from "../models/HotelUnit";
 import { UserModel } from "../models/User";
 
 // ========= Helpers =========
@@ -51,7 +51,7 @@ export const getPublicAttendantForTable = async (req: Request, res: Response) =>
     }
 
     // 2) Fallback: plano (RangeAssignment) por dia/hora da unidade
-    const unit = await RestaurantUnitModel.findById(unitId).select("timezone name").lean();
+    const unit = await HotelUnitModel.findById(unitId).select("timezone name").lean();
     const tz = unit?.timezone || "America/Sao_Paulo";
     const { timeRef, dow } = timeRefFromTZ(String(tz));
     const timeHHmm = toHHmm(timeRef);
@@ -156,14 +156,14 @@ export const seedTableAssignmentsFromRanges = async (req: Request, res: Response
     // 1) Resolver a unidade efetiva
     //    - primeiro tenta como RestaurantUnit._id
     //    - se não achar, interpreta como Restaurant._id (unidade matriz) e busca uma Unit dessa Restaurant
-    let unit = await RestaurantUnitModel
+    let unit = await HotelUnitModel
       .findById(raw)
       .select("timezone totalTables name restaurant")
       .lean();
 
     if (!unit) {
       // fallback: tratar raw como restaurantId (matriz)
-      unit = await RestaurantUnitModel
+      unit = await HotelUnitModel
         .findOne({ restaurant: new Types.ObjectId(raw) }) // se você tiver um flag isMain, use { restaurant: ..., isMain: true }
         .select("timezone totalTables name restaurant")
         .lean();

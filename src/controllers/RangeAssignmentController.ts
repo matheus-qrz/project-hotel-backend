@@ -4,7 +4,7 @@ import { Request, Response } from "express";
 import { RangeAssignmentModel } from "../models/RangeAssignment";
 import { TableAssignmentModel } from "../models/TableAssignment";
 import { UserModel } from "../models/User";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelUnitModel } from "../models/HotelUnit";
 
 /** 0=Dom ... 6=Sáb */
 const normDays = (arr: any): number[] => {
@@ -56,7 +56,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
       return res.status(400).json({ message: "ID da unidade inválido." });
     }
 
-    const unit = await RestaurantUnitModel.findById(unitId);
+    const unit = await HotelUnitModel.findById(unitId);
     if (!unit) return res.status(404).json({ message: "Unidade não encontrada." });
 
     // 2) Body safe-parse
@@ -99,7 +99,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
 
     // 5) Upsert idempotente por (unit, attendant, faixa, hora)
     const baseQuery = {
-      restaurantUnit: unit._id,
+      hotelUnit: unit._id,
       attendant, // pode ser null
       startTable,
       endTable,
@@ -119,7 +119,7 @@ export const createOrMergeRangeAssignment = async (req: Request, res: Response) 
 
     const created = await RangeAssignmentModel.create({
       ...baseQuery,
-      restaurant: unit.restaurant ?? null,
+      hotel: unit.hotel ?? null,
       attendantName,
       label,
       daysOfWeek,
@@ -158,7 +158,7 @@ export const listRangeAssignments = async (req: Request, res: Response) => {
     const { attendantId, activeOnly } = (req.query || {}) as any;
     const match: any = {};
     if (unitId && Types.ObjectId.isValid(unitId)) {
-      match.restaurantUnit = new Types.ObjectId(unitId);
+      match.hotelUnit = new Types.ObjectId(unitId);
     }
     if (attendantId && Types.ObjectId.isValid(attendantId)) match.attendant = new Types.ObjectId(attendantId);
     if (activeOnly === "true") match.isActive = { $ne: false };
@@ -169,7 +169,7 @@ export const listRangeAssignments = async (req: Request, res: Response) => {
       {
         $group: {
           _id: {
-            restaurantUnit: "$restaurantUnit",
+            hotelUnit: "$hotelUnit",
             startTable: "$startTable",
             endTable: "$endTable",
             attendant: "$attendant",
@@ -188,7 +188,7 @@ export const listRangeAssignments = async (req: Request, res: Response) => {
         $project: {
           _id: 0,
           id: "$anyId",
-          unitId: "$_id.restaurantUnit",
+          unitId: "$_id.hotelUnit",
           startTable: "$_id.startTable",
           endTable: "$_id.endTable",
           attendantId: "$_id.attendant",
@@ -322,7 +322,7 @@ export const updateRangeAssignment = async (req: Request, res: Response) => {
       message: "Escala atualizada.",
       item: {
         id: String(updated._id),
-        unitId: String(updated.restaurantUnit),
+        unitId: String(updated.hotelUnit),
         startTable: updated.startTable,
         endTable: updated.endTable,
         attendantId: updated.attendant ? String(updated.attendant) : null,
