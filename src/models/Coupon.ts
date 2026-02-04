@@ -5,7 +5,7 @@ export type CouponType = "fixed" | "percentage";
 
 export interface Coupon {
   _id: Types.ObjectId;
-  restaurant: Types.ObjectId;                
+  hotel: Types.ObjectId;
   unit?: Types.ObjectId | null;               
   code: string;                              
   type: CouponType;                          
@@ -21,8 +21,8 @@ export interface Coupon {
 
 const CouponSchema = new Schema<Coupon>(
   {
-    restaurant: { type: Schema.Types.ObjectId, ref: "Restaurant", required: true },
-    unit:       { type: Schema.Types.ObjectId, ref: "RestaurantUnit", default: null },
+    hotel: { type: Schema.Types.ObjectId, ref: "Hotel", required: true },
+    unit:       { type: Schema.Types.ObjectId, ref: "HotelUnit", default: null },
 
     code: { type: String, required: true, trim: true, uppercase: true, unique: true },
     type: { type: String, enum: ["fixed", "percentage"], required: true },
