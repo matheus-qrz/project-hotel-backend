@@ -1,11 +1,11 @@
 import { Router } from "express";
 import auth from "./auth";
 import user from "./user";
-import restaurant from "./restaurant";
+import hotel from "./hotel";
 import requests from "./order";
 import order from "./order";
 import products from './products';
-import restaurantUnit from './restaurantUnit';
+import hotelUnit from './hotelUnit';
 import employee from "./employee";
 import dashboard from "./dashboard";
 import rangeAssignment from "./rangeAssignment";
@@ -24,8 +24,8 @@ export default (): Router => {
   dashboard(router)
   order(router);
   products(router);
-  restaurant(router);
-  restaurantUnit(router)
+  hotel(router);
+  hotelUnit(router)
   requests(router);
   rangeAssignment(router);
   tableAssignment(router);

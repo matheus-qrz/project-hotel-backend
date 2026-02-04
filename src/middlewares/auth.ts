@@ -11,17 +11,18 @@ interface JwtPayload {
   exp: number;
 }
 
-// Tipos anexados à requisição
+// Tipos anexados a requisicao
 declare global {
   namespace Express {
     interface Request {
       user?: {
         id: string;
         role: string;
-        restaurantId: string | null;
+        hotelId: string | null;
         unitId: string | null;
       };
-      isRestaurantAdmin?: boolean;
+      isHotelAdmin?: boolean;
+      hotel?: any;
       identity?: any;
     }
   }
@@ -41,18 +42,18 @@ export const isAuthenticated = async (req: Request, res: Response, next: NextFun
     const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
 
     const user = await UserModel.findById(decoded.sub)
-      .select('+authentication.sessionToken +role +restaurant +restaurantUnit');
+      .select('+authentication.sessionToken +role +hotel +hotelUnit');
 
-    if (!user) return res.status(401).json({ message: 'Usuário não encontrado' });
+    if (!user) return res.status(401).json({ message: 'Usuario nao encontrado' });
     if (!user.authentication || user.authentication.sessionToken !== token) {
-      return res.status(401).json({ message: 'Sessão inválida' });
+      return res.status(401).json({ message: 'Sessao invalida' });
     }
 
     req.user = {
       id: user._id.toString(),
       role: user.role || '',
-      restaurantId: user.restaurant?.toString() || null,
-      unitId: user.restaurantUnit?.toString() || null,
+      hotelId: user.hotel?.toString() || null,
+      unitId: user.hotelUnit?.toString() || null,
     };
     next();
   } catch (err: any) {
@@ -63,29 +64,35 @@ export const isAuthenticated = async (req: Request, res: Response, next: NextFun
   }
 };
 
-// 2) Autorização por restaurante (Caminho A):
+// 2) Autorizacao por hotel (Caminho A):
 //    - ADMIN passa direto
-//    - MANAGER precisa que user.restaurantId === req.params.restaurantId
-export const authorizeAdminOrManagerForRestaurant = (req: Request, res: Response, next: NextFunction) => {
+//    - MANAGER precisa que user.hotelId === req.params.hotelId
+export const authorizeAdminOrManagerForHotel = (req: Request, res: Response, next: NextFunction) => {
   const role = req.user?.role;
-  if (!role) return res.status(401).json({ message: 'Não autenticado' });
+  if (!role) return res.status(401).json({ message: 'Nao autenticado' });
 
   if (role === 'ADMIN') return next();
 
-  const paramId = String(req.params.restaurantId || '');
-  const userRestaurantId = String(req.user?.restaurantId || '');
+  const paramId = String(req.params.hotelId || '');
+  const userHotelId = String(req.user?.hotelId || '');
 
-  if (!userRestaurantId) return res.status(403).json({ message: 'Forbidden' });
-  if (userRestaurantId !== paramId) return res.status(403).json({ message: 'Forbidden' });
+  if (!userHotelId) return res.status(403).json({ message: 'Forbidden' });
+  if (userHotelId !== paramId) return res.status(403).json({ message: 'Forbidden' });
 
   return next();
 };
 
-// 3) Guards por papel (sem depender de req.restaurant)
-export const isRestaurantAdmin = (req: Request, res: Response, next: NextFunction) => {
+// Alias para compatibilidade
+export const authorizeAdminOrManagerForRestaurant = authorizeAdminOrManagerForHotel;
+
+// 3) Guards por papel (sem depender de req.hotel)
+export const isHotelAdmin = (req: Request, res: Response, next: NextFunction) => {
   if (req.user?.role === 'ADMIN') return next();
-  return res.status(403).json({ message: 'Acesso negado. Apenas administradores têm permissão.' });
+  return res.status(403).json({ message: 'Acesso negado. Apenas administradores tem permissao.' });
 };
+
+// Alias para compatibilidade
+export const isRestaurantAdmin = isHotelAdmin;
 
 export const isManager = (req: Request, res: Response, next: NextFunction) => {
   if (req.user && (req.user.role === 'ADMIN' || req.user.role === 'MANAGER')) return next();
