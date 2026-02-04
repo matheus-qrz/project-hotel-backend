@@ -18,8 +18,8 @@ export interface IPrinter extends Document {
 
 const PrinterSchema = new Schema(
   {
-    restaurantId: { type: Schema.Types.ObjectId, ref: "Restaurant", required: true },
-    unitId: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", required: true },
+    hotelId: { type: Schema.Types.ObjectId, ref: "Hotel", required: true },
+    unitId: { type: Schema.Types.ObjectId, ref: "HotelUnit", required: true },
 
     name: { type: String, required: true },              // "Cozinha Quente"
     station: { type: String, enum: ["hot", "cold", "bar"], required: true },

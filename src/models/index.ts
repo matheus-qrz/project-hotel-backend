@@ -1,7 +1,7 @@
 export { IProduct } from './Products';
 export { IOrder } from './Order';
-export { IRestaurant } from './Restaurant';
-export { IRestaurantUnit } from './RestaurantUnit';
+export { IHotel, IHotel as IRestaurant } from './Hotel';
+export { IHotelUnit, IHotelUnit as IRestaurantUnit } from './HotelUnit';
 export { IUser } from './User';
 export { IRangeAssignment } from './RangeAssignment';
 export { IPrinter } from './Printer';
