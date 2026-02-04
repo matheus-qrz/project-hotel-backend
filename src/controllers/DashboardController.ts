@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { Request, Response } from "express";
 import { OrderModel as Order } from "../models/Order";
-import { RestaurantUnitModel as HotelUnit } from '../models/RestaurantUnit';
+import { HotelUnitModel as HotelUnit } from '../models/HotelUnit';
 import { buildDashboardFilterFromRequest } from "../utils/dashboardFilter";
 import {
   CustomersSummary,

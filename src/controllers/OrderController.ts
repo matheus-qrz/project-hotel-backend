@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import { OrderModel, IOrder, IOrderItem } from "../models/Order";
 import { UserModel } from "../models/User";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelUnitModel } from "../models/HotelUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
@@ -124,7 +124,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
         const tz =
           req.body?.tz ||
-          (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
+          (await HotelUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
           "America/Sao_Paulo";
 
         await updatedDoc.save();
@@ -163,7 +163,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       
       const tz =
         req.body?.tz ||
-        (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
+        (await HotelUnitModel.findById(restaurantUnit).select("timezone").lean())
           ?.timezone ||
         "America/Sao_Paulo";
 
@@ -452,8 +452,8 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
       const activeTables = new Set<number>(activeTableAssigns.map((a: any) => Number(a.tableId)));
 
       // 2) Mesas cobertas AGORA por RangeAssignment válido (dia/hora da unidade)
-      const { RestaurantUnitModel } = await import("../models/RestaurantUnit");
-      const unit = await RestaurantUnitModel.findById(restaurantUnitId).select("timezone").lean();
+      const { HotelUnitModel } = await import("../models/RestaurantUnit");
+      const unit = await HotelUnitModel.findById(restaurantUnitId).select("timezone").lean();
       const tz = unit?.timezone || "America/Sao_Paulo";
 
       const { DateTime } = await import("luxon");
@@ -735,7 +735,7 @@ export const deleteOrderController = async (req: Request, res: Response) => {
     }
 
     // Remover referência do pedido da unidade
-    await RestaurantUnitModel.findByIdAndUpdate(
+    await HotelUnitModel.findByIdAndUpdate(
       deletedOrder.restaurantUnit,
       {
         $pull: {
