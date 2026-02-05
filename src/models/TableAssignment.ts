@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 const { Schema, Types } = mongoose;
 
 export interface ITableAssignment extends mongoose.Document {
-  restaurantUnit: mongoose.Types.ObjectId;
+  hotelUnit: mongoose.Types.ObjectId;
   tableId: number;
   attendant: mongoose.Types.ObjectId;
   assignedAt: Date;
@@ -12,7 +12,7 @@ export interface ITableAssignment extends mongoose.Document {
 }
 
 const tableAssignmentSchema = new Schema<ITableAssignment>({
-  restaurantUnit: { type: Schema.Types.ObjectId, ref: "RestaurantUnit", required: true },
+  hotelUnit: { type: Schema.Types.ObjectId, ref: "HotelUnit", required: true },
   tableId: { type: Number, required: true },
   attendant: { type: Schema.Types.ObjectId, ref: "User", required: true },
   assignedAt: { type: Date, default: () => new Date() },
@@ -21,7 +21,7 @@ const tableAssignmentSchema = new Schema<ITableAssignment>({
 }, { timestamps: true });
 
 tableAssignmentSchema.index(
-  { restaurantUnit: 1, tableId: 1, isActive: 1 },
+  { hotelUnit: 1, tableId: 1, isActive: 1 },
   { unique: true, partialFilterExpression: { isActive: true } }
 );
 

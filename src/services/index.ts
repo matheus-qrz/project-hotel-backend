@@ -1,7 +1,7 @@
 // services/index.ts - Dashboard Services para Hotel
 import mongoose from "mongoose";
 import { OrderModel } from "../models/Order";
-import { RestaurantUnitModel as HotelUnitModel } from "../models/RestaurantUnit";
+import { HotelUnitModel } from "../models/HotelUnit";
 
 /**
  * Interface para relatório de faturamento
@@ -103,7 +103,7 @@ export const getRevenueReport = async (hotelUnitId: string): Promise<RevenueRepo
 
     // Obtém todos os pedidos pagos da unidade do hotel nos últimos 6 meses
     const orders = await OrderModel.find({
-        'restaurantUnit': hotelUnitId,
+        'hotelUnit': hotelUnitId,
         'isPaid': true,
         'createdAt': { $gte: sixMonthsAgo },
         'status': { $ne: 'cancelled' }
@@ -189,7 +189,7 @@ export const getOrdersReport = async (hotelUnitId: string): Promise<OrdersReport
 
     // Obtém todos os pedidos da unidade do hotel nos últimos 6 meses
     const orders = await OrderModel.find({
-        'restaurantUnit': hotelUnitId,
+        'hotelUnit': hotelUnitId,
         'createdAt': { $gte: sixMonthsAgo }
     }).sort({ createdAt: 1 });
 
@@ -278,7 +278,7 @@ export const getTopProducts = async (hotelUnitId: string, limit: number = 5) => 
 
     // Obtém todos os pedidos da unidade do hotel que não foram cancelados
     const orders = await OrderModel.find({
-        'restaurantUnit': hotelUnitId,
+        'hotelUnit': hotelUnitId,
         'status': { $ne: 'cancelled' }
     });
 
@@ -329,7 +329,7 @@ export const getDailyRevenueReport = async (hotelUnitId: string, startDate: Date
 
     // Obtém todos os pedidos pagos da unidade do hotel no período
     const orders = await OrderModel.find({
-        'restaurantUnit': hotelUnitId,
+        'hotelUnit': hotelUnitId,
         'isPaid': true,
         'createdAt': { $gte: startDate, $lte: endDate },
         'status': { $ne: 'cancelled' }

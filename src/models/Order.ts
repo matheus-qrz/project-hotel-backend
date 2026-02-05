@@ -46,8 +46,8 @@ export interface IOrder extends mongoose.Document {
     name: string;
     joinedAt: Date;
   };
-  restaurantId: mongoose.Schema.Types.ObjectId;
-  restaurantUnit: mongoose.Schema.Types.ObjectId;
+  hotelId: mongoose.Schema.Types.ObjectId;
+  hotelUnit: mongoose.Schema.Types.ObjectId;
   items: IOrderItem[]
   totalAmount: number;
   isCancelled?: boolean;
@@ -102,15 +102,15 @@ const orderSchema = new Schema(
         default: Date.now
       }
     },
-    restaurantId: {
+    hotelId: {
       type: Schema.Types.ObjectId,
-      ref: "Restaurant",
+      ref: "Hotel",
       required: true,
       index: true,
     },
-    restaurantUnit: {
+    hotelUnit: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "RestaurantUnit",
+      ref: "HotelUnit",
       required: false
     },
     items: [
@@ -359,18 +359,18 @@ export const deleteOrder = (id: string) =>
   OrderModel.findByIdAndDelete(id);
 
 // Get orders by table number
-export const getOrdersByTable = (restaurantId: string, restaurantUnitId: string, tableId: number) =>
+export const getOrdersByTable = (hotelId: string, hotelUnitId: string, tableId: number) =>
   OrderModel.find({
-    restaurantId: restaurantId,
-    restaurantUnit: restaurantUnitId,
+    hotelId: hotelId,
+    hotelUnit: hotelUnitId,
     'meta.tableId': tableId
   });
 
 // Get unpaid orders by table
-export const getUnpaidOrdersByTable = (restaurantId: string, restaurantUnitId: string, tableId: number) =>
+export const getUnpaidOrdersByTable = (hotelId: string, hotelUnitId: string, tableId: number) =>
   OrderModel.find({
-    restaurantId: restaurantId,
-    restaurantUnit: restaurantUnitId,
+    hotelId: hotelId,
+    hotelUnit: hotelUnitId,
     'meta.tableId': tableId,
     isPaid: false,
     status: { $nin: ['cancelled'] }

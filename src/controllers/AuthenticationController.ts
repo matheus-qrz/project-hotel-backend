@@ -2,11 +2,11 @@ import jwt from "jsonwebtoken";
 import crypto from 'crypto';
 import { Request, Response } from "express";
 import { UserModel, getUserByEmail, createUser } from "../models/User";
-import { RestaurantModel } from "../models/Restaurant";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelModel } from "../models/Hotel";
+import { HotelUnitModel } from "../models/HotelUnit";
 import { generateHash, generateSalt } from "../utils/generateSalt";
 import mongoose from "mongoose";
-import { resolveRestaurantForUser } from "../utils/resolveRestaurant";
+import { resolveHotelForUser } from "../utils/resolveHotel";
 
 const JWT_SECRET = process.env.JWT_SECRET || "default_secret_change_in_production";
 const DEBUG = process.env.DEBUG_AUTH === "1";
@@ -32,13 +32,13 @@ function normalizeCPF(v: string) {
 }
 
 function issueJWT(user: any) {
-  const restaurantId = asStringId(user.restaurant);
-  const unitId = asStringId(user.restaurantUnit);
+  const hotelId = asStringId(user.hotel);
+  const unitId = asStringId(user.hotelUnit);
 
   const payload = {
     sub: asStringId(user._id),
     role: String(user.role || ""),
-    restaurantId,
+    hotelId,
     unitId,
   };
 
@@ -83,7 +83,7 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         };
 
     const user = await UserModel.findOne(query).select(
-      "+authentication.password +authentication.salt +role +restaurant +restaurantUnit +email +firstName +lastName +cpf"
+      "+authentication.password +authentication.salt +role +hotel +hotelUnit +email +firstName +lastName +cpf"
     );
 
     if (!user) {
@@ -100,8 +100,8 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       return res.status(401).json({ message: "Credenciais inválidas" });
     }
 
-    const { restaurantId, restaurantName, unitId } =
-      await resolveRestaurantForUser(user);
+    const { hotelId, hotelName, unitId } =
+      await resolveHotelForUser(user);
 
     // --- NOVO: fluxo de validação de senha / garçom sem senha ---
     if (password && String(password).trim().length > 0) {
@@ -145,8 +145,8 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
       {
         sub: String(user._id),
         role: user.role,
-        restaurantId: restaurantId ?? null,
-        restaurantName: restaurantName ?? null,
+        hotelId: hotelId ?? null,
+        hotelName: hotelName ?? null,
         unitId: unitId ?? null,
       },
       process.env.JWT_SECRET!,
@@ -170,10 +170,10 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
         email: user.email,
         cpf: user.cpf,
       },
-      restaurant: restaurantId ? { _id: restaurantId, name: restaurantName } : null,
+      hotel: hotelId ? { _id: hotelId, name: hotelName } : null,
       unit: unitId ? { _id: unitId } : null,
-      restaurantId: restaurantId ?? null,
-      restaurantName: restaurantName ?? null,
+      hotelId: hotelId ?? null,
+      hotelName: hotelName ?? null,
       unitId: unitId ?? null,
       token,
     });
@@ -185,8 +185,8 @@ export const loginHandler = async (req: Request, res: Response): Promise<Respons
   }
 };
 
-// Registrar um novo restaurante
-export const registerAdminWithRestaurantHandler = async (req: Request, res: Response) => {  
+// Registrar um novo hotel
+export const registerAdminWithHotelHandler = async (req: Request, res: Response) => {
   try {
     const {
       firstName,
@@ -203,29 +203,29 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       businessHours
     } = req.body;
 
-    // Validar campos obrigatórios
+    // Validar campos obrigatorios
     if (!firstName || !lastName || !email || !password || !name || !cpf || !cnpj) {
-      return res.status(400).json({ message: "Todos os campos obrigatórios devem ser preenchidos" });
+      return res.status(400).json({ message: "Todos os campos obrigatorios devem ser preenchidos" });
     }
 
-    // Verificar se o email já está em uso
+    // Verificar se o email ja esta em uso
     const existingUser = await getUserByEmail(email);
     if (existingUser) {
-      return res.status(400).json({ message: "Este e-mail já está em uso" });
+      return res.status(400).json({ message: "Este e-mail ja esta em uso" });
     }
 
-    // Verificar se o nome do restaurante já está em uso
-    const existingRestaurantByName = await RestaurantModel.findOne({
+    // Verificar se o nome do hotel ja esta em uso
+    const existingHotelByName = await HotelModel.findOne({
       name: { $regex: new RegExp('^' + name + '.*', 'i') }
     });
 
-    if (existingRestaurantByName) {
-      return res.status(400).json({ message: "Este nome de restaurante já está em uso" });
+    if (existingHotelByName) {
+      return res.status(400).json({ message: "Este nome de hotel ja esta em uso" });
     }
 
-    // Criar o usuário ADMIN usando as novas funções
-    const salt = generateSalt(); // Nova função
-    const hash = generateHash(password, salt); // Nova função
+    // Criar o usuario ADMIN usando as novas funcoes
+    const salt = generateSalt();
+    const hash = generateHash(password, salt);
 
     const adminUser = await createUser({
       firstName,
@@ -241,8 +241,8 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       role: "ADMIN",
     });
 
-    // Criar o restaurante
-    const restaurantData = {
+    // Criar o hotel
+    const hotelData = {
       name,
       logo: "",
       cnpj,
@@ -271,48 +271,48 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       businessHours: businessHours || [],
     };
 
-    const restaurant = new RestaurantModel(restaurantData);
-    const savedRestaurant = await restaurant.save();
+    const hotel = new HotelModel(hotelData);
+    const savedHotel = await hotel.save();
 
-    if (!savedRestaurant) {
-      console.error("Falha ao salvar o restaurante");
-      throw new Error("Falha ao criar o restaurante");
+    if (!savedHotel) {
+      console.error("Falha ao salvar o hotel");
+      throw new Error("Falha ao criar o hotel");
     }
 
-    // Atualizar o usuário com referência ao restaurante
+    // Atualizar o usuario com referencia ao hotel
     await UserModel.findByIdAndUpdate(adminUser._id, {
-      restaurant: savedRestaurant._id
+      hotel: savedHotel._id
     });
 
-    // Criar a unidade de restaurante
+    // Criar a unidade de hotel
     const unitData = {
-      name: savedRestaurant.name,
-      address: savedRestaurant.address,
-      cnpj: savedRestaurant.cnpj,
-      socialName: savedRestaurant.socialName,
-      phone: savedRestaurant.phone,
+      name: savedHotel.name,
+      address: savedHotel.address,
+      cnpj: savedHotel.cnpj,
+      socialName: savedHotel.socialName,
+      phone: savedHotel.phone,
       manager: [],
       attendants: [],
-      restaurant: savedRestaurant._id
+      hotel: savedHotel._id
     };
 
-    const restaurantUnit = new RestaurantUnitModel(unitData);
-    const savedUnit = await restaurantUnit.save();
+    const hotelUnit = new HotelUnitModel(unitData);
+    const savedUnit = await hotelUnit.save();
 
-    // Adicionar a unidade ao restaurante
-    await RestaurantModel.findByIdAndUpdate(savedRestaurant._id, {
+    // Adicionar a unidade ao hotel
+    await HotelModel.findByIdAndUpdate(savedHotel._id, {
       $push: { units: savedUnit._id }
     });
 
-    // Gerar token JWT usando a nova função
+    // Gerar token JWT usando a nova funcao
     const { token } = issueJWT(adminUser);
 
-    // Atualizar token de sessão no usuário e no restaurante
+    // Atualizar token de sessao no usuario e no hotel
     await UserModel.findByIdAndUpdate(adminUser._id, {
       "authentication.sessionToken": token
     });
 
-    await RestaurantModel.findByIdAndUpdate(savedRestaurant._id, {
+    await HotelModel.findByIdAndUpdate(savedHotel._id, {
       "authentication.sessionToken": token
     });
 
@@ -325,7 +325,7 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
     }
 
     return res.status(201).json({
-      message: "Restaurante, usuário admin e unidade criados com sucesso",
+      message: "Hotel, usuario admin e unidade criados com sucesso",
       user: {
         _id: adminUser._id,
         firstName: adminUser.firstName,
@@ -333,9 +333,9 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
         email: adminUser.email,
         role: "ADMIN",
       },
-      restaurant: {
-        _id: savedRestaurant._id,
-        name: savedRestaurant.name,
+      hotel: {
+        _id: savedHotel._id,
+        name: savedHotel.name,
       },
       unit: {
         _id: savedUnit._id,
@@ -345,40 +345,43 @@ export const registerAdminWithRestaurantHandler = async (req: Request, res: Resp
       tokenExpiry,
     });
   } catch (error: any) {
-    console.error("Erro ao registrar restaurante:", error);
+    console.error("Erro ao registrar hotel:", error);
     return res
       .status(500)
       .json({ message: "Erro interno do servidor", error: error.message });
   }
 };
 
-// Registrar um novo cliente (usuário final)
+// Alias para compatibilidade
+export const registerAdminWithRestaurantHandler = registerAdminWithHotelHandler;
+
+// Registrar um novo cliente (usuario final)
 export const registerClientHandler = async (req: Request, res: Response) => {
   try {
-    const { firstName, lastName, email, password, cpf, phone, tableId, restaurantUnitId } = req.body;
+    const { firstName, lastName, email, password, cpf, phone, tableId, hotelUnitId } = req.body;
 
-    // Validar campos obrigatórios
+    // Validar campos obrigatorios
     if (!firstName || !lastName || !email || !password || !cpf) {
       return res
         .status(400)
-        .json({ message: "Todos os campos são obrigatórios" });
+        .json({ message: "Todos os campos sao obrigatorios" });
     }
 
-    // Verificar se o email já está em uso
+    // Verificar se o email ja esta em uso
     const existingUser = await getUserByEmail(email);
     if (existingUser) {
       return res
         .status(400)
-        .json({ message: "Este e-mail já está em uso" });
+        .json({ message: "Este e-mail ja esta em uso" });
     }
 
-    // Verificar se a unidade do restaurante existe
-    if (restaurantUnitId) {
-      const restaurantUnit = await RestaurantUnitModel.findById(restaurantUnitId);
-      if (!restaurantUnit) {
+    // Verificar se a unidade do hotel existe
+    if (hotelUnitId) {
+      const hotelUnit = await HotelUnitModel.findById(hotelUnitId);
+      if (!hotelUnit) {
         return res
           .status(400)
-          .json({ message: "Unidade de restaurante não encontrada" });
+          .json({ message: "Unidade de hotel nao encontrada" });
       }
     }
 
@@ -386,7 +389,7 @@ export const registerClientHandler = async (req: Request, res: Response) => {
     const salt = generateSalt();
     const hash = generateHash(password, salt);
 
-    // Criar o novo usuário com role CLIENT
+    // Criar o novo usuario com role CLIENT
     const newUser = await createUser({
       firstName,
       lastName,
@@ -402,20 +405,20 @@ export const registerClientHandler = async (req: Request, res: Response) => {
       orders: [],
     });
 
-    // Gerar token JWT para autenticação imediata
+    // Gerar token JWT para autenticacao imediata
     if (!newUser.email || !newUser.role) {
       throw new Error("Email or role is undefined for the new user.");
     }
     const { token } = issueJWT(newUser);
 
-    // Atualizar token de sessão no banco de dados
+    // Atualizar token de sessao no banco de dados
     await UserModel.findByIdAndUpdate(newUser._id, {
       "authentication.sessionToken": token
     });
 
-    // Se tiver tableId e restaurantUnitId, salvar no localStorage (frontend)
+    // Se tiver tableId e hotelUnitId, salvar no localStorage (frontend)
     return res.status(201).json({
-      message: "Usuário criado com sucesso",
+      message: "Usuario criado com sucesso",
       user: {
         _id: newUser._id,
         firstName: newUser.firstName,
@@ -424,7 +427,7 @@ export const registerClientHandler = async (req: Request, res: Response) => {
         role: newUser.role,
       },
       token,
-      restaurantUnitId,
+      hotelUnitId,
       tableId,
     });
   } catch (error: any) {
@@ -435,24 +438,24 @@ export const registerClientHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Verificar token JWT (útil para validação de sessão)
+// Verificar token JWT (util para validacao de sessao)
 export const validateTokenHandler = async (req: Request, res: Response) => {
   try {
     // requer que o middleware isAuthenticated tenha populado req.user
     if (!req.user?.id) {
-      return res.status(401).json({ isValid: false, message: "Não autenticado" });
+      return res.status(401).json({ isValid: false, message: "Nao autenticado" });
     }
 
-    // Pegamos os dados básicos do usuário para devolver ao front
+    // Pegamos os dados basicos do usuario para devolver ao front
     const user = await UserModel.findById(req.user.id)
-      .select("firstName lastName email role restaurant restaurantUnit")
+      .select("firstName lastName email role hotel hotelUnit")
       .lean();
 
     if (!user) {
-      return res.status(401).json({ isValid: false, message: "Usuário inválido" });
+      return res.status(401).json({ isValid: false, message: "Usuario invalido" });
     }
 
-    // Resposta base (válida para qualquer papel)
+    // Resposta base (valida para qualquer papel)
     const base = {
       isValid: true,
       user: {
@@ -461,25 +464,25 @@ export const validateTokenHandler = async (req: Request, res: Response) => {
         lastName: user.lastName,
         email: user.email,
         role: user.role,
-        unitId: user.restaurantUnit ? String(user.restaurantUnit) : null,
+        unitId: user.hotelUnit ? String(user.hotelUnit) : null,
       } as const,
-      restaurant: null as null | { _id: string; name: string },
+      hotel: null as null | { _id: string; name: string },
       units: [] as Array<{ _id: string; name: string }>,
     };
 
-    // Para ADMIN/MANAGER, retornamos o restaurante e as unidades (se existirem)
+    // Para ADMIN/MANAGER, retornamos o hotel e as unidades (se existirem)
     if (user.role === "ADMIN" || user.role === "MANAGER") {
-      if (user.restaurant) {
-        const restaurant = await RestaurantModel.findById(user.restaurant)
+      if (user.hotel) {
+        const hotel = await HotelModel.findById(user.hotel)
           .select("_id name units")
           .lean();
 
-        if (restaurant) {
-          base.restaurant = { _id: String(restaurant._id), name: restaurant.name };
+        if (hotel) {
+          base.hotel = { _id: String(hotel._id), name: hotel.name };
 
-          if (Array.isArray(restaurant.units) && restaurant.units.length > 0) {
-            const units = await RestaurantUnitModel.find({
-              _id: { $in: restaurant.units },
+          if (Array.isArray(hotel.units) && hotel.units.length > 0) {
+            const units = await HotelUnitModel.find({
+              _id: { $in: hotel.units },
             })
               .select("_id name")
               .lean();
@@ -499,21 +502,21 @@ export const validateTokenHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Logout para usuários e restaurantes
+// Logout para usuarios e hoteis
 export const logoutHandler = async (req: Request, res: Response) => {
   try {
-    if (req.isRestaurantAdmin && req.restaurant) {
-      // Logout de restaurante
-      await RestaurantModel.findByIdAndUpdate(req.restaurant._id, {
+    if (req.isHotelAdmin && req.hotel) {
+      // Logout de hotel
+      await HotelModel.findByIdAndUpdate(req.hotel._id, {
         "authentication.sessionToken": ""
       });
     } else if (req.user) {
-      // Logout de usuário
+      // Logout de usuario
       await UserModel.findByIdAndUpdate(req.user.id, {
         "authentication.sessionToken": ""
       });
     } else {
-      return res.status(401).json({ message: "Usuário não autenticado" });
+      return res.status(401).json({ message: "Usuario nao autenticado" });
     }
 
     return res.status(200).json({ message: "Logout realizado com sucesso" });
@@ -525,25 +528,25 @@ export const logoutHandler = async (req: Request, res: Response) => {
   }
 };
 
-// Validação para convidados (guest token)
+// Validacao para convidados (guest token)
 export const validateGuestTokenHandler = async (req: Request, res: Response) => {
   try {
-    const { guestToken, tableId, restaurantId } = req.body;
+    const { guestToken, tableId, hotelId } = req.body;
 
-    if (!guestToken || !tableId || !restaurantId) {
+    if (!guestToken || !tableId || !hotelId) {
       return res.status(400).json({
         isValid: false,
-        message: "Token de convidado, ID da mesa e ID do restaurante são obrigatórios"
+        message: "Token de convidado, ID da mesa e ID do hotel sao obrigatorios"
       });
     }
 
-    // Buscar informações do restaurante
-    const restaurant = await RestaurantModel.findById(restaurantId);
+    // Buscar informacoes do hotel
+    const hotel = await HotelModel.findById(hotelId);
 
-    if (!restaurant) {
+    if (!hotel) {
       return res.status(404).json({
         isValid: false,
-        message: "Restaurante não encontrado"
+        message: "Hotel nao encontrado"
       });
     }
 
@@ -551,8 +554,8 @@ export const validateGuestTokenHandler = async (req: Request, res: Response) => 
       isValid: true,
       guestInfo: {
         tableId,
-        restaurantId,
-        restaurantName: restaurant.name,
+        hotelId,
+        hotelName: hotel.name,
         isGuest: true
       }
     });

@@ -2,14 +2,14 @@
 import { Schema, model, Types } from "mongoose";
 
 export type PromotionScope =
-  | "restaurant"   
-  | "unit"         
-  | "category"     
-  | "product";     
+  | "hotel"
+  | "unit"
+  | "category"
+  | "product";
 
 export interface Promotion {
   _id: Types.ObjectId;
-  restaurant: Types.ObjectId;
+  hotel: Types.ObjectId;
   unit?: Types.ObjectId | null;        
   scope: PromotionScope;
 
@@ -33,9 +33,9 @@ export interface Promotion {
 
 const PromotionSchema = new Schema<Promotion>(
   {
-    restaurant: { type: Schema.Types.ObjectId, ref: "Restaurant", required: true },
-    unit:       { type: Schema.Types.ObjectId, ref: "RestaurantUnit", default: null },
-    scope:      { type: String, enum: ["restaurant","unit","category","product"], required: true },
+    hotel: { type: Schema.Types.ObjectId, ref: "Hotel", required: true },
+    unit:       { type: Schema.Types.ObjectId, ref: "HotelUnit", default: null },
+    scope:      { type: String, enum: ["hotel","unit","category","product"], required: true },
 
     productId:    { type: Schema.Types.ObjectId, ref: "Product", default: null },
     productName:  { type: String, ref: "Product", default: null },

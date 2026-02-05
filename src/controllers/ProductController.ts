@@ -825,7 +825,7 @@ export const createComboController = async (req: Request, res: Response) => {
     // -----------------------------
     const comboData: Partial<IProduct> & { isCombo: boolean } = {
       isCombo: true,
-      restaurant: restaurantId as any,
+      hotel: restaurantId as any,
       name: String(name),
       description: description ?? "",
       price: nPrice,

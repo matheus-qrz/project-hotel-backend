@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { Request, Response } from "express";
 import { OrderModel, IOrder, IOrderItem } from "../models/Order";
 import { UserModel } from "../models/User";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelUnitModel } from "../models/HotelUnit";
 import { OrderItemStatus, OrderStatus, OrderStatusType } from "../types/order.types";
 import { recomputeAndReturn } from "../helpers/recomputeAndReturn";
 import { computeTotal } from "../utils/computeTotal";
@@ -83,12 +83,12 @@ export const initiateOrderController = async (req: Request, res: Response) => {
     // --------- Tenta encontrar pedido existente do mesmo guestId + tableId em processamento
     const candidates = await OrderModel.find({
       sessionId,
-      restaurantId,
-      restaurantUnit,
+      hotelId: restaurantId,
+      hotelUnit: restaurantUnit,
       "guestInfo.id": guestInfo.id,
       "meta.tableId": meta.tableId,
       isPaid: false,
-      status: { $nin: ["paid", "cancelled"] }, 
+      status: { $nin: ["paid", "cancelled"] },
     }).lean();
 
     const existing =
@@ -124,7 +124,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       if (updatedDoc && !updatedDoc.assignedAttendantId) {
         const tz =
           req.body?.tz ||
-          (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
+          (await HotelUnitModel.findById(restaurantUnit).select("timezone").lean())?.timezone ||
           "America/Sao_Paulo";
 
         await updatedDoc.save();
@@ -137,8 +137,8 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       } else {
       // ---------- CRIAR NOVO PEDIDO ----------
       const doc = new OrderModel({
-        restaurantId: restaurantId || undefined,
-        restaurantUnit,
+        hotelId: restaurantId || undefined,
+        hotelUnit: restaurantUnit,
         guestInfo: {
           id: guestInfo.id,
           name: guestInfo.name ?? "",
@@ -163,7 +163,7 @@ export const initiateOrderController = async (req: Request, res: Response) => {
       
       const tz =
         req.body?.tz ||
-        (await RestaurantUnitModel.findById(restaurantUnit).select("timezone").lean())
+        (await HotelUnitModel.findById(restaurantUnit).select("timezone").lean())
           ?.timezone ||
         "America/Sao_Paulo";
 
@@ -216,7 +216,7 @@ export const manualPrintOrdersByStatusController = async (req: Request, res: Res
     if (!status) return res.status(400).json({ message: "status é obrigatório" });
 
     const orders = await OrderModel.find({
-      restaurantUnit: unitId,
+      hotelUnit: unitId,
       status,
       isPaid: false,
     })
@@ -305,7 +305,7 @@ export const processTablePaymentHandler = async (req: Request, res: Response) =>
 
     // Encontrar apenas os pedidos do cliente específico
     const pendingOrders = await OrderModel.find({
-      restaurantUnit: restaurantUnitId,
+      hotelUnit: restaurantUnitId,
       'meta.tableId': tableId,
       sessionId: sessionId,
       isPaid: false,
@@ -430,7 +430,7 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
       return res.status(400).json({ message: "ID da unidade do restaurante inválido." });
     }
 
-    const baseFilter: any = { restaurantUnit: restaurantUnitId };
+    const baseFilter: any = { hotelUnit: restaurantUnitId };
     if (status) baseFilter.status = status;
 
     // ================================
@@ -442,7 +442,7 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
       // 1) Mesas cobertas AGORA por TableAssignment ativo
       const activeTableAssigns = await (await import("../models/TableAssignment")).TableAssignmentModel
         .find({
-          restaurantUnit: restaurantUnitId,
+          hotelUnit: restaurantUnitId,
           attendant: attendantId,
           isActive: true,
         })
@@ -452,8 +452,8 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
       const activeTables = new Set<number>(activeTableAssigns.map((a: any) => Number(a.tableId)));
 
       // 2) Mesas cobertas AGORA por RangeAssignment válido (dia/hora da unidade)
-      const { RestaurantUnitModel } = await import("../models/RestaurantUnit");
-      const unit = await RestaurantUnitModel.findById(restaurantUnitId).select("timezone").lean();
+      const { HotelUnitModel } = await import("../models/HotelUnit");
+      const unit = await HotelUnitModel.findById(restaurantUnitId).select("timezone").lean();
       const tz = unit?.timezone || "America/Sao_Paulo";
 
       const { DateTime } = await import("luxon");
@@ -470,7 +470,7 @@ export const getRestaurantUnitOrdersController = async (req: Request, res: Respo
 
       const { RangeAssignmentModel } = await import("../models/RangeAssignment");
       const ranges = await RangeAssignmentModel.find({
-        restaurantUnit: restaurantUnitId,
+        hotelUnit: restaurantUnitId,
         attendant: attendantId,
         isActive: { $ne: false },
         $or: [{ daysOfWeek: { $size: 0 } }, { daysOfWeek: dow }],
@@ -585,7 +585,7 @@ export const updateOrderStatusController = async (req: Request, res: Response) =
       // Se não tem dono, só permitir se a mesa estiver no range/horário do atendente
       if (!order?.assignedAttendantId) {
         const canOperate = await isTableInCurrentRange({
-          unitId: String(order?.restaurantUnit),
+          unitId: String(order?.hotelUnit),
           attendantId: String(userId),
           tableId: Number(order?.meta?.tableId),
         });
@@ -735,8 +735,8 @@ export const deleteOrderController = async (req: Request, res: Response) => {
     }
 
     // Remover referência do pedido da unidade
-    await RestaurantUnitModel.findByIdAndUpdate(
-      deletedOrder.restaurantUnit,
+    await HotelUnitModel.findByIdAndUpdate(
+      deletedOrder.hotelUnit,
       {
         $pull: {
           orders: id
@@ -801,7 +801,7 @@ export const getGuestOrdersController = async (req: Request, res: Response) => {
     const openStatuses = ["processing", "completed", "payment_requested"];
 
     const query: any = { "guestInfo.id": guestId, "meta.tableId": tableId, status: { $in: openStatuses }}; 
-    if (unitId) query.restaurantUnit = unitId;                                
+    if (unitId) query.hotelUnit = unitId;                                
 
     const orders = await OrderModel.find(query).sort({ createdAt: -1 }).lean(); 
     if (!orders.length) return res.status(204).send();
@@ -934,7 +934,7 @@ export const removeOrderItemController = async (req: Request, res: Response) => 
   try {
     const { unitId, orderId, itemId } = req.params;
 
-    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    const order = await OrderModel.findOne({ _id: orderId, hotelUnit: unitId });
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     // remove fisicamente o item
@@ -992,7 +992,7 @@ export const updateOrderItemController = async (req: Request, res: Response) => 
       }
       if (!doc.assignedAttendantId) {
         const canOperate = await isTableInCurrentRange({
-          unitId: String(doc.restaurantUnit),
+          unitId: String(doc.hotelUnit),
           attendantId: currentUserId,
           tableId: tableNum,
         });
@@ -1142,7 +1142,7 @@ export const reassignOpenOrdersForUnitController = async (req: Request, res: Res
     }
 
     const baseFilter: any = {
-      restaurantUnit: restaurantUnitId,
+      hotelUnit: restaurantUnitId,
       status: { $nin: ["paid", "cancelled"] },
       isPaid: { $ne: true },
       "meta.tableId": { $exists: true },
@@ -1251,7 +1251,7 @@ export const addOrderItemExceptionController = async (req: Request, res: Respons
       return res.status(400).json({ message: "Reason is required" });
     }
 
-    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    const order = await OrderModel.findOne({ _id: orderId, hotelUnit: unitId });
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const item: any = order.items?.find((it: any) => String(it._id) === String(itemId));
@@ -1296,7 +1296,7 @@ export const applyOrderCouponController = async (req: Request, res: Response) =>
       return res.status(400).json({ message: "Invalid value." });
     }
 
-    const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+    const order = await OrderModel.findOne({ _id: orderId, hotelUnit: unitId });
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     // base para cálculo percentual: subtotal SEM itens de cupom já existentes
@@ -1351,7 +1351,7 @@ export async function getTableStatus(req: Request, res: Response) {
 
     const orders = await OrderModel.find(
       {
-        restaurantUnit: unitId,
+        hotelUnit: unitId,
         "meta.tableId": tableId,
       },
       { status: 1, isPaid: 1, meta: 1, createdAt: 1, updatedAt: 1 },
@@ -1385,7 +1385,7 @@ export async function requestHelpController(req: Request, res: Response) {
   const userRole = String(req.user?.role || ""); 
 
   // 1) validação básica
-  const order = await OrderModel.findOne({ _id: orderId, restaurantUnit: unitId });
+  const order = await OrderModel.findOne({ _id: orderId, hotelUnit: unitId });
   if (!order) return res.status(404).json({ message: "Pedido não encontrado" });
 
   // 2) grava o sinal (idempotente por minuto)

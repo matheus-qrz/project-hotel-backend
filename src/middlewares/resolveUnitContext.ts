@@ -1,39 +1,39 @@
 // middleware/unitContext.ts
 import { Types } from "mongoose";
 import { Request, Response, NextFunction } from "express";
-import { RestaurantModel } from "../models/Restaurant";
-import { RestaurantUnitModel } from "../models/RestaurantUnit";
+import { HotelModel } from "../models/Hotel";
+import { HotelUnitModel } from "../models/HotelUnit";
 
 export async function resolveUnitContext(req: Request, res: Response, next: NextFunction) {
   try {
     const unitId = (req.params.unitId || req.query.unitId || req.body.unitId) as string | undefined;
-    const restaurantSlug = (req.params.restaurantSlug || req.query.restaurantSlug || req.body.restaurantSlug || req.params.slug) as string | undefined;
-    const restaurantId = (req.params.restaurantId || req.query.restaurantId || req.body.restaurantId) as string | undefined;
+    const hotelSlug = (req.params.hotelSlug || req.query.hotelSlug || req.body.hotelSlug || req.params.slug) as string | undefined;
+    const hotelId = (req.params.hotelId || req.query.hotelId || req.body.hotelId) as string | undefined;
 
-    // 1) Resolve restaurant
-    let restaurant: any = null;
-    if (restaurantId && Types.ObjectId.isValid(restaurantId)) {
-      restaurant = await RestaurantModel.findById(restaurantId).select("_id slug").lean();
-    } else if (restaurantSlug) {
-      restaurant = await RestaurantModel.findOne({ slug: restaurantSlug }).select("_id slug").lean();
+    // 1) Resolve hotel
+    let hotel: any = null;
+    if (hotelId && Types.ObjectId.isValid(hotelId)) {
+      hotel = await HotelModel.findById(hotelId).select("_id slug").lean();
+    } else if (hotelSlug) {
+      hotel = await HotelModel.findOne({ slug: hotelSlug }).select("_id slug").lean();
     }
-    if (!restaurant) return res.status(404).json({ message: "Restaurante não encontrado." });
+    if (!hotel) return res.status(404).json({ message: "Hotel nao encontrado." });
 
     // 2) Resolve unit
     let unit: any = null;
     if (unitId && Types.ObjectId.isValid(unitId)) {
-      unit = await RestaurantUnitModel.findOne({ _id: unitId, restaurant: restaurant._id, isActive: { $ne: false } })
-        .select("_id restaurant timezone isMatrix name")
+      unit = await HotelUnitModel.findOne({ _id: unitId, hotel: hotel._id, isActive: { $ne: false } })
+        .select("_id hotel timezone isMatrix name")
         .lean();
-      if (!unit) return res.status(400).json({ message: "Unidade inválida para este restaurante." });
+      if (!unit) return res.status(400).json({ message: "Unidade invalida para este hotel." });
     } else {
       // Fallback: matriz (para QRs antigos)
-      unit = await RestaurantUnitModel.findOne({ restaurant: restaurant._id, isMatrix: true }).lean();
-      if (!unit) return res.status(400).json({ message: "Unidade não especificada e matriz inexistente." });
+      unit = await HotelUnitModel.findOne({ hotel: hotel._id, isMatrix: true }).lean();
+      if (!unit) return res.status(400).json({ message: "Unidade nao especificada e matriz inexistente." });
     }
 
     (req as any).ctx = {
-      restaurantId: String(restaurant._id),
+      hotelId: String(hotel._id),
       unitId: String(unit._id),
       tz: unit.timezone || "America/Sao_Paulo",
     };

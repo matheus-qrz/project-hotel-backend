@@ -4,8 +4,8 @@ import { Schema, model } from "mongoose";
 const PrinterWorkerTokenSchema = new Schema(
   {
     token: { type: String, required: true, unique: true },
-    
-    restaurantId: { type: String, required: true },
+
+    hotelId: { type: String, required: true },
     unitId: { type: String, required: true },
 
     name: { type: String }, // ex: "PC Caixa", "Cozinha"
