@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { OperationalCosts } from "../utils/finantials";
 const Schema = mongoose.Schema;
 
-export interface IHotel extends Document {
+export interface IRestaurant extends Document {
   name: string;
   logo: string;
   cnpj: string;
@@ -37,7 +37,7 @@ export interface IHotel extends Document {
   operationalCosts: OperationalCosts;
 }
 
-const hotelSchema = new Schema({
+const restaurantSchema = new Schema({
   name: { type: String, required: true, unique: true },
   socialName: { type: String },
   cnpj: { type: String, required: true, unique: true },
@@ -51,22 +51,22 @@ const hotelSchema = new Schema({
   specialty: String,
   phone: String,
 
-  // Informacoes do admin/proprietario do hotel
+  // Informações do admin/proprietário do restaurante
   admin: {
     fullName: { type: String, required: true },
     cpf: { type: String, required: true },
     email: { type: String, required: true, unique: true }, // Email para login
   },
 
-  // Credenciais de autenticacao para o hotel/admin
+  // Credenciais de autenticação para o restaurante/admin
   authentication: {
     password: { type: String, required: true, select: false }, // Hash da senha
     salt: { type: String, required: true, select: false }, // Salt para a senha
-    sessionToken: { type: String, select: false } // Token de sessao
+    sessionToken: { type: String, select: false } // Token de sessão
   },
   managers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
   attendants: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-  units: [{ type: Schema.Types.ObjectId, ref: 'HotelUnit' }],
+  units: [{ type: Schema.Types.ObjectId, ref: 'RestaurantUnit' }],
   businessHours: [{
     days: [String],
     open: String,
@@ -81,69 +81,57 @@ const hotelSchema = new Schema({
       other: { type: Number, default: 0 }
     },
     variable: {
-      costPercentage: { type: Number, default: 40 }, // 40% como padrao
+      costPercentage: { type: Number, default: 40 }, // 40% como padrão            
       averageIngredientCost: { type: Number, default: 0 },
       averagePackagingCost: { type: Number, default: 0 }
     }
   }
-}, {
+}, { 
   timestamps: true,
   timezone: { type: String, default: "America/Sao_Paulo" }
  });
 
-export const HotelModel = mongoose.model<IHotel>("Hotel", hotelSchema);
-
-// Alias para compatibilidade durante transicao
-export const RestaurantModel = HotelModel;
+export const RestaurantModel = mongoose.model<IRestaurant>("Restaurant", restaurantSchema);
 
 // METHODS
 
-// Get All Hotels
-export const getHotels = () => HotelModel.find();
-export const getRestaurants = getHotels; // Alias
+// Get All Restaurants
+export const getRestaurants = () => RestaurantModel.find();
 
-// Get Hotel by Id
-export const getHotelById = (id: string) => HotelModel.findById(id);
-export const getRestaurantById = getHotelById; // Alias
+// Get Restaurant by Id
+export const getRestaurantById = (id: string) => RestaurantModel.findById(id);
 
-// Get Hotel by Name (also for register validation)
-export const getHotelByName = (name: string) =>
-  HotelModel.findOne({ name });
-export const getRestaurantByName = getHotelByName; // Alias
+// Get Restaurant by Name (also for register validation)
+export const getRestaurantByName = (name: string) =>
+  RestaurantModel.findOne({ name });
 
-// Create Hotel
-export const createHotel = (values: Record<string, any>) =>
-  new HotelModel(values).save().then((hotel) => hotel.toObject());
-export const createRestaurant = createHotel; // Alias
+// Create Restaurant
+export const createRestaurant = (values: Record<string, any>) =>
+  new RestaurantModel(values).save().then((restaurant) => restaurant.toObject());
 
-// Delete Hotel
-export const deleteHotel = (id: string) =>
-  HotelModel.findOneAndDelete({ _id: id });
-export const deleteRestaurant = deleteHotel; // Alias
+// Delete Restaurant
+export const deleteRestaurant = (id: string) =>
+  RestaurantModel.findOneAndDelete({ _id: id });
 
-// Update Hotel
-export const updateHotel = (id: string, values: Record<string, any>) =>
-  HotelModel.findByIdAndUpdate(id, values, { new: true });
-export const updateRestaurant = updateHotel; // Alias
+// Update Restaurant
+export const updateRestaurant = (id: string, values: Record<string, any>) =>
+  RestaurantModel.findByIdAndUpdate(id, values, { new: true });
 
-export const getHotelBySlug = async (slug: string) => {
+export const getRestaurantBySlug = async (slug: string) => {
   const id = slug.split('-').pop();
   if (!id) return null;
-  return HotelModel.findById(id);
+  return RestaurantModel.findById(id);
 };
-export const getRestaurantBySlug = getHotelBySlug; // Alias
 
-// Buscar hotel pelo email do admin (para login)
-export const getHotelByEmail = (email: string) => {
-  return HotelModel.findOne({ 'admin.email': email })
+// Buscar restaurante pelo email do admin (para login)
+export const getRestaurantByEmail = (email: string) => {
+  return RestaurantModel.findOne({ 'admin.email': email })
     .select('+authentication.password +authentication.salt +authentication.sessionToken');
 };
-export const getRestaurantByEmail = getHotelByEmail; // Alias
 
-// Buscar hotel pelo token de sessao
-export const getHotelBySessionToken = (sessionToken: string) => {
-  return HotelModel.findOne({
+// Buscar restaurante pelo token de sessão
+export const getRestaurantBySessionToken = (sessionToken: string) => {
+  return RestaurantModel.findOne({
     'authentication.sessionToken': sessionToken,
   }).select('+authentication.sessionToken');
 };
-export const getRestaurantBySessionToken = getHotelBySessionToken; // Alias

@@ -2,8 +2,8 @@
 import mongoose, { Schema } from "mongoose";
 
 export interface IRangeAssignment extends mongoose.Document {
-  hotel?: mongoose.Types.ObjectId | null;
-  hotelUnit: mongoose.Types.ObjectId | null; 
+  restaurant?: mongoose.Types.ObjectId | null;
+  restaurantUnit: mongoose.Types.ObjectId | null; 
   startTable: number;
   endTable: number;
   attendant: mongoose.Types.ObjectId | null;       // attendantId
@@ -18,16 +18,16 @@ export interface IRangeAssignment extends mongoose.Document {
 
 const RangeAssignmentSchema = new Schema<IRangeAssignment>(
   {
-    hotel: {
-      type: Schema.Types.ObjectId,
-      ref: "Hotel",
-      index: true,
-      default: null
+    restaurant: { 
+      type: Schema.Types.ObjectId, 
+      ref: "Restaurant", 
+      index: true, 
+      default: null 
     },
-    hotelUnit: {
-      type: Schema.Types.ObjectId,
-      ref: "HotelUnit",
-      index: true,
+    restaurantUnit: { 
+      type: Schema.Types.ObjectId, 
+      ref: "RestaurantUnit",
+      index: true, 
       default: null,
       required: true
     },
@@ -80,7 +80,7 @@ const RangeAssignmentSchema = new Schema<IRangeAssignment>(
 );
 
 RangeAssignmentSchema.index(
-  { hotelUnit: 1, attendant: 1, startTable: 1, endTable: 1, startsAt: 1, endsAt: 1 },
+  { restaurantUnit: 1, attendant: 1, startTable: 1, endTable: 1, startsAt: 1, endsAt: 1 },
   { unique: true, partialFilterExpression: { isActive: true } }
 );
 

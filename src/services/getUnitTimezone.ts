@@ -1,6 +1,6 @@
-import { HotelUnitModel as HotelUnit } from "../models/HotelUnit";
+import { RestaurantUnitModel as RestaurantUnit } from "../models/RestaurantUnit";
 
 export async function getUnitTimezone(unitId: string): Promise<string> {
-  const unit = await HotelUnit.findById(unitId).select("timezone").lean();
+  const unit = await RestaurantUnit.findById(unitId).select("timezone").lean();
   return unit?.timezone || "America/Sao_Paulo"; // fallback seguro
 }

@@ -9,16 +9,16 @@ function sha256(input: string) {
 export const listPrinterWorkersController = async (req: Request, res: Response) => {
   try {
     // ✅ regra simples:
-    // ADMIN pode listar por hotelId/unitId via query
+    // ADMIN pode listar por restaurantId/unitId via query
     // MANAGER (ideal): você ignora query e usa req.user.unitId (se existir).
-    const { hotelId, unitId } = req.query as any;
+    const { restaurantId, unitId } = req.query as any;
 
     const filter: any = {};
-    if (hotelId) filter.hotelId = String(hotelId);
+    if (restaurantId) filter.restaurantId = String(restaurantId);
     if (unitId) filter.unitId = String(unitId);
 
     const docs = await PrinterWorkerToken.find(filter)
-      .select("hotelId unitId name stations isActive lastSeenAt createdAt updatedAt")
+      .select("restaurantId unitId name stations isActive lastSeenAt createdAt updatedAt")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -31,10 +31,10 @@ export const listPrinterWorkersController = async (req: Request, res: Response) 
 
 export const createPrinterWorkerController = async (req: Request, res: Response) => {
   try {
-    const { hotelId, name, stations } = req.body ?? {};
+    const { restaurantId, name, stations } = req.body ?? {};
 
-    if (!hotelId) {
-      return res.status(400).json({ message: "hotelId é obrigatório" });
+    if (!restaurantId) {
+      return res.status(400).json({ message: "restaurantId é obrigatório" });
     }
     if (!name) {
       return res.status(400).json({ message: "name é obrigatório" });
@@ -60,7 +60,7 @@ export const createPrinterWorkerController = async (req: Request, res: Response)
 
     const doc = await PrinterWorkerToken.create({
       token,
-      hotelId: String(hotelId).trim(),
+      restaurantId: String(restaurantId).trim(),
       unitId, // ✅ sempre string válida agora
       name: String(name).trim(),
       stations: Array.isArray(stations) ? stations.map((s: any) => String(s).trim()) : [],
@@ -71,7 +71,7 @@ export const createPrinterWorkerController = async (req: Request, res: Response)
     return res.status(201).json({
       id: doc._id,
       token: rawToken, // ✅ só retorna uma vez
-      hotelId: doc.hotelId,
+      restaurantId: doc.restaurantId,
       unitId: doc.unitId,
       name: doc.name,
       stations: doc.stations,

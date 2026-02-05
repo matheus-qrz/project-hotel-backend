@@ -1,6 +1,6 @@
 // models/Products.ts
 import mongoose, { Document, Schema } from "mongoose";
-import { IHotel } from "./index";
+import { IRestaurant } from "./index";
 
 export interface ComboOption {
   name: string; 
@@ -37,7 +37,7 @@ export interface IPreparationGroup {
 }
 
 export interface IProduct extends Document {
-  hotel: mongoose.Schema.Types.ObjectId | IHotel;
+  restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
   category: string;
   image: string;
   imagePublicId?: string;            
@@ -90,9 +90,9 @@ const ComboGroupSchema = new Schema({
 });
 
 const productSchema = new Schema<IProduct>({
-  hotel: {
+  restaurant: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "Hotel",
+    ref: "Restaurant",
     required: true,
   },
   category: {
@@ -272,18 +272,15 @@ export const ProductModel = mongoose.model<IProduct>("Product", productSchema);
 // Obter todos os produtos
 export const getProducts = () => ProductModel.find();
 
-// Obter produtos de um hotel especifico
-export const getProductsByHotel = (hotelId: string) =>
-  ProductModel.find({ hotel: hotelId })
+// Obter produtos de um restaurante específico
+export const getProductsByRestaurant = (restaurantId: string) =>
+  ProductModel.find({ restaurant: restaurantId })
     .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate promotionLabel isCombo comboOptions additionalOptions accompaniments description discountPercentage isAvailable');
 
-// Alias para compatibilidade
-export const getProductsByRestaurant = getProductsByHotel;
-
-// Obter produtos em promocao de um hotel especifico
-export const getPromotionalProducts = (hotelId: string) =>
+// Obter produtos em promoção de um restaurante específico
+export const getPromotionalProducts = (restaurantId: string) =>
   ProductModel.find({
-    hotel: hotelId,
+    restaurant: restaurantId,
     $or: [
       { discountPercentage: { $gt: 0 } },
       { promotionalPrice: { $gt: 0 } },
