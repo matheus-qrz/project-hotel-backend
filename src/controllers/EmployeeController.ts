@@ -2,45 +2,42 @@
 import { Request, Response } from "express";
 import mongoose from "mongoose";
 import { UserModel } from "../models/User";
-import { HotelUnitModel } from "../models/HotelUnit";
+import { RestaurantUnitModel } from "../models/RestaurantUnit";
 import { generateHash, generateSalt } from "../utils/generateSalt";
-import { HotelModel } from "../models/Hotel";
+import { RestaurantModel } from "../models/Restaurant";
 
-// Listar funcionarios de todo o hotel
-export const getEmployeesByHotelController = async (req: Request, res: Response) => {
+// Listar funcionários de todo o restaurante
+export const getEmployeesByRestaurantController = async (req: Request, res: Response) => {
     try {
-        const { id: hotelId } = req.params;
-        console.log("HotelId: ", hotelId)
+        const { id: restaurantId } = req.params;
+        console.log("RestaurantId: ", restaurantId)
 
-        // Verifica se o ID do hotel e valido
-        if (!mongoose.Types.ObjectId.isValid(hotelId)) {
+        // Verifica se o ID do restaurante é válido
+        if (!mongoose.Types.ObjectId.isValid(restaurantId)) {
             return res.status(400).json({
-                message: "ID de hotel invalido"
+                message: "ID de restaurante inválido"
             });
         }
 
-        // Busca todos os funcionarios associados ao hotel
+        // Busca todos os funcionários associados ao restaurante
         const employees = await UserModel.find({
-            hotel: hotelId,
-        }).select("firstName lastName avatar hotelUnit role email createdAt");
+            restaurant: restaurantId,
+        }).select("firstName lastName avatar restaurantUnit role email createdAt");
 
         if (employees.length === 0) {
             return res.status(404).json({
-                message: "Nenhum funcionario encontrado para este hotel"
+                message: "Nenhum funcionário encontrado para este restaurante"
             });
         }
 
         return res.status(200).json(employees);
     } catch (error: any) {
-        console.error("Erro ao buscar funcionarios do hotel:", error);
+        console.error("Erro ao buscar funcionários do restaurante:", error);
         return res.status(500).json({
             message: error.message || "Erro interno no servidor"
         });
     }
 };
-
-// Alias para compatibilidade
-export const getEmployeesByRestaurantController = getEmployeesByHotelController;
 
 // Listar funcionários de uma unidade específica
 export const getEmployeesByUnitController = async (req: Request, res: Response) => {
@@ -55,7 +52,7 @@ export const getEmployeesByUnitController = async (req: Request, res: Response) 
         }
 
         // Verifica se a unidade existe
-        const unit = await HotelUnitModel.findById(unitId);
+        const unit = await RestaurantUnitModel.findById(unitId);
         if (!unit) {
             return res.status(404).json({
                 message: "Unidade não encontrada"
@@ -94,8 +91,8 @@ export const getEmployeeByIdController = async (req: Request, res: Response) => 
             _id: id,
             role: { $ne: "CLIENT" }
         }).select("-authentication.password -authentication.salt")
-            .populate('hotel')
-            .populate('hotelUnit');
+            .populate('restaurant')
+            .populate('restaurantUnit');
 
         if (!employee) {
             return res.status(404).json({
@@ -151,7 +148,7 @@ export const createEmployeeController = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "ID de restaurante inválido" });
     }
 
-    const restaurantDoc = await HotelModel.findById(restaurant);
+    const restaurantDoc = await RestaurantModel.findById(restaurant);
     if (!restaurantDoc) {
       return res.status(404).json({ message: "Restaurante não encontrado" });
     }
@@ -189,10 +186,10 @@ export const createEmployeeController = async (req: Request, res: Response) => {
         if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
           return res.status(400).json({ message: "ID de unidade inválido" });
         }
-        unitDoc = await HotelUnitModel.findById(restaurantUnit);
+        unitDoc = await RestaurantUnitModel.findById(restaurantUnit);
         if (!unitDoc) return res.status(404).json({ message: "Unidade não encontrada" });
-        if (String(unitDoc.hotel) !== String(restaurantDoc._id)) {
-          return res.status(400).json({ message: "Esta unidade não pertence ao hotel informado" });
+        if (String(unitDoc.restaurant) !== String(restaurantDoc._id)) {
+          return res.status(400).json({ message: "Esta unidade não pertence ao restaurante informado" });
         }
       }
     }
@@ -222,13 +219,13 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     const newEmployee = new UserModel({
       firstName,
       lastName,
-      email,
-      cpf,
+      email,                 
+      cpf,                  
       phone: phone || "",
       role,
-      authentication,
-      hotel: restaurantDoc._id,
-      hotelUnit: unitDoc ? unitDoc._id : (isMatrixSelection ? null : null),
+      authentication,        
+      restaurant: restaurantDoc._id,
+      restaurantUnit: unitDoc ? unitDoc._id : (isMatrixSelection ? null : null),
       orders: [],
     });
 
@@ -236,12 +233,12 @@ export const createEmployeeController = async (req: Request, res: Response) => {
 
     if (unitDoc) {
     if (role === "MANAGER") {
-      await HotelUnitModel.findByIdAndUpdate(
+      await RestaurantUnitModel.findByIdAndUpdate(
         unitDoc._id,
         { $addToSet: { managers: newEmployee._id } }
       );
     } else if (role === "ATTENDANT") {
-      await HotelUnitModel.findByIdAndUpdate(
+      await RestaurantUnitModel.findByIdAndUpdate(
         unitDoc._id,
         { $addToSet: { attendants: newEmployee._id } }
       );
@@ -252,7 +249,7 @@ export const createEmployeeController = async (req: Request, res: Response) => {
     if (role === "MANAGER") restaurantUpdate.$addToSet = { ...(restaurantUpdate.$addToSet||{}), managers: newEmployee._id };
     if (role === "ATTENDANT") restaurantUpdate.$addToSet = { ...(restaurantUpdate.$addToSet||{}), attendants: newEmployee._id };
     if (Object.keys(restaurantUpdate).length) {
-      await HotelModel.findByIdAndUpdate(restaurantDoc._id, restaurantUpdate);
+      await RestaurantModel.findByIdAndUpdate(restaurantDoc._id, restaurantUpdate);
     }
 
     return res.status(201).json({
@@ -263,8 +260,8 @@ export const createEmployeeController = async (req: Request, res: Response) => {
         lastName: newEmployee.lastName,
         email: newEmployee.email,
         role: newEmployee.role,
-        hotel: (newEmployee as any).hotel,
-        hotelUnit: (newEmployee as any).hotelUnit,
+        restaurant: newEmployee.restaurant,
+        restaurantUnit: newEmployee.restaurantUnit, 
       },
     });
   } catch (error: any) {
@@ -310,29 +307,29 @@ export const updateEmployeeController = async (req: Request, res: Response) => {
             return res.status(400).json({ message: "Função inválida" });
         }
 
-        // Valida hotel (se enviado)
-        let hotelDoc = (employee as any).hotel;
-        if (restaurant && restaurant !== String((employee as any).hotel)) {
+        // Valida restaurant (se enviado)
+        let restaurantDoc = employee.restaurant;
+        if (restaurant && restaurant !== String(employee.restaurant)) {
             if (!mongoose.Types.ObjectId.isValid(restaurant)) {
-                return res.status(400).json({ message: "ID de hotel inválido" });
+                return res.status(400).json({ message: "ID de restaurante inválido" });
             }
-            const r = await HotelModel.findById(restaurant);
-            if (!r) return res.status(404).json({ message: "Hotel não encontrado" });
-            hotelDoc = r._id;
+            const r = await RestaurantModel.findById(restaurant);
+            if (!r) return res.status(404).json({ message: "Restaurante não encontrado" });
+            restaurantDoc = r._id;
         }
 
         // Valida unidade (se enviada)
-        let unitDoc = (employee as any).hotelUnit;
-        if (restaurantUnit && restaurantUnit !== String((employee as any).hotelUnit)) {
+        let unitDoc = employee.restaurantUnit;
+        if (restaurantUnit && restaurantUnit !== String(employee.restaurantUnit)) {
             if (!mongoose.Types.ObjectId.isValid(restaurantUnit)) {
                 return res.status(400).json({ message: "ID de unidade inválido" });
             }
-            const unit = await HotelUnitModel.findById(restaurantUnit);
+            const unit = await RestaurantUnitModel.findById(restaurantUnit);
             if (!unit) {
                 return res.status(404).json({ message: "Unidade não encontrada" });
             }
-            if (String(unit.hotel) !== String(hotelDoc)) {
-                return res.status(400).json({ message: "Unidade não pertence ao hotel fornecido" });
+            if (String(unit.restaurant) !== String(restaurantDoc)) {
+                return res.status(400).json({ message: "Unidade não pertence ao restaurante fornecido" });
             }
             unitDoc = unit._id;
         }
@@ -353,8 +350,8 @@ export const updateEmployeeController = async (req: Request, res: Response) => {
         }
 
         // Atualiza vínculos
-        (employee as any).hotel = hotelDoc;
-        (employee as any).hotelUnit = unitDoc;
+        employee.restaurant = restaurantDoc;
+        employee.restaurantUnit = unitDoc;
 
         await employee.save();
 
@@ -366,8 +363,8 @@ export const updateEmployeeController = async (req: Request, res: Response) => {
                 lastName: employee.lastName,
                 email: employee.email,
                 role: employee.role,
-                hotel: (employee as any).hotel,
-                hotelUnit: (employee as any).hotelUnit
+                restaurant: employee.restaurant,
+                restaurantUnit: employee.restaurantUnit
             }
         });
     } catch (error: any) {
@@ -387,45 +384,45 @@ export const deleteEmployeeController = async (req: Request, res: Response) => {
         }
 
         // Remove o vínculo do funcionário da unidade, se existir
-        if ((employee as any).hotelUnit) {
-            await HotelUnitModel.findByIdAndUpdate(
-                (employee as any).hotelUnit,
+        if (employee.restaurantUnit) {
+            await RestaurantUnitModel.findByIdAndUpdate(
+                employee.restaurantUnit,
                 { $pull: { staff: employee._id } }
             );
         }
 
-        // Remove o vínculo do funcionário do hotel (matriz)
-        if ((employee as any).hotel) {
-            await HotelModel.findByIdAndUpdate(
-                (employee as any).hotel,
+        // Remove o vínculo do funcionário do restaurante (matriz)
+        if (employee.restaurant) {
+            await RestaurantModel.findByIdAndUpdate(
+                employee.restaurant,
                 { $pull: { staff: employee._id } }
             );
         }
 
-        if ((employee as any).hotelUnit) {
+        if (employee.restaurantUnit) {
           if (employee.role === "MANAGER") {
-            await HotelUnitModel.findByIdAndUpdate(
-              (employee as any).hotelUnit,
+            await RestaurantUnitModel.findByIdAndUpdate(
+              employee.restaurantUnit,
               { $pull: { managers: employee._id } }
             );
           } else if (employee.role === "ATTENDANT") {
-            await HotelUnitModel.findByIdAndUpdate(
-              (employee as any).hotelUnit,
+            await RestaurantUnitModel.findByIdAndUpdate(
+              employee.restaurantUnit,
               { $pull: { attendants: employee._id } }
             );
           }
         }
 
 
-        if ((employee as any).hotel) {
+        if (employee.restaurant) {
           if (employee.role === "MANAGER") {
-            await HotelModel.findByIdAndUpdate(
-              (employee as any).hotel,
+            await RestaurantModel.findByIdAndUpdate(
+              employee.restaurant,
               { $pull: { managers: employee._id } }
             );
           } else if (employee.role === "ATTENDANT") {
-            await HotelModel.findByIdAndUpdate(
-              (employee as any).hotel,
+            await RestaurantModel.findByIdAndUpdate(
+              employee.restaurant,
               { $pull: { attendants: employee._id } }
             );
           }

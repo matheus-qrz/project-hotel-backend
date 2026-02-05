@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   loginHandler,
   registerClientHandler,
-  registerAdminWithHotelHandler,
+  registerAdminWithRestaurantHandler,
   validateTokenHandler,
   logoutHandler,
   validateGuestTokenHandler
@@ -10,22 +10,19 @@ import {
 import { isAuthenticated } from "../middlewares";
 
 export default (router: Router) => {
-  // Rotas especificas para cada tipo
+  // Rotas específicas para cada tipo
   router.post("/login", loginHandler);
 
-  // Cadastro de hotel - via pagina publica
-  router.post("/register/hotel", registerAdminWithHotelHandler);
+  // Cadastro de restaurante - via página pública
+  router.post("/register/restaurant", registerAdminWithRestaurantHandler);
 
-  // Alias para compatibilidade - cadastro via rota antiga /restaurant
-  router.post("/register/restaurant", registerAdminWithHotelHandler);
-
-  // Cadastro de cliente - via pagina publica
+  // Cadastro de cliente - via página pública
   router.post("/register/client", registerClientHandler);
 
-  // Verificacao de token
+  // Verificação de token
   router.get("/validate", isAuthenticated, validateTokenHandler);
 
-  // Validacao de token de convidado
+  // Validação de token de convidado
   router.post("/validate/guest", validateGuestTokenHandler);
 
   // Logout

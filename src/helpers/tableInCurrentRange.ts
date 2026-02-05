@@ -1,6 +1,6 @@
 export async function isTableInCurrentRange({ unitId, attendantId, tableId }: { unitId: string; attendantId: string; tableId: number; }) {
-  const { HotelUnitModel } = await import("../models/HotelUnit");
-  const unit = await HotelUnitModel.findById(unitId).select("timezone").lean();
+  const { RestaurantUnitModel } = await import("../models/RestaurantUnit");
+  const unit = await RestaurantUnitModel.findById(unitId).select("timezone").lean();
   const tz = unit?.timezone || "America/Sao_Paulo";
 
   const { DateTime } = await import("luxon");
@@ -20,7 +20,7 @@ export async function isTableInCurrentRange({ unitId, attendantId, tableId }: { 
   const { RangeAssignmentModel } = await import("../models/RangeAssignment");
 
   const ranges = await RangeAssignmentModel.find({
-    hotelUnit: unitId,
+    restaurantUnit: unitId,
     attendant: attendantId,
     isActive: { $ne: false },
     $or: [{ daysOfWeek: { $size: 0 } }, { daysOfWeek: dow }, { daysOfWeek: String(dow) }],

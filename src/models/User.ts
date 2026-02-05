@@ -16,8 +16,8 @@ export interface IUser extends Document {
   };
   role: "ADMIN" | "MANAGER" | "ATTENDANT" | "CLIENT";
   orders: mongoose.Schema.Types.ObjectId[];
-  hotel?: mongoose.Schema.Types.ObjectId;
-  hotelUnit?: mongoose.Schema.Types.ObjectId;
+  restaurant?: mongoose.Schema.Types.ObjectId;
+  restaurantUnit?: mongoose.Schema.Types.ObjectId;
 }
 
 const userSchema = new Schema(
@@ -81,14 +81,14 @@ const userSchema = new Schema(
         ref: "Order"
       }
     ],
-    // Campos para referencias
-    hotel: {
+    // Campos para referências
+    restaurant: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Hotel"
+      ref: "Restaurant"
     },
-    hotelUnit: {
+    restaurantUnit: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "HotelUnit"
+      ref: "RestaurantUnit"
     }
   },
   { timestamps: true }
@@ -116,20 +116,17 @@ export const getUserBySessionToken = (sessionToken: string) => {
   });
 };
 
-// Get User by Hotel Unit
+// Get User by Restaurant Unit
 export const getUserByUnit = (unit: string) => {
   return UserModel
-    .find({ hotelUnit: unit })
+    .find({ restaurantUnit: unit })
     .select("+authentication.sessionToken +role");
 };
 
-// Get Users by Hotel
-export const getUsersByHotel = (hotelId: string) => {
-  return UserModel.find({ hotel: hotelId });
+// Get Users by Restaurant
+export const getUsersByRestaurant = (restaurantId: string) => {
+  return UserModel.find({ restaurant: restaurantId });
 };
-
-// Alias para compatibilidade
-export const getUsersByRestaurant = getUsersByHotel;
 
 // Create User
 export const createUser = (values: Record<string, any>, options = {}) =>
