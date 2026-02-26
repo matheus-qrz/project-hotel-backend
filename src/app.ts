@@ -77,10 +77,6 @@ app.use(express.urlencoded({ limit: "200mb", extended: true }));
 
 app.use("/", router());
 
-console.log("CLOUDINARY_URL exists?", !!process.env.CLOUDINARY_URL);
-console.log("CLOUDINARY_URL prefix:", (process.env.CLOUDINARY_URL || "").slice(0, 20));
-
-
 // handler de erro
 app.use(
   (
