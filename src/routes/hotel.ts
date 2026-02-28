@@ -11,7 +11,6 @@ import {
 import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (hotelRouter: Router) => {
-  console.log(">>> Rotas de hotel carregadas!"); 
   // Criar hotel (apenas admin)
   hotelRouter.post("/hotel/create", registerAdminWithHotel);
   

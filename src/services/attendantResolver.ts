@@ -1,11 +1,16 @@
 // src/services/attendantResolver.ts
 import { Types } from "mongoose";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
-import { getUnitTimezone } from "./getUnitTimezone";
+import { HotelUnitModel } from "../models/HotelUnit";
 import { RangeAssignmentModel as RangeAssignment } from "../models/RangeAssignment";
 import { UserModel as User } from "../models/User";
 
 type Args = { unitId: string; tableId: number; now?: Date };
+
+async function getUnitTimezone(unitId: string): Promise<string> {
+  const unit = await HotelUnitModel.findById(unitId).select("timezone").lean();
+  return unit?.timezone || "America/Sao_Paulo"; // fallback seguro
+}
 
 function pickHM(d: Date | string | number | null | undefined) {
   if (!d) return { h: 0, m: 0 };
@@ -22,7 +27,7 @@ export async function resolveResponsibleAttendant({ unitId, tableId, now }: Args
 
   // 1) Busca candidatos da UNIDADE que cobrem a mesa e o dia
   const candidates = await RangeAssignment.find({
-    restaurantUnit: new Types.ObjectId(unitId),
+    unit: new Types.ObjectId(unitId),
     isActive: true,
     startTable: { $lte: tableId },
     endTable:   { $gte: tableId },

@@ -35,7 +35,6 @@ async function main() {
   // 4) despacha os jobs pendentes para o worker
   await dispatchPendingPrintJobs();
 
-  console.log("Enviado! Se o worker estiver acessível, ele deve ter recebido o ticket.");
   await mongoose.disconnect();
 }
 

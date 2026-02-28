@@ -4,20 +4,21 @@ const Schema = mongoose.Schema;
 
 export interface IHotelUnit extends Document {
   hotel: mongoose.Schema.Types.ObjectId;
-  name: string; // Ex: "Bloco A", "Ala Norte", "Setor 1"
+  name: string;
   description?: string;
-  roomNumberingFormat: "SIMPLE" | "FLOOR_ROOM" | "SECTOR_ROOM"; // Formato de numeração
+  roomNumberingFormat: "SIMPLE" | "FLOOR_ROOM" | "SECTOR_ROOM"; 
   rooms: Array<{
-    roomId: string; // Ex: "101", "1A", "1-2"
-    displayName: string; // Ex: "Quarto 101", "Suíte 1A"
-    floor?: string; // Andar (opcional)
-    sector?: string; // Setor (opcional)
+    roomId: string; 
+    displayName: string;
+    floor?: string;
+    sector?: string; 
     isActive: boolean;
-    qrCode?: string; // URL do QR Code gerado
+    qrCode?: string; 
   }>;
   orders: mongoose.Schema.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
+  timezone?: string;
 }
 
 const hotelUnitSchema = new Schema(
@@ -45,7 +46,11 @@ const hotelUnitSchema = new Schema(
     orders: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: "Order"
-    }]
+    }],
+    timezone: {
+      type: String,
+      required: false
+    }
   },
   { timestamps: true }
 );

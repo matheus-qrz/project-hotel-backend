@@ -1,12 +1,29 @@
-// models/Products.ts
 import mongoose, { Document, Schema } from "mongoose";
-import { IRestaurant } from "./index";
 
-export interface ComboOption {
-  name: string; 
-  products: mongoose.Types.ObjectId[]; 
-}
+// ─────────────────────────────────────────────
+//  Categorias de serviço pré-definidas (sugestão)
+//  O administrador é livre para criar qualquer
+//  string de categoria — esta lista é apenas
+//  referência para o frontend oferecer sugestões.
+// ─────────────────────────────────────────────
+export const SERVICE_CATEGORY_SUGGESTIONS = [
+  "Cozinha",
+  "Bar",
+  "Bebidas",
+  "Café da Manhã",
+  "Frigobar",
+  "Spa",
+  "Lavanderia",
+  "Serviços de Quarto",
+  "Conveniência",
+  "Entretenimento",
+  "Transporte",
+  "Outros",
+] as const;
 
+// ─────────────────────────────────────────────
+//  Sub-interfaces
+// ─────────────────────────────────────────────
 export interface IAdditional {
   id: string;
   name: string;
@@ -36,44 +53,88 @@ export interface IPreparationGroup {
   options: IPreparationOption[];
 }
 
-export interface IProduct extends Document {
-  restaurant: mongoose.Schema.Types.ObjectId | IRestaurant;
-  category: string;
-  image: string;
-  imagePublicId?: string;            
-  imageBlur?: string;       
-  imageWidth?: number;      
-  imageHeight?: number;     
+export interface ComboOption {
   name: string;
+  products: mongoose.Types.ObjectId[];
+}
+
+// ─────────────────────────────────────────────
+//  Interface principal
+// ─────────────────────────────────────────────
+export interface IProduct extends Document {
+  /** Referência ao hotel (antigo "restaurant") */
+  hotel: mongoose.Schema.Types.ObjectId;
+
+  /**
+   * Categoria do serviço — completamente livre.
+   * Ex.: "Cozinha", "Spa", "Lavanderia", "Bar", ou qualquer valor
+   * definido pelo administrador do estabelecimento.
+   */
+  category: string;
+
+  /** Rótulo de sub-categoria opcional, para agrupamentos mais finos */
+  subcategory?: string;
+
+  image: string;
+  imagePublicId?: string;
+  imageBlur?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+
+  name: string;
+
+  /**
+   * Quantidade em estoque.
+   * Para serviços sem controle de estoque, use -1 (ilimitado).
+   */
   quantity: number;
+
   price: number;
-  costPrice: number;
+  costPrice?: number;
   description: string;
   isAvailable: boolean;
-  isCombo?: boolean; 
-  comboOptions?: ComboOption[]; 
-  isAdditional?: boolean; 
-  hasAddons?: boolean; 
-  additionalOptions?: IAdditional[];
-  accompaniments?: IAccompaniment[];
-  preparationGroups?: IPreparationGroup[];
+
+  /** Tempo estimado de entrega/execução em minutos (opcional) */
+  estimatedDeliveryMinutes?: number;
+
+  /** Serviço é para consumo no quarto ou precisa de deslocamento do hóspede? */
+  deliveryType?: "room_delivery" | "on_site" | "pickup";
+
+  // Promoção
   isOnPromotion: boolean;
   promotionalPrice?: number;
   discountPercentage?: number | null;
   promotionStartDate?: Date | null;
   promotionEndDate?: Date | null;
   promotionLabel?: string | null;
+
+  // Combos
+  isCombo?: boolean;
+  comboOptions?: ComboOption[];
+
+  // Adicionais / acompanhamentos / grupos de preparo
+  isAdditional?: boolean;
+  hasAddons?: boolean;
+  additionalOptions?: IAdditional[];
+  accompaniments?: IAccompaniment[];
+  preparationGroups?: IPreparationGroup[];
+
   promotionalMetrics?: {
     viewCount: number;
     conversionCount: number;
     marketingCost: number;
     acquisitionCost: number;
-    costPrice: number; 
-  }
+    costPrice: number;
+  };
+
+  // Métodos
   getFinalPrice(now?: Date): number;
   isPromotionActive(now?: Date): boolean;
-};
+}
 
+// ─────────────────────────────────────────────
+//  Sub-schemas
+// ─────────────────────────────────────────────
 const ComboGroupSchema = new Schema({
   title: { type: String, required: true },
   categoryId: { type: String, default: null },
@@ -89,111 +150,140 @@ const ComboGroupSchema = new Schema({
   ],
 });
 
-const productSchema = new Schema<IProduct>({
-  restaurant: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Restaurant",
-    required: true,
-  },
-  category: {
-    type: String,
-  },
-  image: { type: String },
-  imagePublicId: { type: String },
-  imageBlur: { type: String },        
-  imageWidth: { type: Number },       
-  imageHeight: { type: Number },  
-  name: {
-    type: String,
-    required: true,
-  },
-  quantity: {
-    type: Number,
-    required: true,
-  },
-  price: {
-    type: Number,
-    required: true,
-  },
-  costPrice: {
-    type: Number,
-    required: false
-  },
-  isAvailable: {
-    type: Boolean,
-    default: true,
-  },
-  description: {
-    type: String,
-  },
-  isOnPromotion: {
-    type: Boolean,
-    default: false
-  },
-  isCombo: {
-    type: Boolean,
-    default: false
-  },
-  comboOptions: [ComboGroupSchema],
-  isAdditional: {
-    type: Boolean,
-    default: false
-  },
-  hasAddons: {
-    type: Boolean,
-    default: false
-  },
-  additionalOptions: [
-    {
-      id: { type: mongoose.Schema.Types.ObjectId, auto: true },
-      name: { type: String, required: true },
-      price: { type: Number, required: true },
-      isAvailable: { type: Boolean, default: true }
-    }
-  ],
-  accompaniments: [
-    {
-      id: { type: String, required: true },
-      name: { type: String, required: true },
-      isAvailable: { type: Boolean, default: true }
-    }
-  ],
-   preparationGroups: [
-    {
-      title: { type: String, required: true },
-      required: { type: Boolean, default: true },
-      min: { type: Number, default: 1 },
-      max: { type: Number, required: true },
-      options: [
-        {
-          id: { type: mongoose.Schema.Types.ObjectId, auto: true },
-          label: { type: String, required: true },
-          extraPrice: { type: Number, default: 0 },
-          isAvailable: { type: Boolean, default: true },
-          defaultSelected: { type: Boolean, default: false },
-        },
-      ],
+// ─────────────────────────────────────────────
+//  Schema principal
+// ─────────────────────────────────────────────
+const productSchema = new Schema<IProduct>(
+  {
+    hotel: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Hotel",
+      required: true,
+      index: true,
     },
-  ],
+    category: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    subcategory: {
+      type: String,
+      trim: true,
+    },
+    image: { type: String, default: "" },
+    imagePublicId: { type: String },
+    imageBlur: { type: String },
+    imageWidth: { type: Number },
+    imageHeight: { type: Number },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      default: -1, // -1 = ilimitado (serviços sem estoque)
+    },
+    price: {
+      type: Number,
+      required: true,
+    },
+    costPrice: {
+      type: Number,
+      default: 0,
+    },
+    description: {
+      type: String,
+      default: "",
+    },
+    isAvailable: {
+      type: Boolean,
+      default: true,
+    },
+    estimatedDeliveryMinutes: {
+      type: Number,
+    },
+    deliveryType: {
+      type: String,
+      enum: ["room_delivery", "on_site", "pickup"],
+      default: "room_delivery",
+    },
 
-  discountPercentage: { type: Number, default: null },   
-  promotionalPrice: { type: Number, default: null },     
-  promotionStartDate: { type: Date, default: null },
-  promotionEndDate: { type: Date, default: null },
-  promotionLabel: { type: String, default: null },
-  promotionalMetrics: {
-    viewCount: { type: Number, default: 0 },
-    conversionCount: { type: Number, default: 0 },
-    marketingCost: { type: Number, default: 0 },
-    acquisitionCost: { type: Number, default: 0 },
-    costPrice: { type: Number, default: 0 }
+    // Promoção
+    isOnPromotion: { type: Boolean, default: false },
+    discountPercentage: { type: Number, default: null },
+    promotionalPrice: { type: Number, default: null },
+    promotionStartDate: { type: Date, default: null },
+    promotionEndDate: { type: Date, default: null },
+    promotionLabel: { type: String, default: null },
+
+    // Combos
+    isCombo: { type: Boolean, default: false },
+    comboOptions: [ComboGroupSchema],
+
+    // Adicionais / acompanhamentos / preparo
+    isAdditional: { type: Boolean, default: false },
+    hasAddons: { type: Boolean, default: false },
+    additionalOptions: [
+      {
+        id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+        name: { type: String, required: true },
+        price: { type: Number, required: true },
+        isAvailable: { type: Boolean, default: true },
+      },
+    ],
+    accompaniments: [
+      {
+        id: { type: String, required: true },
+        name: { type: String, required: true },
+        isAvailable: { type: Boolean, default: true },
+      },
+    ],
+    preparationGroups: [
+      {
+        title: { type: String, required: true },
+        required: { type: Boolean, default: true },
+        min: { type: Number, default: 1 },
+        max: { type: Number, required: true },
+        options: [
+          {
+            id: { type: mongoose.Schema.Types.ObjectId, auto: true },
+            label: { type: String, required: true },
+            extraPrice: { type: Number, default: 0 },
+            isAvailable: { type: Boolean, default: true },
+            defaultSelected: { type: Boolean, default: false },
+          },
+        ],
+      },
+    ],
+
+    promotionalMetrics: {
+      viewCount: { type: Number, default: 0 },
+      conversionCount: { type: Number, default: 0 },
+      marketingCost: { type: Number, default: 0 },
+      acquisitionCost: { type: Number, default: 0 },
+      costPrice: { type: Number, default: 0 },
+    },
   },
- }, 
- { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } 
-});
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
+);
 
-// --- helpers locais (toque mínimo) ---
-function isPromotionActiveDoc(doc: any, now = new Date()) {
+// ─────────────────────────────────────────────
+//  Índices
+// ─────────────────────────────────────────────
+productSchema.index({ hotel: 1, category: 1 });
+productSchema.index({ hotel: 1, isAvailable: 1 });
+productSchema.index({ hotel: 1, name: 1 }, { unique: true });
+
+// ─────────────────────────────────────────────
+//  Helpers de promoção (funções puras)
+// ─────────────────────────────────────────────
+function isPromotionActiveDoc(doc: any, now = new Date()): boolean {
   const hasDisc =
     typeof doc?.discountPercentage === "number" && doc.discountPercentage > 0;
   const hasPromoPrice =
@@ -206,10 +296,10 @@ function isPromotionActiveDoc(doc: any, now = new Date()) {
   return (hasDisc || hasPromoPrice) && inWindow;
 }
 
-function finalPriceDoc(doc: any, now = new Date()) {
+function finalPriceDoc(doc: any, now = new Date()): number {
   if (isPromotionActiveDoc(doc, now)) {
     if (typeof doc?.promotionalPrice === "number" && doc.promotionalPrice > 0) {
-      return Number(Number(doc.promotionalPrice).toFixed(2));
+      return Number(doc.promotionalPrice.toFixed(2));
     }
     if (typeof doc?.discountPercentage === "number" && doc.discountPercentage > 0) {
       const pct = Math.min(100, Math.max(0, doc.discountPercentage));
@@ -219,23 +309,32 @@ function finalPriceDoc(doc: any, now = new Date()) {
   return Number(Number(doc.price).toFixed(2));
 }
 
+// ─────────────────────────────────────────────
+//  Middlewares
+// ─────────────────────────────────────────────
 
-// Middleware para calcular preço promocional automaticamente quando o percentual de desconto for definido
+// Recalcula flag de promoção antes de salvar
 productSchema.pre("save", function (next) {
-  // recalcula o flag com base nos campos atuais
   this.isOnPromotion = isPromotionActiveDoc(this);
 
-  // se estiver em promoção e tiver desconto preenchido, garante o preço promo
   if (this.isOnPromotion && this.discountPercentage && this.price) {
-    this.promotionalPrice =
-      this.price - (this.price * (this.discountPercentage / 100));
+    this.promotionalPrice = this.price - this.price * (this.discountPercentage / 100);
   }
 
   next();
 });
 
+// ─────────────────────────────────────────────
+//  Métodos de instância
+// ─────────────────────────────────────────────
+productSchema.methods.isPromotionActive = function (now = new Date()): boolean {
+  return isPromotionActiveDoc(this, now);
+};
 
-// Middleware para verificar se a promoção expirou (pode ser chamado por um job agendado)
+productSchema.methods.getFinalPrice = function (now = new Date()): number {
+  return finalPriceDoc(this, now);
+};
+
 productSchema.methods.checkPromotionValidity = function () {
   const now = new Date();
   if (this.isOnPromotion && this.promotionEndDate && now > this.promotionEndDate) {
@@ -249,38 +348,51 @@ productSchema.methods.checkPromotionValidity = function () {
   return Promise.resolve(this);
 };
 
-productSchema.methods.isPromotionActive = function (now = new Date()) {
-  return isPromotionActiveDoc(this, now);
-};
-
-productSchema.methods.getFinalPrice = function (now = new Date()) {
-  return finalPriceDoc(this, now);
-};
-
+// ─────────────────────────────────────────────
+//  toJSON — adiciona campos computados
+// ─────────────────────────────────────────────
 productSchema.set("toJSON", {
-  virtuals: false, 
-  transform(doc: any, ret: any) {
-    ret.isOnPromotion = doc.isPromotionActive();   
-    ret.finalPrice = doc.getFinalPrice();           
+  virtuals: false,
+  transform(_doc: any, ret: any) {
+    ret.isOnPromotion = _doc.isPromotionActive();
+    ret.finalPrice = _doc.getFinalPrice();
     return ret;
   },
 });
 
+// ─────────────────────────────────────────────
+//  Model
+// ─────────────────────────────────────────────
 export const ProductModel = mongoose.model<IProduct>("Product", productSchema);
 
-// Métodos
-// Obter todos os produtos
-export const getProducts = () => ProductModel.find();
+// ─────────────────────────────────────────────
+//  Helpers de repositório
+// ─────────────────────────────────────────────
 
-// Obter produtos de um restaurante específico
-export const getProductsByRestaurant = (restaurantId: string) =>
-  ProductModel.find({ restaurant: restaurantId })
-    .select('_id name price category image imageBlur imageWidth imageHeight isOnPromotion promotionalPrice promotionEndDate promotionLabel isCombo comboOptions additionalOptions accompaniments description discountPercentage isAvailable');
+/** Lista todos os produtos de um hotel */
+export const getProductsByHotel = (hotelId: string) =>
+  ProductModel.find({ hotel: hotelId }).select(
+    "_id name price category subcategory image imageBlur imageWidth imageHeight " +
+    "isOnPromotion promotionalPrice promotionEndDate promotionLabel " +
+    "isCombo comboOptions additionalOptions accompaniments description " +
+    "discountPercentage isAvailable deliveryType estimatedDeliveryMinutes"
+  );
 
-// Obter produtos em promoção de um restaurante específico
-export const getPromotionalProducts = (restaurantId: string) =>
+/** Lista produtos por categoria dentro de um hotel */
+export const getProductsByCategory = (hotelId: string, category: string) =>
+  ProductModel.find({ hotel: hotelId, category, isAvailable: true });
+
+/**
+ * Retorna as categorias distintas cadastradas para um hotel.
+ * Útil para renderizar o menu de navegação no cliente.
+ */
+export const getDistinctCategories = (hotelId: string): Promise<string[]> =>
+  ProductModel.distinct("category", { hotel: hotelId, isAvailable: true });
+
+/** Lista produtos em promoção ativa de um hotel */
+export const getPromotionalProducts = (hotelId: string) =>
   ProductModel.find({
-    restaurant: restaurantId,
+    hotel: hotelId,
     $or: [
       { discountPercentage: { $gt: 0 } },
       { promotionalPrice: { $gt: 0 } },
@@ -301,45 +413,36 @@ export const getPromotionalProducts = (restaurantId: string) =>
     ],
   });
 
-// Obter produto por ID
+export const getProducts = () => ProductModel.find();
 export const getProductById = (id: string) => ProductModel.findById(id);
+export const getProductByName = (hotelId: string, name: string) =>
+  ProductModel.findOne({ hotel: hotelId, name });
 
-// Obter produto por nome (para validação de registro)
-export const getProductByName = (name: string) => ProductModel.findOne({ name });
-
-// Criar produto
 export const createProduct = (values: Record<string, any>) =>
-  new ProductModel(values).save().then((product) => product.toObject());
+  new ProductModel(values).save().then((p) => p.toObject());
 
-// Deletar produto
 export const deleteProduct = (id: string) =>
   ProductModel.findOneAndDelete({ _id: id });
 
-// Atualizar produto
 export const updateProduct = async (id: string, values: Record<string, any>) => {
   const doc = await ProductModel.findById(id);
   if (!doc) return null;
 
   Object.assign(doc, values);
 
-  // recalcula o estado real da promoção com base nos campos recebidos
   const promotionActive = isPromotionActiveDoc(doc);
   doc.isOnPromotion = promotionActive;
 
   if (promotionActive) {
-    // se está em promoção, garante coerência entre desconto e preço promo
     if (doc.discountPercentage && !doc.promotionalPrice) {
-      doc.promotionalPrice =
-        doc.price - (doc.price * (doc.discountPercentage / 100));
+      doc.promotionalPrice = doc.price - doc.price * (doc.discountPercentage / 100);
     }
-
     if (doc.promotionalPrice && !doc.discountPercentage) {
       doc.discountPercentage = Math.round(
-        ((doc.price - doc.promotionalPrice) / doc.price) * 100,
+        ((doc.price - doc.promotionalPrice) / doc.price) * 100
       );
     }
   } else {
-    // se a promoção deixou de ser válida, limpa tudo
     doc.promotionalPrice = undefined;
     doc.discountPercentage = undefined;
     doc.promotionStartDate = undefined;

@@ -72,7 +72,6 @@ async function run() {
 
   const query = { image: { $regex: '^data:image/' } };
   const total = await ProductModel.countDocuments(query);
-  console.log(`Encontrados ${total} produtos com image em data URL`);
 
   const cursor = ProductModel.find(query).cursor();
   let processed = 0;
@@ -85,7 +84,6 @@ async function run() {
     if (!parsed) continue;
 
     if (DRY_RUN) {
-      console.log(`[DRY] ${p._id} seria migrado`);
       processed++;
       continue;
     }
@@ -98,12 +96,8 @@ async function run() {
     await p.save();
 
     processed++;
-    if (processed % 25 === 0) {
-      console.log(`... ${processed} migrados`);
-    }
   }
 
-  console.log(`✅ Migração concluída. Migrados: ${processed}`);
   await mongoose.disconnect();
 }
 

@@ -6,7 +6,7 @@ import {
   deleteRestaurantController,
   getRestaurantBySlugController,
 } from "../controllers/RestaurantController";
-import { isAuthenticated, isRestaurantAdmin } from "../middlewares";
+import { isAuthenticated, hasRole } from "../middlewares";
 
 export default (router: Router) => {
   // Rotas públicas
@@ -18,14 +18,14 @@ export default (router: Router) => {
   router.patch(
     "/restaurant/:id",
     isAuthenticated,
-    isRestaurantAdmin,
+    hasRole(['ADMIN', 'MANAGER']),
     updateRestaurantController
   );
 
   router.delete(
     "/restaurant/:id",
     isAuthenticated,
-    isRestaurantAdmin,
+    hasRole(['ADMIN', 'MANAGER']),
     deleteRestaurantController
   );
 

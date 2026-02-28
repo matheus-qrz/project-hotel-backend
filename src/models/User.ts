@@ -16,8 +16,8 @@ export interface IUser extends Document {
   };
   role: "ADMIN" | "MANAGER" | "ATTENDANT" | "CLIENT";
   orders: mongoose.Schema.Types.ObjectId[];
-  restaurant?: mongoose.Schema.Types.ObjectId;
-  restaurantUnit?: mongoose.Schema.Types.ObjectId;
+  hotel?: mongoose.Schema.Types.ObjectId;
+  unit?: mongoose.Schema.Types.ObjectId;
 }
 
 const userSchema = new Schema(
@@ -81,15 +81,14 @@ const userSchema = new Schema(
         ref: "Order"
       }
     ],
-    // Campos para referências
-    restaurant: {
+    hotel: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Restaurant"
+      ref: "Hotel"
     },
-    restaurantUnit: {
+    unit: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "RestaurantUnit"
-    }
+      ref: "HotelUnit"
+    },
   },
   { timestamps: true }
 );
@@ -116,16 +115,16 @@ export const getUserBySessionToken = (sessionToken: string) => {
   });
 };
 
-// Get User by Restaurant Unit
-export const getUserByUnit = (unit: string) => {
+// Get Users by Hotel Unit
+export const getUsersByUnit = (unitId: string) => {
   return UserModel
-    .find({ restaurantUnit: unit })
+    .find({ unit: unitId })
     .select("+authentication.sessionToken +role");
 };
 
-// Get Users by Restaurant
-export const getUsersByRestaurant = (restaurantId: string) => {
-  return UserModel.find({ restaurant: restaurantId });
+// Get Users by Hotel
+export const getUsersByHotel = (hotelId: string) => {
+  return UserModel.find({ hotel: hotelId });
 };
 
 // Create User
